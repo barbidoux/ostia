@@ -4,6 +4,7 @@ A throwaway workspace copies the repository's `[workspace.lints]`, `[workspace.p
 `rust-toolchain.toml`, so a seeded sample is checked exactly as a crate of the real workspace would be.
 """
 
+import os
 import subprocess
 import tomllib
 from pathlib import Path
@@ -12,9 +13,11 @@ from typing import Any
 REPO = Path(__file__).resolve().parents[2]
 
 
-def run(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+def run(
+    cmd: list[str], cwd: Path, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     """Run a command, capturing text output; never raises on a non-zero exit."""
-    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=False)
+    return subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, check=False)
 
 
 def repo_cargo_manifest() -> dict[str, Any]:
@@ -66,5 +69,10 @@ def make_workspace(root: Path, lib_rs: str) -> Path:
 
 
 def cargo(workspace: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    """Run cargo in a throwaway workspace with its own target directory."""
-    return run(["cargo", *args], cwd=workspace)
+    """Run cargo in a throwaway workspace with its own target directory.
+
+    Colours are forced off: CI sets CARGO_TERM_COLOR=always, and ANSI codes would split the
+    diagnostics the tests match.
+    """
+    env = {**os.environ, "CARGO_TERM_COLOR": "never"}
+    return run(["cargo", *args], cwd=workspace, env=env)
