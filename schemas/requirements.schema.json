@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/barbidoux/ostia/schemas/requirements/v1/requirements.schema.json",
+  "title": "Ostia requirements registry",
+  "description": "requirements.yaml, generated from docs/spec.md and docs/plan.md by tools/traceability/registry.py.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "requirements"],
+  "properties": {
+    "version": {"const": 1},
+    "requirements": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/requirement"}
+    }
+  },
+  "$defs": {
+    "requirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "level", "phases", "phase_source", "anssi", "section", "text"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^((FR|NFR|ENG|USB|DEEP|ENR|SEC|CTR|LOG|UI|UPD)-[0-9]{2}|TOOLING)$"
+        },
+        "level": {"enum": ["MUST", "SHOULD", "MAY", "n/a"]},
+        "phases": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"enum": ["P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9", "post-1.0"]}
+        },
+        "phase_source": {"enum": ["spec", "plan", "none", "reserved"]},
+        "anssi": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^FS([1-9]|1[0-5])$"}
+        },
+        "section": {"type": "string", "minLength": 1},
+        "area": {"type": "string", "minLength": 1},
+        "text": {"type": "string", "minLength": 1}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"id": {"const": "TOOLING"}}},
+          "then": {
+            "properties": {
+              "level": {"const": "n/a"},
+              "phases": {"maxItems": 0},
+              "phase_source": {"const": "reserved"}
+            }
+          },
+          "else": {
+            "properties": {
+              "level": {"enum": ["MUST", "SHOULD", "MAY"]},
+              "phase_source": {"enum": ["spec", "plan", "none"]}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"phase_source": {"const": "none"}}},
+          "then": {"properties": {"phases": {"maxItems": 0}}}
+        },
+        {
+          "if": {"properties": {"phase_source": {"enum": ["spec", "plan"]}}},
+          "then": {"properties": {"phases": {"minItems": 1}}}
+        }
+      ]
+    }
+  },
+  "examples": [
+    {
+      "version": 1,
+      "requirements": [
+        {
+          "id": "FR-03",
+          "level": "MUST",
+          "phases": ["P1"],
+          "phase_source": "spec",
+          "anssi": ["FS1"],
+          "section": "5. Functional requirements",
+          "text": "Support FAT12/16/32, exFAT, NTFS and ext2/3/4; reject any other file system cleanly with a clear message"
+        },
+        {
+          "id": "NFR-09",
+          "level": "MUST",
+          "phases": ["P0"],
+          "phase_source": "plan",
+          "anssi": [],
+          "section": "6. Non-functional requirements",
+          "area": "Code safety",
+          "text": "No `unsafe` in the Rust core outside listed, justified modules"
+        },
+        {
+          "id": "TOOLING",
+          "level": "n/a",
+          "phases": [],
+          "phase_source": "reserved",
+          "anssi": [],
+          "section": "reserved",
+          "text": "Tests of helpers, fixtures and tooling that prove no product requirement"
+        }
+      ]
+    }
+  ]
+}
