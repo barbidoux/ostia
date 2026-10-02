@@ -1,0 +1,35 @@
+# Rust
+/target/
+**/*.rs.bk
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.hypothesis/
+.coverage
+coverage.xml
+htmlcov/
+# Node / UI
+node_modules/
+ui/dist/
+playwright-report/
+test-results/
+# Fuzzing
+fuzz/artifacts/
+fuzz/corpus/
+# Agent working notes (local only)
+.wp-notes/
+# Local Claude Code settings
+.claude/settings.local.json
+# Secrets and local data: never commit
+.env
+.env.*
+*.key
+*.pem
+secrets/
+models/*.lgb
+models/*.txt
+corpus/

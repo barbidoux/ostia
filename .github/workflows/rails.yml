@@ -1,0 +1,33 @@
+# Rails check (owner-managed). Verifies the acceptance-test locks and the rails tooling on every push and PR.
+name: rails
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  rails:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pytest (for lock gate self-tests)
+        run: python -m pip install --disable-pip-version-check pytest==8.*
+      - name: Rails self-test
+        run: python -m unittest tools/kit/test_kit.py -v
+      - name: Plan references resolve in the spec
+        run: python tools/kit/req.py check
+      - name: Rails files unchanged since the owner's last update
+        run: python tools/lock/ostia_lock.py rails-verify
+      - name: Acceptance locks (tags required on main)
+        run: |
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            python tools/lock/ostia_lock.py verify --require-tags
+          else
+            python tools/lock/ostia_lock.py verify
+          fi

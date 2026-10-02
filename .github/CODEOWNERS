@@ -1,0 +1,15 @@
+# Replace @OWNER with the owner's GitHub handle before the first push (see GUIDE-FR.md).
+# With branch protection "Require review from Code Owners", nothing below merges without the owner.
+*                               @OWNER
+/CLAUDE.md                      @OWNER
+/AGENTS.md                      @OWNER
+/.claude/                       @OWNER
+/prompts/                       @OWNER
+/tools/kit/                     @OWNER
+/tools/lock/                    @OWNER
+/docs/spec.md                   @OWNER
+/docs/plan.md                   @OWNER
+/docs/unsafe-allowlist.md       @OWNER
+/deny.toml                      @OWNER
+/tests/acceptance/              @OWNER
+/.github/                       @OWNER
