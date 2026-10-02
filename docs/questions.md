@@ -59,7 +59,26 @@ acceptance directories from ruff and mypy (a test-lever change, owner approval).
 Recommendation: (a) for now; revisit at the first tool upgrade after `lock-p1`.
 Blocking: no.
 
+### Q-10 · WP-0.3 · NFR-07, NFR-19 · requirements with no phase
+Context: NFR rows have no Phase column; their phase comes from the work packages that cite them. NFR-07 (same
+versions give the same verdict) and NFR-19 (enrichment never blocks a session) are cited by no work package, so
+the registry gives them no phase (`phase_source: none`) and no phase gate will require them.
+Options: (a) leave them without a phase and cover them in the lock tests of P1 (NFR-07) and P8 (NFR-19)
+(b) the owner adds them to work packages in the plan.
+Recommendation: (b) at the next plan revision; (a) until then.
+Blocking: no.
+
 ## Answered
+
+### Q-9 · WP-0.3 · — · PyYAML for requirements.yaml
+Context: the registry is `requirements.yaml`; generating it, validating the committed file against its JSON
+schema and reading it in WP-0.4 needs a YAML library. The standard library has none.
+Options: (a) PyYAML 6.0.3 (MIT), `safe_load`/`safe_dump` only, plus types-PyYAML 6.0.12.20260906 (Apache-2.0)
+for mypy (b) no dependency: write the registry as JSON (`requirements.json`), diverging from the name in P0.md.
+Recommendation: (a).
+Blocking: yes (new dependency).
+Answer (2026-10-02): (a) PyYAML and types-PyYAML approved.
+
 
 ### Q-2 · WP-0.1 · — · CODEOWNERS handle
 Context: `.github/CODEOWNERS` is a rails file (agents cannot edit it); it still holds `@OWNER`. The owner
