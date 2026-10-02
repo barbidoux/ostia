@@ -9,3 +9,5 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 - Repository skeleton (WP-0.1): Cargo workspace forbidding `unsafe` code, `uv` project, `justfile`,
   pinned Rust toolchain, pre-commit hooks, CI on Debian, Apache-2.0 licence, security policy.
+  `just test` fails on any skipped pytest test or ignored Rust test; CI gates the locked acceptance
+  directories of closed phases and reports the current phase's as "N/M green".

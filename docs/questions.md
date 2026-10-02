@@ -41,6 +41,24 @@ Options: NOTICE "Copyright 2026 Matthias Vaytet and the Ostia contributors"; edi
 Recommendation: as stated.
 Blocking: no.
 
+### Q-7 · WP-0.1 · NFR-09 · how an allowlisted crate uses unsafe
+Context: the workspace sets `unsafe_code = "forbid"`. Under `forbid`, a local `#![allow(unsafe_code)]` is a
+compile error (E0453, proven by a tooling test), so a crate listed in `docs/unsafe-allowlist.md` cannot simply
+override it. The tooling test requires `lints.workspace = true` for every crate not in the allowlist.
+Options: (a) a listed crate declares its own full `[lints]` table (copy of the workspace one with
+`unsafe_code = "deny"`) and allows unsafe per block with a justification comment; a future test checks that
+the copy matches the workspace table apart from that line (b) the workspace uses `deny` instead of `forbid`.
+Recommendation: (a); it keeps `forbid` for every other crate.
+Blocking: no (first needed by the sandbox or media crates, P2/P4).
+
+### Q-8 · WP-0.1 · — · linting locked acceptance directories
+Context: ruff and mypy also check `tests/acceptance/`. Once a directory is locked, a later ruff or mypy upgrade
+could flag it and break `just check`, and only the owner can change it (relock).
+Options: (a) keep linting it and pin tool upgrades so that they are checked before locking (b) exclude locked
+acceptance directories from ruff and mypy (a test-lever change, owner approval).
+Recommendation: (a) for now; revisit at the first tool upgrade after `lock-p1`.
+Blocking: no.
+
 ## Answered
 
 ### Q-2 · WP-0.1 · — · CODEOWNERS handle

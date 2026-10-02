@@ -9,7 +9,7 @@ Legend: `- [x] WP-x.y scope — branch` once merged. Gate: ticked by the owner a
 
 ## P0 · Foundations
 
-- [ ] WP-0.1 Repository skeleton: Cargo workspace, uv project, justfile, rust-toolchain.toml, pre-commit hooks, Apache-2... (after: —)
+- [x] WP-0.1 Repository skeleton: Cargo workspace, uv project, justfile, rust-toolchain.toml, pre-commit hooks, Apache-2... (after: —) — wp/0.1-repository-skeleton
 - [ ] WP-0.2 Dev environment: Debian WSL setup script, dev container identical to the CI image; checks for loop devices,... (after: 0.1)
 - [ ] WP-0.3 Requirements registry: requirements.yaml (id, level, phase, ANSSI) generated from the specification (after: 0.1)
 - [ ] WP-0.4 Traceability tool: #[req] attribute and pytest marker, matrix generator, CI rule “a MUST of the active phas... (after: 0.3)
