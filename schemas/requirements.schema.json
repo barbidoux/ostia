@@ -39,7 +39,33 @@
         "section": {"type": "string", "minLength": 1},
         "area": {"type": "string", "minLength": 1},
         "text": {"type": "string", "minLength": 1}
-      }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"id": {"const": "TOOLING"}}},
+          "then": {
+            "properties": {
+              "level": {"const": "n/a"},
+              "phases": {"maxItems": 0},
+              "phase_source": {"const": "reserved"}
+            }
+          },
+          "else": {
+            "properties": {
+              "level": {"enum": ["MUST", "SHOULD", "MAY"]},
+              "phase_source": {"enum": ["spec", "plan", "none"]}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"phase_source": {"const": "none"}}},
+          "then": {"properties": {"phases": {"maxItems": 0}}}
+        },
+        {
+          "if": {"properties": {"phase_source": {"enum": ["spec", "plan"]}}},
+          "then": {"properties": {"phases": {"minItems": 1}}}
+        }
+      ]
     }
   },
   "examples": [
@@ -54,6 +80,25 @@
           "anssi": ["FS1"],
           "section": "5. Functional requirements",
           "text": "Support FAT12/16/32, exFAT, NTFS and ext2/3/4; reject any other file system cleanly with a clear message"
+        },
+        {
+          "id": "NFR-09",
+          "level": "MUST",
+          "phases": ["P0"],
+          "phase_source": "plan",
+          "anssi": [],
+          "section": "6. Non-functional requirements",
+          "area": "Code safety",
+          "text": "No `unsafe` in the Rust core outside listed, justified modules"
+        },
+        {
+          "id": "TOOLING",
+          "level": "n/a",
+          "phases": [],
+          "phase_source": "reserved",
+          "anssi": [],
+          "section": "reserved",
+          "text": "Tests of helpers, fixtures and tooling that prove no product requirement"
         }
       ]
     }

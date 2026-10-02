@@ -28,6 +28,8 @@ PREFIXES = ("FR", "NFR", "ENG", "USB", "DEEP", "ENR", "SEC", "CTR", "LOG", "UI",
 _FAMILY = "|".join(PREFIXES)
 REQ_ID = re.compile(rf"\b(?:{_FAMILY})-\d{{2}}\b")
 REQ_RANGE = re.compile(rf"\b({_FAMILY})-(\d{{2}}) to (?:\1-)?(\d{{2}})\b")
+MALFORMED_ID = re.compile(rf"^(?:{_FAMILY})-")
+CITED_ID_LIKE = re.compile(rf"\b(?:{_FAMILY})-\d+\b")
 WP_ROW = re.compile(r"^WP-(\d+)\.(\d+)$")
 PHASE = re.compile(r"^P(\d)$")
 PHASE_RANGE = re.compile(r"^P(\d)\s*[–-]\s*P(\d)$")
@@ -68,19 +70,29 @@ def cells(line: str) -> list[str]:
 
 
 def spec_rows(spec: str) -> Iterator[Row]:
+    """Requirement rows: rows of tables whose header starts with `ID` and whose id is a requirement id."""
     section = ""
     header: list[str] = []
+    in_table = False
     for line in spec.splitlines():
         if line.startswith("## "):
             section = line[3:].strip()
-            header = []
         if not line.startswith("|"):
+            in_table = False
             continue
         row = cells(line)
-        if row[0] == "ID":
-            header = row
+        if not in_table:
+            # First row of a table: its header decides whether the table holds requirements.
+            in_table = True
+            header = row if row[0] == "ID" else []
             continue
-        if header and REQ_ID.fullmatch(row[0]):
+        if not header or set(row[0]) <= {"-", ":", " "}:
+            continue
+        if MALFORMED_ID.match(row[0]) and not REQ_ID.fullmatch(row[0]):
+            raise RegistryError(f"malformed requirement id {row[0]!r}")
+        if REQ_ID.fullmatch(row[0]):
+            if not section:
+                raise RegistryError(f"{row[0]}: requirement table outside any section")
             if len(row) != len(header):
                 raise RegistryError(f"{row[0]}: expected {len(header)} cells, found {len(row)}")
             yield Row(row[0], section, dict(zip(header, row, strict=True)))
@@ -131,9 +143,24 @@ def plan_citations(plan: str) -> dict[str, list[str]]:
         if not line.startswith("| WP-"):
             continue
         row = cells(line)
-        if len(row) >= 3 and WP_ROW.match(row[0]):
-            citations[row[0]] = expand_ids(row[2])
+        if not WP_ROW.match(row[0]):
+            continue
+        if len(row) < 3:
+            raise RegistryError(f"{row[0]}: expected at least 3 cells, found {len(row)}")
+        if row[0] in citations:
+            raise RegistryError(f"duplicate work package {row[0]}")
+        malformed = [i for i in CITED_ID_LIKE.findall(row[2]) if not REQ_ID.fullmatch(i)]
+        if malformed:
+            raise RegistryError(f"{row[0]} cites malformed id {malformed[0]!r}")
+        citations[row[0]] = expand_ids(row[2])
     return citations
+
+
+def plan_mentions(plan: str) -> Iterator[tuple[int, str]]:
+    """(line number, requirement id) for every requirement id written anywhere in the plan."""
+    for number, line in enumerate(plan.splitlines(), 1):
+        for rid in expand_ids(line):
+            yield number, rid
 
 
 def build(spec: str, plan: str) -> dict[str, Any]:
@@ -147,16 +174,23 @@ def build(spec: str, plan: str) -> dict[str, Any]:
         raise RegistryError("no requirement rows found in the specification")
 
     cited_by: dict[str, set[str]] = {rid: set() for rid in rows}
-    unknown = []
+    problems: list[str] = []
+    reported: set[str] = set()
     for wid, ids in plan_citations(plan).items():
         phase = "P" + wid.removeprefix("WP-").split(".")[0]
         for rid in ids:
-            if rid not in rows:
-                unknown.append(f"{wid} cites {rid}, which is not in the spec")
-            else:
+            if rid in rows:
                 cited_by[rid].add(phase)
-    if unknown:
-        raise RegistryError("; ".join(unknown))
+            else:
+                problems.append(f"{wid} cites {rid}, which is not in the spec")
+                reported.add(rid)
+    # Ids written elsewhere in the plan (scope, tests, prose) must exist too.
+    for number, rid in plan_mentions(plan):
+        if rid not in rows and rid not in reported:
+            problems.append(f"plan line {number} mentions {rid}, which is not in the spec")
+            reported.add(rid)
+    if problems:
+        raise RegistryError("; ".join(problems))
 
     entries: list[dict[str, Any]] = []
     for rid, row in rows.items():
@@ -235,8 +269,9 @@ def read_sources(args: argparse.Namespace) -> tuple[str, str]:
 
 
 def cmd_generate(args: argparse.Namespace) -> int:
-    text = render(build(*read_sources(args)))
-    args.out.write_text(text, encoding="utf-8")
+    document = build(*read_sources(args))
+    validate(document, load_schema(args.schema))  # never write a registry its schema rejects
+    args.out.write_text(render(document), encoding="utf-8")
     print(f"wrote {args.out}")
     return 0
 
@@ -278,6 +313,9 @@ def parser() -> argparse.ArgumentParser:
     )
     generate = commands.add_parser("generate", parents=[sources])
     generate.add_argument("--out", type=Path, default=REPO / "requirements.yaml")
+    generate.add_argument(
+        "--schema", type=Path, default=REPO / "schemas" / "requirements.schema.json"
+    )
     generate.set_defaults(run=cmd_generate)
     commands.add_parser("validate", parents=[registry]).set_defaults(run=cmd_validate)
     commands.add_parser("check", parents=[sources, registry]).set_defaults(run=cmd_check)
