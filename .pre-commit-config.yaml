@@ -1,0 +1,40 @@
+# Run with `uvx pre-commit@4.6.2`. Install once:
+#   uvx pre-commit@4.6.2 install --hook-type pre-commit --hook-type commit-msg
+# Local hooks only: they use the pinned project tools, nothing is fetched from hook repositories.
+default_stages: [pre-commit]
+repos:
+  - repo: local
+    hooks:
+      - id: rustfmt
+        name: rustfmt (check)
+        entry: cargo fmt --all --check
+        language: system
+        types: [rust]
+        pass_filenames: false
+      - id: ruff
+        name: ruff
+        entry: uv run ruff check
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: ruff format (check)
+        entry: uv run ruff format --check
+        language: system
+        types: [python]
+      - id: lock-verify
+        name: acceptance locks
+        entry: python3 tools/lock/ostia_lock.py verify
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: rails-verify
+        name: rails files
+        entry: python3 tools/lock/ostia_lock.py rails-verify
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: commit-msg
+        name: commit message discipline
+        entry: python3 tools/ci/commit_msg.py
+        language: system
+        stages: [commit-msg]

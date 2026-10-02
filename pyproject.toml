@@ -1,0 +1,51 @@
+[project]
+name = "ostia"
+version = "0.0.0"
+description = "Open-source media kiosk: scans removable media and transfers only what passes"
+license = "Apache-2.0"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+    "hypothesis==6.168.3",
+    "ruff==0.16.10",
+    "mypy==2.4.0",
+    "jsonschema==4.26.0",
+    "pytest-cov==7.1.0",
+    "cryptography==50.0.2",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# The rails kit is owner-managed and checked by its own self-tests (tools/kit/test_kit.py).
+extend-exclude = [".claude", "tools/kit", "tools/lock"]
+# Honour the exclusions for files passed explicitly (pre-commit passes file names).
+force-exclude = true
+
+[tool.ruff.lint]
+extend-select = ["ANN"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["tooling_support"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["tools", "tests"]
+# The rails kit is owner-managed and checked by its own self-tests (tools/kit/test_kit.py).
+exclude = ['^\.claude/', '^tools/kit/', '^tools/lock/']
+
+[tool.pytest.ini_options]
+addopts = ["--strict-markers"]
+testpaths = ["tests/tooling"]
+markers = [
+    "req(*ids): requirement ids proven by the test (FR-06, NFR-09, TOOLING, ...)",
+    "bench: needs real hardware on the Debian bench; never skipped",
+    "slow: long-running test",
+]

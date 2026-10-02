@@ -1,15 +1,15 @@
-# Replace @OWNER with the owner's GitHub handle before the first push (see GUIDE-FR.md).
+# Replace @barbidoux with the owner's GitHub handle before the first push (see GUIDE-FR.md).
 # With branch protection "Require review from Code Owners", nothing below merges without the owner.
-*                               @OWNER
-/CLAUDE.md                      @OWNER
-/AGENTS.md                      @OWNER
-/.claude/                       @OWNER
-/prompts/                       @OWNER
-/tools/kit/                     @OWNER
-/tools/lock/                    @OWNER
-/docs/spec.md                   @OWNER
-/docs/plan.md                   @OWNER
-/docs/unsafe-allowlist.md       @OWNER
-/deny.toml                      @OWNER
-/tests/acceptance/              @OWNER
-/.github/                       @OWNER
+*                               @barbidoux
+/CLAUDE.md                      @barbidoux
+/AGENTS.md                      @barbidoux
+/.claude/                       @barbidoux
+/prompts/                       @barbidoux
+/tools/kit/                     @barbidoux
+/tools/lock/                    @barbidoux
+/docs/spec.md                   @barbidoux
+/docs/plan.md                   @barbidoux
+/docs/unsafe-allowlist.md       @barbidoux
+/deny.toml                      @barbidoux
+/tests/acceptance/              @barbidoux
+/.github/                       @barbidoux

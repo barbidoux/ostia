@@ -1,0 +1,130 @@
+# Project CI: `just check` on Debian stable (NFR-15), then the acceptance policy of prompts/P0.md:
+# locked directories of closed phases gate (blocking), the current phase's directory is informational
+# ("N/M green"), future phases are not run. The rails check lives in its own owner-managed workflow.
+name: ci
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+env:
+  CARGO_TERM_COLOR: always
+  UV_VERSION: "0.12.22"
+  JUST_VERSION: "1.58.0"
+  NEXTEST_VERSION: "0.9.146"
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    container:
+      image: debian:13
+    steps:
+      - name: System packages
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl git build-essential python3
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Trust the workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Cache toolchains and builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry
+            ~/.rustup
+            ~/.cache/uv
+            ~/.local/share/uv
+            ~/.local/bin
+            target
+          key: ci-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'uv.lock') }}-${{ env.NEXTEST_VERSION }}
+      - name: Toolchains (rustup from rust-toolchain.toml, uv, just, cargo-nextest)
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSfo /tmp/rustup-init.sh https://sh.rustup.rs
+          sh /tmp/rustup-init.sh -y --default-toolchain none --profile minimal
+          curl --proto '=https' --tlsv1.2 -LsSfo /tmp/uv-install.sh "https://astral.sh/uv/${UV_VERSION}/install.sh"
+          sh /tmp/uv-install.sh
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+          rustup toolchain install
+          uv tool install "rust-just==${JUST_VERSION}"
+          cargo nextest --version 2>/dev/null | grep -q "${NEXTEST_VERSION}" \
+            || cargo install --locked "cargo-nextest@${NEXTEST_VERSION}"
+          uv sync --frozen
+      - name: Check
+        run: just check
+      - name: Acceptance gates (closed phases, blocking)
+        run: |
+          mkdir -p target
+          python3 tools/ci/acceptance_plan.py --status docs/phase-status.md --acceptance tests/acceptance \
+            > target/acceptance-plan.json
+          cat target/acceptance-plan.json
+          # Acceptance tests run target/debug/ostia: build it from this commit, never from the cache.
+          cargo build --workspace --locked
+          for dir in $(python3 -c 'import json; print(" ".join(json.load(open("target/acceptance-plan.json"))["gate"]))'); do
+            python3 tools/lock/ostia_lock.py gate "$dir"
+          done
+
+  acceptance-current:
+    # Informational: the current phase's acceptance tests turn green during the phase.
+    needs: ci
+    runs-on: ubuntu-latest
+    container:
+      image: debian:13
+    continue-on-error: true
+    steps:
+      - name: System packages
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl git build-essential python3
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Trust the workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Cache toolchains and builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry
+            ~/.rustup
+            ~/.cache/uv
+            ~/.local/share/uv
+            ~/.local/bin
+            target
+          key: ci-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'uv.lock') }}-${{ env.NEXTEST_VERSION }}
+      - name: Toolchains
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSfo /tmp/rustup-init.sh https://sh.rustup.rs
+          sh /tmp/rustup-init.sh -y --default-toolchain none --profile minimal
+          curl --proto '=https' --tlsv1.2 -LsSfo /tmp/uv-install.sh "https://astral.sh/uv/${UV_VERSION}/install.sh"
+          sh /tmp/uv-install.sh
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+          rustup toolchain install
+          uv tool install "rust-just==${JUST_VERSION}"
+          uv sync --frozen
+      - name: Current phase acceptance (N/M green)
+        run: |
+          mkdir -p target
+          python3 tools/ci/acceptance_plan.py --status docs/phase-status.md --acceptance tests/acceptance \
+            > target/acceptance-plan.json
+          cargo build --workspace --locked
+          for dir in $(python3 -c 'import json; print(" ".join(json.load(open("target/acceptance-plan.json"))["informational"]))'); do
+            just test-acceptance "$dir" -- "--junitxml=target/acceptance-$dir.xml"
+            python3 - "$dir" <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          import sys, xml.etree.ElementTree as ET
+          name = sys.argv[1]
+          suites = list(ET.parse(f"target/acceptance-{name}.xml").getroot().iter("testsuite"))
+          total = sum(int(s.get("tests", 0)) for s in suites)
+          bad = sum(int(s.get(k, 0)) for s in suites for k in ("failures", "errors", "skipped"))
+          print(f"tests/acceptance/{name}: {total - bad}/{total} green")
+          EOF
+          done
