@@ -25,6 +25,8 @@ line-length = 100
 target-version = "py312"
 # The rails kit is owner-managed and checked by its own self-tests (tools/kit/test_kit.py).
 extend-exclude = [".claude", "tools/kit", "tools/lock"]
+# Honour the exclusions for files passed explicitly (pre-commit passes file names).
+force-exclude = true
 
 [tool.ruff.lint]
 extend-select = ["ANN"]
