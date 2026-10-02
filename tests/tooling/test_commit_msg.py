@@ -32,6 +32,9 @@ REJECTED = [
     "feat(FR_06): underscore in scope",
     "feat(FR-06) missing colon",
     "feat(): empty scope",
+    "feat:   ",
+    "feat( ): blank scope",
+    "feat(, FR-06): scope starting with a separator",
     "",
     "# only a comment\n",
 ]

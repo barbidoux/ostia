@@ -1,4 +1,8 @@
-"""The Rust gates reject seeded bad samples and accept their clean twins (NFR-09, rustfmt)."""
+"""The Rust gates reject seeded bad samples and accept their clean twins.
+
+NFR-09: unsafe code is forbidden in every crate of the workspace except the owner's allowlist.
+TOOLING: clippy (pedantic, warnings denied), rustfmt and the toolchain pin.
+"""
 
 import tomllib
 from pathlib import Path
@@ -81,17 +85,40 @@ def test_local_allow_cannot_reenable_unsafe_code(tmp_path: Path) -> None:
     assert "E0453" in result.stderr
 
 
+def unsafe_allowlist() -> set[str]:
+    """Crate names listed by the owner in docs/unsafe-allowlist.md."""
+    names = set()
+    for line in (REPO / "docs" / "unsafe-allowlist.md").read_text().splitlines():
+        if not line.startswith("|"):
+            continue
+        first = line.strip().strip("|").split("|")[0].strip()
+        if first not in ("Crate", "(none yet)") and set(first) - {"-"}:
+            names.add(first)
+    return names
+
+
 @pytest.mark.req("NFR-09")
-def test_every_workspace_crate_inherits_workspace_lints() -> None:
+def test_every_crate_is_a_workspace_member() -> None:
     members = repo_cargo_manifest()["workspace"]["members"]
     assert "crates/core-domain" in members
-    for member in members:
-        with (REPO / member / "Cargo.toml").open("rb") as f:
+    for manifest in sorted((REPO / "crates").glob("*/Cargo.toml")):
+        member = manifest.parent.relative_to(REPO).as_posix()
+        assert member in members, f"{member} is outside the workspace and escapes its lints"
+
+
+@pytest.mark.req("NFR-09")
+def test_every_crate_not_allowlisted_inherits_workspace_lints() -> None:
+    allowed = unsafe_allowlist()
+    for manifest in sorted((REPO / "crates").glob("*/Cargo.toml")):
+        with manifest.open("rb") as f:
             crate = tomllib.load(f)
+        if crate["package"]["name"] in allowed:
+            continue
+        member = manifest.parent.relative_to(REPO).as_posix()
         assert crate.get("lints") == {"workspace": True}, f"{member} does not inherit the lints"
 
 
-@pytest.mark.req("NFR-09")
+@pytest.mark.req("TOOLING")
 def test_clippy_denies_seeded_pedantic_warning(tmp_path: Path) -> None:
     workspace = make_workspace(tmp_path, TRUNCATING_CAST_LIB)
     result = cargo(workspace, "clippy", "--quiet", "--", "-D", "warnings")
@@ -99,7 +126,7 @@ def test_clippy_denies_seeded_pedantic_warning(tmp_path: Path) -> None:
     assert "cast_possible_truncation" in result.stderr
 
 
-@pytest.mark.req("NFR-09")
+@pytest.mark.req("TOOLING")
 def test_clippy_accepts_clean_sample(tmp_path: Path) -> None:
     result = cargo(make_workspace(tmp_path, CLEAN_LIB), "clippy", "--quiet", "--", "-D", "warnings")
     assert result.returncode == 0, result.stderr
@@ -118,7 +145,7 @@ def test_rustfmt_check_accepts_formatted_sample(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout
 
 
-@pytest.mark.req("NFR-15", "TOOLING")
+@pytest.mark.req("TOOLING")
 def test_rust_toolchain_pins_an_exact_stable_version() -> None:
     path = REPO / "rust-toolchain.toml"
     assert path.is_file(), "rust-toolchain.toml is missing"

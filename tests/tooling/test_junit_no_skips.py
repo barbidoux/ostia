@@ -82,6 +82,14 @@ def test_malformed_report_fails_closed(tmp_path: Path) -> None:
 
 
 @pytest.mark.req("TOOLING")
+@pytest.mark.parametrize("text", ["<html/>", "<testcase name='alone'/>"])
+def test_report_that_is_not_junit_fails_closed(tmp_path: Path, text: str) -> None:
+    code, output = check(tmp_path, text)
+    assert code == 1
+    assert "cannot parse" in output
+
+
+@pytest.mark.req("TOOLING")
 def test_missing_report_fails_closed(tmp_path: Path) -> None:
     result = run([sys.executable, CHECK, str(tmp_path / "absent.xml")], cwd=REPO)
     assert result.returncode == 1
