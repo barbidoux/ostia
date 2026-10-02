@@ -4,6 +4,7 @@ The CLI is driven on small spec and plan documents written by each test, so expe
 literal content of those documents.
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -293,6 +294,16 @@ def test_registry_that_is_not_yaml_is_rejected(tmp_path: Path) -> None:
     code, output = validate(write(tmp_path, "requirements.yaml", "requirements: [unclosed\n"))
     assert code == 1
     assert "registry invalid" in output
+
+
+@pytest.mark.req("TOOLING")
+def test_schema_examples_are_valid_registries(tmp_path: Path) -> None:
+    examples = json.loads(Path(SCHEMA).read_text(encoding="utf-8"))["examples"]
+    assert len(examples) == 1
+    for index, example in enumerate(examples):
+        path = write(tmp_path, f"example{index}.yaml", yaml.safe_dump(example, sort_keys=False))
+        code, output = validate(path)
+        assert code == 0, output
 
 
 def committed_registry() -> str:
