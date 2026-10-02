@@ -11,7 +11,8 @@ rust-version = "1.99"
 publish = false
 
 [workspace.lints.rust]
-# NFR-09: no unsafe outside the crates listed in docs/unsafe-allowlist.md (they override it locally).
+# NFR-09: no unsafe outside the crates listed in docs/unsafe-allowlist.md. `forbid` cannot be
+# relaxed by a local allow, so a listed crate declares its own [lints] instead of inheriting these.
 unsafe_code = "forbid"
 missing_docs = "warn"
 

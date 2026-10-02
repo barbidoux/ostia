@@ -12,6 +12,8 @@ from pathlib import Path
 def skipped_in(report: Path) -> tuple[int, list[str]]:
     """Number of skipped tests in a report and the names of those carrying a <skipped> element."""
     root = ET.parse(report).getroot()
+    if root.tag not in ("testsuites", "testsuite"):
+        raise ValueError(f"root element is <{root.tag}>, not <testsuites> or <testsuite>")
     suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
     total = 0
     names: list[str] = []

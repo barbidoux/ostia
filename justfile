@@ -36,13 +36,19 @@ types:
 test: test-rust test-py
     python3 tools/ci/junit_no_skips.py target/nextest/ci/junit.xml target/junit/pytest.xml
 
-# Rust tests with nextest (JUnit in target/nextest/ci/junit.xml); an empty suite passes
+# Rust tests with nextest (JUnit in target/nextest/ci/junit.xml); an empty suite passes.
+# nextest leaves #[ignore] tests out of its JUnit report, so the test list is checked too.
 test-rust *args:
+    rm -f target/nextest/ci/junit.xml target/nextest/list.json
     cargo nextest run --workspace --locked --profile ci --no-tests=pass {{args}}
+    mkdir -p target/nextest
+    cargo nextest list --workspace --locked --message-format json > target/nextest/list.json
+    python3 tools/ci/nextest_no_ignored.py target/nextest/list.json
 
 # Python tests, bench excluded (JUnit in target/junit/pytest.xml); an empty suite passes
 test-py *args:
     mkdir -p target/junit
+    rm -f target/junit/pytest.xml
     uv run python tools/ci/run_pytest.py {{py_test_dirs}} -- -m "not bench" --junitxml=target/junit/pytest.xml {{args}}
 
 # Informational run of an acceptance directory (hardened, same isolation as the gate)
@@ -57,7 +63,7 @@ test-bench:
 # Coverage reports for Rust (cargo-llvm-cov) and Python (pytest-cov); thresholds come with the owner
 coverage:
     cargo llvm-cov nextest --workspace --locked --no-tests=pass --html
-    uv run python tools/ci/run_pytest.py {{py_test_dirs}} -- -m "not bench" --cov=tools --cov-report=term --cov-report=html:target/coverage/python
+    uv run python tools/ci/run_pytest.py {{py_test_dirs}} -- -m "not bench" --cov=tools/ci --cov-report=term --cov-report=html:target/coverage/python
 
 # Traceability matrix: not built yet (WP-0.4); fails rather than pretending
 trace:

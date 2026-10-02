@@ -1,6 +1,7 @@
 # Run with `uvx pre-commit@4.6.2`. Install once:
 #   uvx pre-commit@4.6.2 install --hook-type pre-commit --hook-type commit-msg
 # Local hooks only: they use the pinned project tools, nothing is fetched from hook repositories.
+default_stages: [pre-commit]
 repos:
   - repo: local
     hooks:

@@ -10,7 +10,17 @@ import sys
 from pathlib import Path
 
 TEST_FILE_PATTERNS = ("test_*.py", "*_test.py")
-NO_TESTS_COLLECTED = 5
+JUNIT_OPTION = "--junitxml="
+EMPTY_REPORT = '<?xml version="1.0" encoding="utf-8"?>\n<testsuites tests="0" />\n'
+
+
+def write_empty_reports(pytest_args: list[str]) -> None:
+    """Write the JUnit report pytest would have written, so report checks see this run."""
+    for arg in pytest_args:
+        if arg.startswith(JUNIT_OPTION):
+            report = Path(arg.removeprefix(JUNIT_OPTION))
+            report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_text(EMPTY_REPORT, encoding="utf-8")
 
 
 def has_test_files(directories: list[Path]) -> bool:
@@ -37,6 +47,7 @@ def main(argv: list[str]) -> int:
             return 2
     if not has_test_files(directories):
         print(f"run_pytest: no tests in {', '.join(dirs)}: empty suite passes")
+        write_empty_reports(pytest_args)
         return 0
     cmd = [sys.executable, "-m", "pytest", *pytest_args, *dirs]
     return subprocess.run(cmd, check=False).returncode

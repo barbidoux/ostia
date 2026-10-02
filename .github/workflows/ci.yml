@@ -38,6 +38,7 @@ jobs:
             ~/.rustup
             ~/.cache/uv
             ~/.local/share/uv
+            ~/.local/bin
             target
           key: ci-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'uv.lock') }}-${{ env.NEXTEST_VERSION }}
       - name: Toolchains (rustup from rust-toolchain.toml, uv, just, cargo-nextest)
@@ -49,7 +50,7 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
-          rustup show active-toolchain || rustup toolchain install
+          rustup toolchain install
           uv tool install "rust-just==${JUST_VERSION}"
           cargo nextest --version 2>/dev/null | grep -q "${NEXTEST_VERSION}" \
             || cargo install --locked "cargo-nextest@${NEXTEST_VERSION}"
@@ -62,6 +63,8 @@ jobs:
           python3 tools/ci/acceptance_plan.py --status docs/phase-status.md --acceptance tests/acceptance \
             > target/acceptance-plan.json
           cat target/acceptance-plan.json
+          # Acceptance tests run target/debug/ostia: build it from this commit, never from the cache.
+          cargo build --workspace --locked
           for dir in $(python3 -c 'import json; print(" ".join(json.load(open("target/acceptance-plan.json"))["gate"]))'); do
             python3 tools/lock/ostia_lock.py gate "$dir"
           done
@@ -93,6 +96,7 @@ jobs:
             ~/.rustup
             ~/.cache/uv
             ~/.local/share/uv
+            ~/.local/bin
             target
           key: ci-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'uv.lock') }}-${{ env.NEXTEST_VERSION }}
       - name: Toolchains
@@ -104,7 +108,7 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
-          rustup show active-toolchain || rustup toolchain install
+          rustup toolchain install
           uv tool install "rust-just==${JUST_VERSION}"
           uv sync --frozen
       - name: Current phase acceptance (N/M green)
@@ -112,8 +116,8 @@ jobs:
           mkdir -p target
           python3 tools/ci/acceptance_plan.py --status docs/phase-status.md --acceptance tests/acceptance \
             > target/acceptance-plan.json
+          cargo build --workspace --locked
           for dir in $(python3 -c 'import json; print(" ".join(json.load(open("target/acceptance-plan.json"))["informational"]))'); do
-            cargo build --workspace
             just test-acceptance "$dir" -- "--junitxml=target/acceptance-$dir.xml"
             python3 - "$dir" <<'EOF' >> "$GITHUB_STEP_SUMMARY"
           import sys, xml.etree.ElementTree as ET

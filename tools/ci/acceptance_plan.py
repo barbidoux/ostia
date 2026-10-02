@@ -5,8 +5,9 @@ Prints JSON: {"current": "p<n>", "gate": [...], "informational": [...], "not_run
 - gate: directories of closed phases (n < current), run with `ostia_lock.py gate`, blocking;
 - informational: the current phase's directory, run with `just test-acceptance`, reported as N/M green;
 - not_run: directories of future phases.
-Only `p<n>` directories are phase directories (`common` is a helper package). A closed or current
-phase directory that is not locked is an error: CI fails closed.
+Only `p<n>` directories are phase directories (`common` is a helper package). CI fails closed when
+a closed or current phase directory (P1 to the current phase) is missing or not locked, or when a
+directory name is not canonical (`p01`).
 """
 
 import argparse
@@ -31,17 +32,35 @@ def current_phase(status: str) -> int:
     return int(found[0])
 
 
-def plan(status: str, acceptance: Path) -> dict[str, object]:
-    current = current_phase(status)
-    phases: list[tuple[int, Path]] = []
+def phase_dirs(acceptance: Path) -> dict[int, Path]:
+    """Phase directories by number; a name like `p01` is refused rather than guessed."""
+    found: dict[int, Path] = {}
     if acceptance.is_dir():
         for entry in acceptance.iterdir():
             match = PHASE_DIR.match(entry.name)
-            if entry.is_dir() and match:
-                phases.append((int(match.group(1)), entry))
-    phases.sort()
+            if not (entry.is_dir() and match):
+                continue
+            number = int(match.group(1))
+            if entry.name != f"p{number}":
+                raise PlanError(
+                    f"tests/acceptance/{entry.name} is not a valid phase directory name"
+                )
+            found[number] = entry
+    return found
+
+
+def plan(status: str, acceptance: Path) -> dict[str, object]:
+    current = current_phase(status)
+    phases = phase_dirs(acceptance)
+    # Every phase from P1 to the current one has a locked directory: P0 locks p1, P1 locks p2, ...
+    required = set(range(1, current + 1))
     result: dict[str, list[str]] = {"gate": [], "informational": [], "not_run": []}
-    for number, path in phases:
+    for number in sorted(required | phases.keys()):
+        path = phases.get(number)
+        if path is None:
+            raise PlanError(
+                f"tests/acceptance/p{number} is missing: phase {number} is closed or current"
+            )
         locked = (path / LOCK_NAME).is_file()
         if number < current:
             if not locked:

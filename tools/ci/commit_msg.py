@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 SUBJECT = re.compile(
-    r"^(test|feat|fix|refactor|docs|chore|contract|build|ci|perf)(\([A-Za-z0-9.,\- ]+\))?: .+"
+    r"^(test|feat|fix|refactor|docs|chore|contract|build|ci|perf)(\([A-Za-z0-9][A-Za-z0-9.,\- ]*\))?: \S"
 )
 
 
