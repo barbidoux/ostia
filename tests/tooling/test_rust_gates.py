@@ -70,7 +70,8 @@ def test_clean_sample_compiles_with_workspace_lints(tmp_path: Path) -> None:
 def test_seeded_unsafe_block_fails_to_compile(tmp_path: Path) -> None:
     result = cargo(make_workspace(tmp_path, UNSAFE_LIB), "check", "--quiet")
     assert result.returncode != 0
-    assert "unsafe_code" in result.stderr
+    assert "error: usage of an `unsafe` block" in result.stderr
+    assert "-F unsafe-code" in result.stderr
 
 
 @pytest.mark.req("NFR-09")
@@ -87,12 +88,13 @@ def test_every_workspace_crate_inherits_workspace_lints() -> None:
     for member in members:
         with (REPO / member / "Cargo.toml").open("rb") as f:
             crate = tomllib.load(f)
-        assert crate.get("lints") == {"workspace": True}, f"{member} does not inherit [workspace.lints]"
+        assert crate.get("lints") == {"workspace": True}, f"{member} does not inherit the lints"
 
 
 @pytest.mark.req("NFR-09")
 def test_clippy_denies_seeded_pedantic_warning(tmp_path: Path) -> None:
-    result = cargo(make_workspace(tmp_path, TRUNCATING_CAST_LIB), "clippy", "--quiet", "--", "-D", "warnings")
+    workspace = make_workspace(tmp_path, TRUNCATING_CAST_LIB)
+    result = cargo(workspace, "clippy", "--quiet", "--", "-D", "warnings")
     assert result.returncode != 0
     assert "cast_possible_truncation" in result.stderr
 

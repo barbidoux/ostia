@@ -61,7 +61,8 @@ def test_other_message_is_rejected(tmp_path: Path, message: str) -> None:
 
 @pytest.mark.req("TOOLING")
 def test_git_comment_lines_after_the_subject_are_ignored(tmp_path: Path) -> None:
-    code, stderr = check(tmp_path, "docs: readme\n# Please enter the commit message for your changes.\n")
+    message = "docs: readme\n# Please enter the commit message for your changes.\n"
+    code, stderr = check(tmp_path, message)
     assert code == 0, stderr
 
 

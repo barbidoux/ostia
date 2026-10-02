@@ -11,7 +11,9 @@ from tooling_support import REPO, run
 PLAN = str(REPO / "tools" / "ci" / "acceptance_plan.py")
 
 
-def layout(tmp_path: Path, status: str, locked: list[str], unlocked: list[str]) -> tuple[Path, Path]:
+def layout(
+    tmp_path: Path, status: str, locked: list[str], unlocked: list[str]
+) -> tuple[Path, Path]:
     status_file = tmp_path / "phase-status.md"
     status_file.write_text(status)
     acceptance = tmp_path / "acceptance"
@@ -32,7 +34,9 @@ def plan(status_file: Path, acceptance: Path) -> tuple[int, str, str]:
 
 @pytest.mark.req("TOOLING")
 def test_phase_zero_runs_nothing(tmp_path: Path) -> None:
-    status_file, acceptance = layout(tmp_path, "# Status\n\nCurrent phase: P0 · Foundations\n", [], [])
+    status_file, acceptance = layout(
+        tmp_path, "# Status\n\nCurrent phase: P0 · Foundations\n", [], []
+    )
     code, out, err = plan(status_file, acceptance)
     assert code == 0, err
     assert json.loads(out) == {"current": "p0", "gate": [], "informational": [], "not_run": []}
@@ -58,7 +62,9 @@ def test_dirs_are_classified_against_the_current_phase(tmp_path: Path) -> None:
 
 @pytest.mark.req("TOOLING")
 def test_double_digit_phases_sort_numerically(tmp_path: Path) -> None:
-    status_file, acceptance = layout(tmp_path, "Current phase: P11 · Later\n", ["p2", "p10", "p11"], [])
+    status_file, acceptance = layout(
+        tmp_path, "Current phase: P11 · Later\n", ["p2", "p10", "p11"], []
+    )
     code, out, err = plan(status_file, acceptance)
     assert code == 0, err
     assert json.loads(out)["gate"] == ["p2", "p10"]
@@ -107,7 +113,7 @@ def test_missing_acceptance_directory_means_nothing_to_run(tmp_path: Path) -> No
 
 @pytest.mark.req("TOOLING")
 def test_repository_status_is_readable() -> None:
-    cmd = [sys.executable, PLAN, "--status", "docs/phase-status.md", "--acceptance", "tests/acceptance"]
-    result = run(cmd, cwd=REPO)
+    status, acceptance = "docs/phase-status.md", "tests/acceptance"
+    result = run([sys.executable, PLAN, "--status", status, "--acceptance", acceptance], cwd=REPO)
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["current"].startswith("p")

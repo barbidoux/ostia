@@ -55,13 +55,14 @@ def write(directory: Path, text: str) -> Path:
 
 
 def ruff(*args: str) -> tuple[int, str]:
-    result = run([sys.executable, "-m", "ruff", *args, "--config", PYPROJECT, "--no-cache"], cwd=REPO)
+    cmd = [sys.executable, "-m", "ruff", *args, "--config", PYPROJECT, "--no-cache"]
+    result = run(cmd, cwd=REPO)
     return result.returncode, result.stdout + result.stderr
 
 
 def mypy(sample: Path, cache: Path) -> tuple[int, str]:
-    cmd = [sys.executable, "-m", "mypy", "--config-file", PYPROJECT, "--cache-dir", str(cache), str(sample)]
-    result = run(cmd, cwd=REPO)
+    options = ["--config-file", PYPROJECT, "--cache-dir", str(cache)]
+    result = run([sys.executable, "-m", "mypy", *options, str(sample)], cwd=REPO)
     return result.returncode, result.stdout + result.stderr
 
 

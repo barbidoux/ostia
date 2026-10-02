@@ -20,6 +20,25 @@ dev = [
 [tool.uv]
 package = false
 
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# The rails kit is owner-managed and checked by its own self-tests (tools/kit/test_kit.py).
+extend-exclude = [".claude", "tools/kit", "tools/lock"]
+
+[tool.ruff.lint]
+extend-select = ["ANN"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["tooling_support"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["tools", "tests"]
+# The rails kit is owner-managed and checked by its own self-tests (tools/kit/test_kit.py).
+exclude = ['^\.claude/', '^tools/kit/', '^tools/lock/']
+
 [tool.pytest.ini_options]
 addopts = ["--strict-markers"]
 testpaths = ["tests/tooling"]

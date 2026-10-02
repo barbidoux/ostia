@@ -12,9 +12,9 @@ from typing import Any
 REPO = Path(__file__).resolve().parents[2]
 
 
-def run(cmd: list[str], cwd: Path, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+def run(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     """Run a command, capturing text output; never raises on a non-zero exit."""
-    return subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, check=False)
+    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=False)
 
 
 def repo_cargo_manifest() -> dict[str, Any]:

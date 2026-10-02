@@ -15,7 +15,8 @@ FAILING = "def test_fails() -> None:\n    assert 1 + 1 == 3\n"
 
 
 def runner(tmp_path: Path, *pytest_args: str) -> tuple[int, str]:
-    result = run([sys.executable, RUNNER, str(tmp_path), "--", *ISOLATED, *pytest_args], cwd=tmp_path)
+    cmd = [sys.executable, RUNNER, str(tmp_path), "--", *ISOLATED, *pytest_args]
+    result = run(cmd, cwd=tmp_path)
     return result.returncode, result.stdout + result.stderr
 
 
