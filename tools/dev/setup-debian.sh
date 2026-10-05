@@ -30,7 +30,7 @@ readonly MIN_PYTHON_MINOR=12
 # tool:package:version arguments
 APT_TOOLS=(
     "git:git:--version" "curl:curl:--version" "python3:python3:--version" "gcc:build-essential:--version"
-    "mkfs.vfat:dosfstools:--version" "mkfs.exfat:exfatprogs:-V" "mkfs.ntfs:ntfs-3g:--version"
+    "mkfs.vfat:dosfstools:@package" "mkfs.exfat:exfatprogs:-V" "mkfs.ntfs:ntfs-3g:--version"
     "mkfs.ext4:e2fsprogs:-V" "debugfs:e2fsprogs:-V" "losetup:mount:--version" "blkid:util-linux:--version"
     "findmnt:util-linux:--version" "setpriv:util-linux:--version" "ntfs-3g:ntfs-3g:--version"
     "mount.exfat-fuse:exfat-fuse:-V" "fusermount3:fuse3:-V" "bwrap:bubblewrap:--version"
@@ -57,10 +57,17 @@ report_missing() {
     missing=$((missing + 1))
 }
 
+# First non-empty line of the tool's version output; `@package` (tools without a version option, such
+# as mkfs.vfat) reports the Debian package version instead.
 version_of() {
-    local out args
-    read -r -a args <<<"$2"
-    out="$("$1" "${args[@]}" 2>&1 | head -n 1)"
+    local tool="$1" args_text="$2" package="$3" out args
+    if [[ "$args_text" == @package ]]; then
+        out="$(dpkg-query -W -f='${Version}' "$package" 2>/dev/null)"
+        if [[ -n "$out" ]]; then echo "$package $out"; else echo "unknown version"; fi
+        return
+    fi
+    read -r -a args <<<"$args_text"
+    out="$("$tool" "${args[@]}" 2>&1 | grep -m 1 -v '^[[:space:]]*$')"
     echo "${out:-unknown version}"
 }
 
@@ -70,7 +77,7 @@ check_tool() {
         report_missing "$tool ($hint)"
         return
     fi
-    version="$(version_of "$tool" "$args")"
+    version="$(version_of "$tool" "$args" "${hint#package }")"
     if [[ "$tool" == python3 ]]; then
         local minor
         minor="$(echo "$version" | sed -n 's/^Python 3\.\([0-9][0-9]*\).*/\1/p')"
