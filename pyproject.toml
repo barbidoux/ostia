@@ -4,7 +4,9 @@ version = "0.0.0"
 description = "Open-source media kiosk: scans removable media and transfers only what passes"
 license = "Apache-2.0"
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = [
+    "protobuf==7.36.2",
+]
 
 [dependency-groups]
 dev = [
@@ -18,6 +20,9 @@ dev = [
     "pyyaml==6.0.3",
     "types-pyyaml==6.0.12.20260906",
     "types-jsonschema==4.26.0.20260518",
+    "grpcio-tools==1.84.0",
+    "types-protobuf==7.35.1.20260906",
+    "mypy-protobuf==5.1.0",
 ]
 
 [tool.uv]
@@ -27,7 +32,13 @@ package = false
 line-length = 100
 target-version = "py312"
 # The rails kit is owner-managed and checked by its own self-tests (tools/kit/test_kit.py).
-extend-exclude = [".claude", "tools/kit", "tools/lock"]
+extend-exclude = [
+    ".claude",
+    "tools/kit",
+    "tools/lock",
+    # protoc output (tools/contracts/gen_python.py, Q-19); mypy checks it through the .pyi stub.
+    "workers-py/common/src/ostia_common/engine_v1/engine_pb2.py*",
+]
 # Honour the exclusions for files passed explicitly (pre-commit passes file names).
 force-exclude = true
 
@@ -35,20 +46,21 @@ force-exclude = true
 extend-select = ["ANN"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["tooling_support"]
+known-first-party = ["tooling_support", "ostia_common"]
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["tools", "tests"]
+files = ["tools", "tests", "workers-py/common/src", "workers-py/common/tests"]
+mypy_path = "workers-py/common/src"
 # The rails kit is owner-managed and checked by its own self-tests (tools/kit/test_kit.py).
 exclude = ['^\.claude/', '^tools/kit/', '^tools/lock/']
 
 [tool.pytest.ini_options]
 # The req plugin refuses a run whose tests lack valid requirement ids (WP-0.4); it never deselects.
 addopts = ["--strict-markers", "-p", "tools.traceability.pytest_plugin"]
-pythonpath = ["."]
-testpaths = ["tests/tooling"]
+pythonpath = [".", "workers-py/common/src"]
+testpaths = ["tests/tooling", "workers-py/common/tests"]
 markers = [
     "req(*ids): requirement ids proven by the test (FR-06, NFR-09, TOOLING, ...)",
     "bench: needs real hardware on the Debian bench; never skipped",

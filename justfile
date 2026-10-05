@@ -5,13 +5,21 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 import 'tools/kit/rails.just'
 
 # Python test directories of the fast suite (acceptance runs only through test-acceptance and gate)
-py_test_dirs := "tests/tooling"
+py_test_dirs := "tests/tooling workers-py/common/tests"
 
 default:
     @just --list
 
 # Everything that must be green before a work package is done (audit from WP-0.8)
 check: fmt-check lint types test registry-check trace verify-locks rails-verify kit-test
+
+# Regenerate the committed Python code of proto/ostia/engine/v1/engine.proto (Rust regenerates at build)
+proto:
+    uv run python tools/contracts/gen_python.py
+
+# Rewrite the golden vectors in proto/testdata (written once: changing one is a contract change)
+vectors:
+    uv run python tools/contracts/gen_vectors.py
 
 # Regenerate requirements.yaml from docs/spec.md and docs/plan.md
 registry:

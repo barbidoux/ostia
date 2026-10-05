@@ -116,6 +116,26 @@ def test_req_outside_a_test_function_is_a_compile_error(tmp_path: Path, item: st
 
 
 @pytest.mark.req("TOOLING")
+def test_tests_written_through_a_macro_keep_their_tag(tmp_path: Path) -> None:
+    # proptest! (and any macro_rules taking `$(#[$m:meta])*`) passes #[test] as an opaque fragment.
+    item = """macro_rules! passthrough {
+        ($(#[$m:meta])* fn $name:ident() $body:block) => { $(#[$m])* fn $name() $body };
+    }
+
+    passthrough! {
+        #[req("FR-06")]
+        #[test]
+        fn answer_is_forty_two() {
+            assert_eq!(super::answer(), 42);
+        }
+    }"""
+    result = cargo(crate_with_tests(tmp_path, "", item), "test", "--quiet", "--", "--nocapture")
+    assert result.returncode == 0, result.stderr
+    assert "1 passed" in result.stdout
+    assert "ostia-req: FR-06" in result.stdout.splitlines()
+
+
+@pytest.mark.req("TOOLING")
 def test_a_body_starting_with_an_inner_attribute_compiles(tmp_path: Path) -> None:
     item = """#[req("FR-06")]
     #[test]
