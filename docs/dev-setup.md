@@ -60,6 +60,8 @@ curl --proto '=https' --tlsv1.2 -LsSfo /tmp/uv-install.sh "https://astral.sh/uv/
 sh /tmp/uv-install.sh
 uv tool install "rust-just==${JUST_VERSION}"
 cargo install --locked "cargo-nextest@${NEXTEST_VERSION}" cargo-llvm-cov@0.9.1
+rustup toolchain install "${NIGHTLY_TOOLCHAIN}" --profile minimal   # fuzzing only (WP-0.6)
+cargo install --locked "cargo-fuzz@${CARGO_FUZZ_VERSION}"
 uv sync
 uvx pre-commit@4.6.2 install --hook-type pre-commit --hook-type commit-msg
 ```
@@ -78,6 +80,14 @@ tools/dev/setup-debian.sh --check
 
 It lists every tool with its version, the loop devices, how each file system is mounted (kernel driver or
 FUSE), the helper copy and the sudoers rule, and ends with `environment OK` or `environment incomplete`.
+
+## 5. Fuzzing (NFR-06)
+
+`just test-fuzz` runs the fuzz suite: the frame decoder target for `FUZZ_SECONDS` seconds (default 60), the
+harness self-test (a planted crash must be caught) and the regression inputs. `just fuzz 3600` fuzzes longer
+and grows `fuzz/corpus/frame_decoder` (git-ignored). CI runs `just test-fuzz` on every push and pull request,
+and for 30 minutes every night (`.github/workflows/fuzz-nightly.yml`). A crash input the fuzzer finds goes
+into `fuzz/regressions/` as a `.hex` file (hex digits, `#` comments) and is replayed by `just test` forever.
 
 ## WSL notes
 

@@ -20,7 +20,10 @@ fn unhex(name: &str, text: &str) -> Vec<u8> {
         .flat_map(str::bytes)
         .filter(|byte| !byte.is_ascii_whitespace())
         .collect();
-    assert!(digits.len() % 2 == 0, "{name}: odd number of hex digits");
+    assert!(
+        digits.len().is_multiple_of(2),
+        "{name}: odd number of hex digits"
+    );
     digits
         .chunks(2)
         .map(|pair| {

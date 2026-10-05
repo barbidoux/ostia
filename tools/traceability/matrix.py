@@ -43,7 +43,8 @@ NEXTEST_REPORT = Path("target/nextest/ci/junit.xml")
 PYTEST_REPORT = Path("target/junit/pytest.xml")
 FINGERPRINT = "sources.sha256"
 # What a test run depends on: every file under these directories, and these files (relative to --root).
-SOURCE_DIRECTORIES = ["crates", "proto", "tests", "tools", "workers-py"]
+# fuzz/regressions only: the corpus and artifacts change while fuzzing and no test reads them.
+SOURCE_DIRECTORIES = ["crates", "fuzz/regressions", "proto", "tests", "tools", "workers-py"]
 SOURCE_FILES = [
     "Cargo.toml",
     "Cargo.lock",

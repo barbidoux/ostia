@@ -1,0 +1,37 @@
+# Fuzz targets (cargo-fuzz, NFR-06). Built only with the pinned nightly (tools/dev/versions.env):
+# `cargo +$NIGHTLY_TOOLCHAIN fuzz run frame_decoder`. Its own workspace, outside the main one, because it
+# needs nightly and sanitizer flags; it is never shipped.
+[package]
+name = "ostia-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[features]
+# Compiles the self-test target, whose planted bug proves the harness catches crashes.
+fuzzing_selftest = []
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+ostia-contracts = { path = "../crates/contracts" }
+
+[[bin]]
+name = "frame_decoder"
+path = "fuzz_targets/frame_decoder.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "frame_decoder_selftest"
+path = "fuzz_targets/frame_decoder_selftest.rs"
+required-features = ["fuzzing_selftest"]
+test = false
+doc = false
+bench = false
+
+[workspace]
