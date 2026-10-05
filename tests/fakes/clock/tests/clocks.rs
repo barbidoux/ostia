@@ -16,13 +16,21 @@ fn at(millis: u64) -> SystemTime {
     UNIX_EPOCH + Duration::from_millis(millis)
 }
 
-/// A file of this test in the system temporary directory, removed when dropped.
+/// The directory of one test, under Cargo's per-target temporary directory.
+fn test_dir(name: &str) -> PathBuf {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join("fake-clock")
+        .join(name);
+    fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// A file of one test, removed when dropped.
 struct TempFile(PathBuf);
 
 impl TempFile {
     fn new(name: &str, content: &str) -> Self {
-        let path =
-            std::env::temp_dir().join(format!("ostia-fake-clock-{}-{name}", std::process::id()));
+        let path = test_dir(name).join("clock");
         fs::write(&path, content).unwrap();
         Self(path)
     }
@@ -111,6 +119,9 @@ fn file_clock_keeps_the_last_good_time_when_the_file_turns_bad() {
     file.write("tomorrow");
     assert_eq!(clock.now(), at(START_MS + 2000));
     assert_eq!(clock.monotonic(), Duration::from_secs(2));
+    // A reader can see an empty file while a writer rewrites it in place.
+    file.write("");
+    assert_eq!(clock.now(), at(START_MS + 2000));
 }
 
 #[req("TOOLING")]
@@ -121,7 +132,7 @@ fn file_clock_refuses_a_bad_file_at_creation() {
         FileClock::open(&file.0).unwrap_err(),
         ClockError::NotEpochMillis(file.0.clone())
     );
-    let missing = std::env::temp_dir().join("ostia-fake-clock-does-not-exist");
+    let missing = test_dir("refuse-missing").join("does-not-exist");
     assert_eq!(
         FileClock::open(&missing).unwrap_err(),
         ClockError::Unreadable(missing.clone())
@@ -138,7 +149,7 @@ fn dev_builds_select_the_file_clock_through_the_environment() {
         .unwrap()
         .expect("a clock when the variable is set");
     assert_eq!(clock.now(), at(START_MS));
-    let missing = std::env::temp_dir().join("ostia-fake-clock-env-missing");
+    let missing = test_dir("env-missing").join("does-not-exist");
     assert_eq!(
         FileClock::from_env_value(Some(missing.clone().into_os_string())).unwrap_err(),
         ClockError::Unreadable(missing)

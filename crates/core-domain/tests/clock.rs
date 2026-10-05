@@ -32,9 +32,21 @@ fn system_clock_monotonic_time_never_goes_back() {
 
 #[req("TOOLING")]
 #[test]
+fn system_clock_monotonic_time_moves_forward() {
+    let clock = SystemClock::new();
+    let start = clock.monotonic();
+    std::thread::sleep(Duration::from_millis(20));
+    assert!(clock.monotonic() >= start + Duration::from_millis(20));
+}
+
+#[req("TOOLING")]
+#[test]
 fn a_clock_is_usable_as_a_shared_trait_object() {
     let clock: Arc<dyn Clock> = Arc::new(SystemClock::default());
     let shared = Arc::clone(&clock);
-    let elapsed = std::thread::spawn(move || shared.monotonic()).join();
-    assert!(elapsed.is_ok());
+    let elapsed = std::thread::spawn(move || shared.monotonic())
+        .join()
+        .unwrap();
+    assert!(elapsed < Duration::from_secs(60));
+    assert!(clock.monotonic() >= elapsed);
 }
