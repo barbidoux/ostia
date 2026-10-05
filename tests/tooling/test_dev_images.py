@@ -185,6 +185,34 @@ def test_mount_name_already_in_use_is_refused(tmp_path: Path, mounts: list[str])
 
 
 @pytest.mark.req("TOOLING")
+def test_parallel_mounts_by_the_same_user_all_succeed(tmp_path: Path, mounts: list[str]) -> None:
+    disks = []
+    for index in range(3):
+        disk = tmp_path / "target" / f"parallel{index}.img"
+        mkimage("ext4", 16, disk)
+        disks.append(disk)
+    names = [f"parallel{index}-{os.getpid()}" for index in range(3)]
+    mounts.extend(names)
+    if os.geteuid() == 0:
+        prefix = ["bash", str(LOOPMOUNT)]
+    else:
+        # Fails fast with an explicit message when the helper or sudo is not set up.
+        loopmount("umount", "warm-up-check")
+        prefix = ["sudo", "-n", str(INSTALLED_HELPER)]
+    commands = [[*prefix, "ro", str(disk), name] for disk, name in zip(disks, names, strict=True)]
+    processes = [
+        subprocess.Popen(command, cwd=REPO, text=True, stderr=subprocess.PIPE)
+        for command in commands
+    ]
+    errors = [process.communicate()[1] for process in processes]
+    assert [process.returncode for process in processes] == [0, 0, 0], errors
+    for disk, name in zip(disks, names, strict=True):
+        assert os.path.ismount(MOUNT_BASE / name)
+        assert loopmount("umount", name).returncode == 0
+        assert attached_loops(disk) == ""
+
+
+@pytest.mark.req("TOOLING")
 def test_umount_of_a_name_that_is_not_mounted_fails() -> None:
     name = f"idle-{os.getpid()}"
     result = loopmount("umount", name)

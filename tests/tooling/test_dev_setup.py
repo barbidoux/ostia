@@ -95,6 +95,7 @@ def fake_environment(
         "OSTIA_LOOP_CONTROL": str(loop_control),
         "OSTIA_HELPER": str(helper),
         "OSTIA_AS_USER": "1",
+        "OSTIA_TEST_HOOKS": "1",
     }
 
 
@@ -173,8 +174,10 @@ def test_check_refuses_an_old_python(tmp_path: Path) -> None:
         ("uv", "uv 0.11.0 (x86_64-unknown-linux-gnu)", PINNED["UV_VERSION"]),
         ("cargo-nextest", "cargo-nextest-nextest 0.9.100", PINNED["NEXTEST_VERSION"]),
         ("rustc", "rustc 1.90.0 (x 2026-01-01)", RUST),
+        ("just", f"just {PINNED['JUST_VERSION']}-rc1", PINNED["JUST_VERSION"]),
+        ("rustc", f"rustc {RUST}-nightly (x 2026-01-01)", RUST),
     ],
-    ids=["just", "uv", "nextest", "rustc"],
+    ids=["just", "uv", "nextest", "rustc", "just pre-release", "rustc nightly"],
 )
 def test_check_enforces_pinned_versions(
     tmp_path: Path, tool: str, line: str, required: str
@@ -221,6 +224,16 @@ def test_check_uses_the_real_locations_by_default() -> None:
     prefixes = ("ok: loop devices", "missing: loop devices")
     loops = [line for line in lines if line.startswith(prefixes)]
     assert len(loops) == 1, "\n".join(lines)
+
+
+@pytest.mark.req("NFR-15")
+def test_location_overrides_are_ignored_outside_tests(tmp_path: Path) -> None:
+    # A stray OSTIA_* variable must not make --check look at fake files and report a false OK.
+    env = fake_environment(tmp_path)
+    del env["OSTIA_TEST_HOOKS"]
+    _, lines = check(env)
+    assert not any(str(tmp_path / "ostia-loopmount") in line for line in lines), "\n".join(lines)
+    assert any(" helper /usr/local/sbin/ostia-loopmount" in line for line in lines)
 
 
 def install_environment(tmp_path: Path, apt_status: int = 0) -> tuple[dict[str, str], Path]:
