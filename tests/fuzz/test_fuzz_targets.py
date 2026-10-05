@@ -16,7 +16,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 FUZZ = REPO / "fuzz"
 REGRESSIONS = FUZZ / "regressions"
-PLANTED = REGRESSIONS / "selftest" / "planted.bin"
+PLANTED = REGRESSIONS / "selftest" / "planted.bin"  # ASCII: "OSTIA-PLANTED-BUG"
 VERSIONS = dict(
     line.split("=", 1)
     for line in (REPO / "tools" / "dev" / "versions.env").read_text().splitlines()
@@ -71,10 +71,21 @@ def test_a_planted_crash_is_caught(tmp_path: Path) -> None:
     assert "deadly signal" in result.stderr
 
 
+def unhex(path: Path) -> bytes:
+    """A regression input: hex digits and whitespace, `#` starts a comment line."""
+    lines = path.read_text().splitlines()
+    return bytes.fromhex("".join(line for line in lines if not line.lstrip().startswith("#")))
+
+
 @pytest.mark.req("NFR-06")
 def test_the_real_target_survives_every_regression_input(tmp_path: Path) -> None:
-    inputs = sorted(str(path) for path in REGRESSIONS.glob("*.bin"))
-    assert inputs, f"no regression input in {REGRESSIONS}"
+    sources = sorted(REGRESSIONS.glob("*.hex"))
+    assert sources, f"no regression input in {REGRESSIONS}"
+    inputs = []
+    for source in sources:
+        binary = tmp_path / f"{source.stem}.bin"
+        binary.write_bytes(unhex(source))
+        inputs.append(str(binary))
     result = cargo_fuzz("run", "frame_decoder", *inputs, "--", f"-artifact_prefix={tmp_path}/")
     assert result.returncode == 0, result.stderr[-4000:]
     assert f"Executed {inputs[-1]}" in result.stderr
