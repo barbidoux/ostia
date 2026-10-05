@@ -44,6 +44,23 @@ Blocking: no (blocking for the P1 gate).
 
 ## Answered
 
+### Q-24 · WP-0.6 · NFR-06 · CI time budget for fuzzing
+Context: the repository is public (free Actions minutes) but the owner prefers to limit CI use.
+Options: (a) 60 s per push and pull request, 30 min every night on a cached corpus (b) 30 min weekly
+(c) no scheduled run.
+Recommendation: (a), as prompts/P0.md asks.
+Blocking: yes (CI configuration).
+Answer (2026-10-05): (a).
+
+### Q-23 · WP-0.6 · NFR-06 · fuzzing tools and the NCSA licence
+Context: cargo-fuzz needs a nightly toolchain; the fuzz crate depends on libfuzzer-sys, whose bundled libFuzzer
+is under NCSA (a permissive BSD-like licence) in addition to MIT OR Apache-2.0.
+Options: (a) cargo-fuzz 0.13.2 (MIT OR Apache-2.0), libfuzzer-sys 0.4.13 ((MIT OR Apache-2.0) AND NCSA) in the
+fuzz crate only (never shipped), nightly-2026-10-04 pinned for fuzzing only (b) another fuzzer.
+Recommendation: (a); WP-0.8's deny.toml allows NCSA for the fuzz crate only.
+Blocking: yes (new dependencies, licence).
+Answer (2026-10-05): (a).
+
 ### Q-22 · WP-0.5 · CTR-02 · validating hint and finding severity
 Context: the decoders checked status strictly but accepted any hint (-1, 99) and any severity (up to 2^32-1),
 although the contract says severity is 0 to 4 and the hint feeds the verdict policy.
