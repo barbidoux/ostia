@@ -25,6 +25,8 @@ type="$1" size="$2" output="$3"
 [[ "$size" =~ ^[0-9]+$ ]] && ((10#$size >= 1 && 10#$size <= MAX_MIB)) ||
     refuse "size must be an integer from 1 to $MAX_MIB MiB, got '$size'"
 [[ "$output" != /dev/* ]] || refuse "refusing device path '$output'"
+# Checked on the path as given, before normalisation: a dangling symlink must not be followed.
+[[ ! -e "$output" && ! -L "$output" ]] || refuse "refusing to overwrite existing '$output'"
 
 # Normalise without following a missing final component; `..` is resolved before the pattern check.
 absolute="$(realpath -m -- "$output")"
@@ -37,7 +39,11 @@ case "$type" in
     fat32) tool=mkfs.vfat package=dosfstools args=(-F 32 -n OSTIA) ;;
     exfat) tool=mkfs.exfat package=exfatprogs args=(-L OSTIA) ;;
     ntfs) tool=mkfs.ntfs package=ntfs-3g args=(--quiet --fast --force --label OSTIA) ;;
-    ext2 | ext3 | ext4) tool="mkfs.$type" package=e2fsprogs args=(-q -F -L OSTIA) ;;
+    # The root directory belongs to the caller, so a fixture generator can populate a rw-image mount.
+    ext2 | ext3 | ext4)
+        tool="mkfs.$type" package=e2fsprogs
+        args=(-q -F -L OSTIA -E "root_owner=$(id -u):$(id -g)")
+        ;;
 esac
 
 PATH="$PATH:/usr/sbin:/sbin"

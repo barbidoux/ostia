@@ -107,6 +107,17 @@ Recommendation: (a) for now; (b) when CI time matters.
 Blocking: no.
 Answer (2026-10-05, decided by the agent under the owner's delegation "prends les décisions"): (a).
 
+### Q-15 · WP-0.2 · NFR-15 · where the development helper mounts images
+Context: P0.md says the dev mount helper mounts under `target/mnt/<name>`. The review showed that a mount point
+inside a directory the caller controls lets the caller redirect a root mount with a symlink (for example
+`target/mnt -> /`, name `root`), which turns the sudoers rule into root for the developer account.
+Options: (a) mount points under the root-owned `/run/ostia-loopmount/<uid>/<name>`, umount by name; the helper
+opens the image once and works only through that descriptor (b) keep `target/mnt/<name>` and validate the path
+through an opened directory descriptor.
+Recommendation: (a): simpler, no race to get right; fixture generators read the mount point the helper prints.
+Blocking: no.
+Answer (2026-10-05, decided by the agent under the owner's delegation "prends les décisions"): (a).
+
 ### Q-14 · WP-0.4 · — · traceability CI rules
 Context: P0.md asks the owner to confirm the rules before WP-0.4 is coded: (1) always, unknown ids fail and a
 requirement cited by a ticked work package without a passing test fails; (2) `just trace --gate P<n>` fails on

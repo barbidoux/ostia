@@ -2,7 +2,7 @@
 # Built from the single sources tools/dev/packages.txt (Debian packages), tools/dev/versions.env
 # (uv, just, cargo-nextest) and rust-toolchain.toml. Runs as root, like the CI container; start it with
 # --privileged (devcontainer.json) so the disk-image tests can attach loop devices.
-FROM debian:13
+FROM --platform=linux/amd64 debian:13
 
 COPY tools/dev/packages.txt tools/dev/versions.env rust-toolchain.toml /tmp/ostia/
 

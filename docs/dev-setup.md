@@ -32,23 +32,39 @@ alice ALL=(root) NOPASSWD: /usr/local/sbin/ostia-loopmount
 
 The rule names the root-owned copy, never the script in the repository: a sudoers rule on a file your
 user can edit would amount to unrestricted root. The helper accepts only regular image files under a
-`target/` directory, owned by you, mounts them on `target/mnt/<name>` with `noexec,nosuid,nodev`, and
-refuses any `/dev/...` path.
+`target/` directory and owned by you; it opens the image once and works on that open file, refuses any
+`/dev/...` path, and mounts on `/run/ostia-loopmount/<your uid>/<name>` (directories owned by root) with
+`noexec,nosuid,nodev`, plus `ro` on a read-only loop device for scan mounts:
+
+```bash
+tools/dev/mkimage.sh ext4 16 target/demo.img
+sudo -n /usr/local/sbin/ostia-loopmount ro "$PWD/target/demo.img" demo
+ls /run/ostia-loopmount/$(id -u)/demo
+sudo -n /usr/local/sbin/ostia-loopmount umount demo
+```
+
+Residual risk, accepted for development: root parses the images you give it (libblkid, then the kernel
+or FUSE file-system driver), so a crafted image that exploits one of those parsers would give root to
+your account. Keep the sudoers rule on development machines only. The production mount helper (WP-4.5)
+is a separate, minimal, fuzzed binary.
 
 ## 3. User-level tools (once, as your user)
 
 ```bash
+. tools/dev/versions.env
 curl --proto '=https' --tlsv1.2 -sSfo /tmp/rustup-init.sh https://sh.rustup.rs
 sh /tmp/rustup-init.sh -y --default-toolchain none --profile minimal
-curl --proto '=https' --tlsv1.2 -LsSfo /tmp/uv-install.sh "https://astral.sh/uv/0.12.22/install.sh"
+rustup toolchain install
+curl --proto '=https' --tlsv1.2 -LsSfo /tmp/uv-install.sh "https://astral.sh/uv/${UV_VERSION}/install.sh"
 sh /tmp/uv-install.sh
-uv tool install rust-just==1.58.0
-cargo install --locked cargo-nextest@0.9.146 cargo-llvm-cov@0.9.1
+uv tool install "rust-just==${JUST_VERSION}"
+cargo install --locked "cargo-nextest@${NEXTEST_VERSION}" cargo-llvm-cov@0.9.1
 uv sync
 uvx pre-commit@4.6.2 install --hook-type pre-commit --hook-type commit-msg
 ```
 
-Read the two installer scripts before running them. Keep the versions in step with `tools/dev/versions.env`.
+Read the two installer scripts before running them. The pinned versions live in `tools/dev/versions.env`
+and `rust-toolchain.toml`; `--check` reports any other version as `wrong version`.
 Make `~/.cargo/bin` and `~/.local/bin` visible to non-interactive shells too (for example
 `. "$HOME/.cargo/env"` at the top of `~/.bashrc`).
 
@@ -64,8 +80,9 @@ FUSE), the helper copy and the sudoers rule, and ends with `environment OK` or `
 ## WSL notes
 
 - The stock WSL kernel has no exFAT or NTFS module. The helper then mounts those images with the FUSE
-  drivers `exfat-fuse` and `ntfs-3g` (installed by step 1); the kernel drivers are exercised in CI and on
-  the Debian bench (phases 4 and 5).
+  drivers `exfat-fuse` and `ntfs-3g` (installed by step 1). Which driver was used is printed by the
+  helper (`kernel driver` or `fuse driver`); in CI it depends on the modules of the runner's kernel. The
+  production kernel path is checked on the Debian bench (phases 4 and 5).
 - systemd should be PID 1: `[boot] systemd=true` in `/etc/wsl.conf`.
 - USB devices are not used before phase 4; they need the dedicated Debian machine (spec §19).
 

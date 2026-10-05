@@ -23,12 +23,23 @@ readonly MIN_PYTHON_MINOR=12
 APT_TOOLS=(
     "git:git:--version" "curl:curl:--version" "python3:python3:--version" "gcc:build-essential:--version"
     "mkfs.vfat:dosfstools:--version" "mkfs.exfat:exfatprogs:-V" "mkfs.ntfs:ntfs-3g:--version"
-    "mkfs.ext4:e2fsprogs:-V" "losetup:mount:--version" "blkid:util-linux:--version"
+    "mkfs.ext4:e2fsprogs:-V" "debugfs:e2fsprogs:-V" "losetup:mount:--version" "blkid:util-linux:--version"
     "findmnt:util-linux:--version" "setpriv:util-linux:--version" "ntfs-3g:ntfs-3g:--version"
     "mount.exfat-fuse:exfat-fuse:-V" "fusermount3:fuse3:-V" "bwrap:bubblewrap:--version"
     "clamd:clamav-daemon:--version" "mmls:sleuthkit:-V"
 )
-USER_TOOLS=("rustup:--version" "cargo:--version" "uv:--version" "just:--version" "cargo-nextest:nextest --version")
+USER_TOOLS=("rustup:--version" "rustc:--version" "cargo:--version" "uv:--version" "just:--version"
+    "cargo-nextest:nextest --version")
+
+# Pinned versions: tools/dev/versions.env and the channel of rust-toolchain.toml.
+declare -A PINNED=()
+while IFS='=' read -r key value; do
+    [[ "$key" =~ ^[A-Z_]+$ ]] && PINNED["$key"]="$value"
+done <"$script_dir/versions.env"
+PINNED[RUST]="$(sed -n 's/^channel *= *"\([0-9.]*\)".*/\1/p' "$repo/rust-toolchain.toml")"
+declare -A PIN_OF=([uv]=UV_VERSION [just]=JUST_VERSION [cargo-nextest]=NEXTEST_VERSION [rustc]=RUST)
+
+is_root() { [[ "$(id -u)" == 0 ]]; }
 # file system:kernel module:FUSE helper
 FILE_SYSTEMS=("vfat:vfat:" "exfat:exfat:mount.exfat-fuse" "ntfs:ntfs3:ntfs-3g" "ext4:ext4:")
 
@@ -57,6 +68,16 @@ check_tool() {
         minor="$(echo "$version" | sed -n 's/^Python 3\.\([0-9][0-9]*\).*/\1/p')"
         if [[ -z "$minor" || "$minor" -lt $MIN_PYTHON_MINOR ]]; then
             echo "too old: python3: $version (3.$MIN_PYTHON_MINOR or newer required)"
+            missing=$((missing + 1))
+            return
+        fi
+    fi
+    local pin="${PIN_OF[$tool]:-}"
+    if [[ -n "$pin" ]]; then
+        local expected="${PINNED[$pin]:-}" pattern
+        pattern="(^|[^0-9.])${expected//./\\.}([^0-9.]|$)"
+        if [[ -z "$expected" || ! "$version" =~ $pattern ]]; then
+            echo "wrong version: $tool: $version (${expected:-?} required)"
             missing=$((missing + 1))
             return
         fi
@@ -96,7 +117,7 @@ check() {
     else
         report_missing "loop devices: no loop-control node"
     fi
-    if [[ $EUID -ne 0 || "${OSTIA_AS_USER:-}" == 1 ]]; then
+    if ! is_root || [[ "${OSTIA_AS_USER:-}" == 1 ]]; then
         if [[ ! -f "$helper" ]]; then
             report_missing "helper $helper is not installed"
         elif ! cmp -s -- "$helper" "$repo/tools/dev/loopmount.sh"; then
@@ -119,22 +140,29 @@ check() {
     return 1
 }
 
-install() {
-    if [[ $EUID -ne 0 ]]; then
+install_failed() {
+    echo "setup-debian: $1 failed" >&2
+    exit 1
+}
+
+do_install() {
+    if ! is_root; then
         echo "setup-debian: --install must run as root (sudo tools/dev/setup-debian.sh --install)" >&2
         exit 2
     fi
     local packages
     mapfile -t packages < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$script_dir/packages.txt")
-    apt-get update
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}"
-    install -o root -g root -m 0755 "$script_dir/loopmount.sh" /usr/local/sbin/ostia-loopmount
+    apt-get update || install_failed "apt-get update"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}" ||
+        install_failed "apt-get install"
+    install -o root -g root -m 0755 "$script_dir/loopmount.sh" /usr/local/sbin/ostia-loopmount ||
+        install_failed "installing /usr/local/sbin/ostia-loopmount"
     echo "installed /usr/local/sbin/ostia-loopmount; add the sudoers line from docs/dev-setup.md"
 }
 
 case "${1:---check}" in
     --check) check ;;
-    --install) install && check ;;
+    --install) do_install && check ;;
     *)
         echo "usage: setup-debian.sh [--check | --install]" >&2
         exit 2
