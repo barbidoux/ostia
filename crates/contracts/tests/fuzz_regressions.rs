@@ -1,16 +1,17 @@
 //! Inputs kept in `fuzz/regressions/` (crashes and hangs the fuzzer found, plus seeds of known hard
-//! cases) replay through every decoder on every `just test`, on stable, without the fuzzer (NFR-06).
-//! Each input is a `.hex` file: hex digits and whitespace, `#` starts a comment line, so a diff shows
-//! the bytes. The planted-bug input of the fuzz harness self-test lives in `fuzz/regressions/selftest/`
-//! and is not replayed here: it only crashes the self-test target.
+//! cases) replay through the fuzz targets' own exercise (`fuzz/src/lib.rs`, both caps and every property
+//! it checks) on every `just test`, on stable, without the fuzzer (NFR-06). Each input is a `.hex` file:
+//! hex digits and whitespace, `#` starts a comment line, so a diff shows the bytes. The list below is
+//! literal: a new input fails this test until it is added with its expected outcome. The planted inputs
+//! of the harness self-test (`fuzz/regressions/selftest/`) only trip the self-test target.
+
+#[path = "../../../fuzz/src/lib.rs"]
+mod harness;
 
 use std::fs;
-use std::io::Cursor;
 use std::path::PathBuf;
 
-use ostia_contracts::{
-    DEFAULT_MAX_FRAME, decode_frame, decode_request, decode_response, read_frame,
-};
+use ostia_contracts::{DEFAULT_MAX_FRAME, decode_frame, decode_response};
 use ostia_traceability::req;
 
 fn unhex(name: &str, text: &str) -> Vec<u8> {
@@ -49,23 +50,17 @@ fn regressions() -> Vec<(String, Vec<u8>)> {
     inputs
 }
 
-/// What the fuzz target does with one input; the outcome of decoding it as a framed response.
-fn exercise(data: &[u8]) -> Option<&'static str> {
-    let _ = read_frame(&mut Cursor::new(data), DEFAULT_MAX_FRAME);
-    let _ = decode_request(data);
-    let _ = decode_response(data);
+/// The outcome of decoding the input as a framed response: `None` when accepted, else the error kind.
+fn outcome(data: &[u8]) -> Option<&'static str> {
     match decode_frame(data, DEFAULT_MAX_FRAME) {
-        Ok(body) => {
-            let _ = decode_request(body);
-            decode_response(body).err().map(|error| error.kind())
-        }
+        Ok(body) => decode_response(body).err().map(|error| error.kind()),
         Err(error) => Some(error.kind()),
     }
 }
 
 #[req("NFR-06", "CTR-02")]
 #[test]
-fn every_regression_input_replays_without_panicking() {
+fn every_regression_input_replays_through_the_fuzz_exercise() {
     let inputs = regressions();
     let names: Vec<&str> = inputs.iter().map(|(name, _)| name.as_str()).collect();
     assert_eq!(
@@ -77,12 +72,12 @@ fn every_regression_input_replays_without_panicking() {
         ]
     );
     for (name, data) in &inputs {
-        let outcome = exercise(data);
+        harness::exercise(data);
         let expected = match name.as_str() {
             "oversized_header.hex" => Some("oversized"),
             "varint_overflow.hex" => Some("malformed"),
             _ => None,
         };
-        assert_eq!(outcome, expected, "{name}");
+        assert_eq!(outcome(data), expected, "{name}");
     }
 }

@@ -10,6 +10,11 @@ import pytest
 from tooling_support import REPO, run
 
 CLIPPY = "cargo clippy --workspace --all-targets --locked -- -D warnings"
+# fuzz/ is its own workspace (nightly for fuzzing); it is still formatted and linted with the stable gates.
+FUZZ_CLIPPY = (
+    "cargo clippy --manifest-path fuzz/Cargo.toml --all-targets --features fuzzing_selftest "
+    "--locked -- -D warnings"
+)
 NO_SKIPS = "python3 tools/ci/junit_no_skips.py target/nextest/ci/junit.xml target/junit/pytest.xml"
 GATES = [
     "check",
@@ -58,8 +63,15 @@ def test_registry_recipes_generate_and_check_requirements_yaml() -> None:
 @pytest.mark.parametrize(
     ("name", "expected"),
     [
-        ("fmt-check", ["cargo fmt --all --check", "uv run ruff format --check"]),
-        ("lint", [CLIPPY, "uv run ruff check"]),
+        (
+            "fmt-check",
+            [
+                "cargo fmt --all --check",
+                "cargo fmt --manifest-path fuzz/Cargo.toml --check",
+                "uv run ruff format --check",
+            ],
+        ),
+        ("lint", [CLIPPY, FUZZ_CLIPPY, "uv run ruff check"]),
         ("types", ["uv run mypy"]),
         ("test", ["test: test-rust test-py"]),
         ("test-py", ["rm -f target/junit/pytest.xml"]),
@@ -104,7 +116,7 @@ def test_each_suite_fingerprints_its_sources_before_running(
     assert lines.index(write) < runs[0]
 
 
-@pytest.mark.req("NFR-06")
+@pytest.mark.req("TOOLING")
 def test_fuzz_suite_writes_junit_and_fails_on_skips() -> None:
     lines = recipe("test-fuzz")
     run = "uv run python tools/ci/run_pytest.py tests/fuzz -- --junitxml=target/junit/fuzz.xml {{ args }}"
