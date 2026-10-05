@@ -11,6 +11,11 @@ import pytest
 from tooling_support import REPO
 
 CI = REPO / ".github" / "workflows" / "ci.yml"
+WORKFLOWS = REPO / ".github" / "workflows"
+# rails.yml is owner-managed (a rails file): its actions are pinned by the owner, not here.
+OWNER_MANAGED = {"rails.yml"}
+# A third-party action is pinned to a full commit SHA, with the release it corresponds to.
+PINNED = r"@[0-9a-f]{40} # v\d+\.\d+\.\d+$"
 
 
 def workflow() -> str:
@@ -92,6 +97,23 @@ def test_workflow_never_bypasses_hooks_or_rails() -> None:
     assert "rails.yml" not in text
 
 
+@pytest.mark.req("TOOLING")
+def test_every_action_is_pinned_to_a_commit_sha_with_its_release() -> None:
+    checked = 0
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        if path.name in OWNER_MANAGED:
+            continue
+        for line in path.read_text().splitlines():
+            if not re.match(r"^\s*(?:- )?uses:", line):
+                continue
+            checked += 1
+            assert re.match(rf"^\s*(?:- )?uses: [\w.-]+/[\w./-]+{PINNED}", line), (
+                f"{path.name}: action not pinned to a commit SHA with a # vX.Y.Z comment: "
+                f"{line.strip()}"
+            )
+    assert checked >= 6, f"only {checked} actions found in the workflows"
+
+
 NIGHTLY = REPO / ".github" / "workflows" / "fuzz-nightly.yml"
 FUZZ_TOOLS = (
     'rustup toolchain install "${NIGHTLY_TOOLCHAIN}" --profile minimal',
@@ -122,7 +144,7 @@ def test_a_nightly_run_fuzzes_longer_on_a_cached_corpus() -> None:
     assert "      FUZZ_CORPUS: fuzz/corpus/frame_decoder\n" in text
     for line in FUZZ_TOOLS:
         assert line in text, f"nightly: missing {line!r}"
-    assert "actions/cache@v4" in text
+    assert re.search(rf"^        uses: actions/cache{PINNED}", text, re.MULTILINE)
     assert "path: fuzz/corpus" in text
     assert "run: just test-fuzz" in text
     assert "continue-on-error" not in text
@@ -133,7 +155,7 @@ def test_a_nightly_run_fuzzes_longer_on_a_cached_corpus() -> None:
     upload = re.search(
         r"^      - name: Crash and timeout inputs\n"
         r"        if: failure\(\)\n"
-        r"        uses: actions/upload-artifact@v4\n"
+        r"        uses: actions/upload-artifact@[0-9a-f]{40} # v\d+\.\d+\.\d+\n"
         r"        with:\n"
         r"          name: fuzz-artifacts\n"
         r"          path: fuzz/artifacts\n",
