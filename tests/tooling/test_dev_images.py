@@ -35,9 +35,9 @@ FILE_SYSTEMS = [
 ]
 
 
-def loopmount(*args: str) -> subprocess.CompletedProcess[str]:
+def loopmount(*args: str, cwd: Path = REPO) -> subprocess.CompletedProcess[str]:
     if os.geteuid() == 0:
-        return run(["bash", str(LOOPMOUNT), *args], cwd=REPO)
+        return run(["bash", str(LOOPMOUNT), *args], cwd=cwd)
     assert INSTALLED_HELPER.is_file(), (
         f"{INSTALLED_HELPER} is not installed: run `sudo tools/dev/setup-debian.sh --install`"
     )
@@ -45,7 +45,7 @@ def loopmount(*args: str) -> subprocess.CompletedProcess[str]:
         f"{INSTALLED_HELPER} differs from tools/dev/loopmount.sh: run "
         "`sudo tools/dev/setup-debian.sh --install` again"
     )
-    result = run(["sudo", "-n", str(INSTALLED_HELPER), *args], cwd=REPO)
+    result = run(["sudo", "-n", str(INSTALLED_HELPER), *args], cwd=cwd)
     assert "a password is required" not in result.stderr, (
         "sudo -n refused the helper: add the sudoers line from docs/dev-setup.md"
     )
@@ -169,6 +169,27 @@ def test_image_owned_by_another_user_is_refused(tmp_path: Path, mounts: list[str
     assert refused.returncode == 2
     assert "loopmount: image is not owned by the invoking user" in refused.stderr
     assert not os.path.ismount(MOUNT_BASE / inner_name)
+
+
+@pytest.mark.req("TOOLING")
+def test_helper_never_imports_code_from_the_callers_directory(
+    tmp_path: Path, mounts: list[str]
+) -> None:
+    # The caller chooses the working directory: modules found there must not run as root.
+    trap_dir = tmp_path / "trap"
+    trap_dir.mkdir()
+    marker = tmp_path / "imported"
+    for module in ("re", "fcntl", "stat", "errno"):
+        (trap_dir / f"{module}.py").write_text(
+            f"open({str(marker)!r}, 'a').write({module!r})\nraise SystemExit(99)\n"
+        )
+    disk = tmp_path / "target" / "trap.img"
+    mkimage("ext4", 16, disk)
+    name = f"trap-{os.getpid()}"
+    mounts.append(name)
+    mounted = loopmount("ro", str(disk), name, cwd=trap_dir)
+    assert not marker.exists(), f"root imported {marker.read_text()}.py from the caller's directory"
+    assert mounted.returncode == 0, mounted.stdout + mounted.stderr
 
 
 @pytest.mark.req("TOOLING")
