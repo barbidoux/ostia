@@ -23,7 +23,9 @@ impl SystemClock {
     /// A system clock whose monotonic origin is now.
     #[must_use]
     pub fn new() -> Self {
-        todo!()
+        Self {
+            origin: Instant::now(),
+        }
     }
 }
 
@@ -35,11 +37,10 @@ impl Default for SystemClock {
 
 impl Clock for SystemClock {
     fn now(&self) -> SystemTime {
-        todo!()
+        SystemTime::now()
     }
 
     fn monotonic(&self) -> Duration {
-        let _ = self.origin;
-        todo!()
+        self.origin.elapsed()
     }
 }
