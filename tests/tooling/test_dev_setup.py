@@ -64,7 +64,7 @@ COREUTILS = ["grep", "cmp", "head", "id", "cat", "tr", "sed", "cut", "sort"]
 
 def fake_tool(bin_dir: Path, name: str, args: str, line: str) -> None:
     script = bin_dir / name
-    script.write_text(f'#!/bin/sh\n[ "$*" = "{args}" ] || exit 1\necho \'{line}\'\n')
+    script.write_text(f"#!/bin/sh\n[ \"$*\" = '{args}' ] || exit 1\necho '{line}'\n")
     script.chmod(0o755)
 
 
