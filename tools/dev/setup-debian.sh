@@ -3,7 +3,8 @@
 #
 #   setup-debian.sh [--check]   verify every tool, its version, loop devices and file-system support
 #   setup-debian.sh --install   as root: install tools/dev/packages.txt with apt, install the root-owned
-#                               mount helper /usr/local/sbin/ostia-loopmount, then run --check
+#                               mount helper /usr/local/sbin/ostia-loopmount, then check the system part
+#                               (root has no user-level PATH: the user runs --check afterwards)
 #
 # --install is idempotent and is run by the owner (`sudo tools/dev/setup-debian.sh --install`), never by
 # an agent. User-level tools (rustup, cargo, uv, just, cargo-nextest) are installed as in docs/dev-setup.md.
@@ -106,16 +107,19 @@ kernel_has() {
     command -v modinfo >/dev/null 2>&1 && modinfo -- "$1" >/dev/null 2>&1
 }
 
+# check [system]: `system` leaves out the user-level tools, the helper and the sudoers rule.
 check() {
-    local entry tool package args fs module fuse
+    local scope="${1:-all}" entry tool package args fs module fuse
     for entry in "${APT_TOOLS[@]}"; do
         IFS=: read -r tool package args <<<"$entry"
         check_tool "$tool" "package $package" "$args"
     done
-    for entry in "${USER_TOOLS[@]}"; do
-        IFS=: read -r tool args <<<"$entry"
-        check_tool "$tool" "see docs/dev-setup.md" "$args"
-    done
+    if [[ "$scope" == all ]]; then
+        for entry in "${USER_TOOLS[@]}"; do
+            IFS=: read -r tool args <<<"$entry"
+            check_tool "$tool" "see docs/dev-setup.md" "$args"
+        done
+    fi
     for entry in "${FILE_SYSTEMS[@]}"; do
         IFS=: read -r fs module fuse <<<"$entry"
         if kernel_has "$module"; then
@@ -133,7 +137,7 @@ check() {
     else
         report_missing "loop devices: no loop-control node"
     fi
-    if ! is_root || [[ "${OSTIA_AS_USER:-}" == 1 ]]; then
+    if [[ "$scope" == all ]] && { ! is_root || [[ "${OSTIA_AS_USER:-}" == 1 ]]; }; then
         if [[ ! -f "$helper" ]]; then
             report_missing "helper $helper is not installed"
         elif ! cmp -s -- "$helper" "$repo/tools/dev/loopmount.sh"; then
@@ -147,7 +151,10 @@ check() {
             report_missing "sudoers rule for $helper (see docs/dev-setup.md)"
         fi
     fi
-    if [[ $missing -eq 0 ]]; then
+    if [[ $missing -eq 0 && "$scope" == system ]]; then
+        echo "system part OK; now run tools/dev/setup-debian.sh --check as your user"
+        return 0
+    elif [[ $missing -eq 0 ]]; then
         echo "environment OK"
         return 0
     fi
@@ -178,7 +185,7 @@ do_install() {
 
 case "${1:---check}" in
     --check) check ;;
-    --install) do_install && check ;;
+    --install) do_install && check system ;;
     *)
         echo "usage: setup-debian.sh [--check | --install]" >&2
         exit 2
