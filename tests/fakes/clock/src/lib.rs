@@ -4,6 +4,10 @@
 //! - [`FileClock`]: reads the time (epoch milliseconds) from a file on every call, so a black-box test can
 //!   move the time of a running dev build by rewriting the file. Dev builds select it with the
 //!   `OSTIA_FAKE_CLOCK` environment variable (the path of the file), see [`FileClock::from_env_value`].
+//!   Writers replace the file atomically (write a temporary file, then rename it): a reader could
+//!   otherwise see a shorter number. A file that cannot be read or parsed keeps the last good time, so
+//!   time freezes rather than failing. Release builds must never honour the variable (the CLI wires it
+//!   in dev builds only).
 
 use std::ffi::OsString;
 use std::fmt;
@@ -54,7 +58,8 @@ impl FakeClock {
     }
 
     fn lock(&self) -> MutexGuard<'_, FakeState> {
-        // A test that panicked while holding the lock leaves a consistent state behind.
+        // A thread that panicked while holding the lock must not make every later read panic; the
+        // state it left is used as is.
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
