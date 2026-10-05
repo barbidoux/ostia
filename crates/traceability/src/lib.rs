@@ -1,8 +1,9 @@
 //! `#[req("FR-06", ...)]`: tags a test with the requirements it proves.
 //!
-//! The attribute goes on a test function, above its `#[test]` attribute (an attribute placed below
-//! `#[test]` never sees it). At compile time it checks that every id has the format of a requirement id
-//! (`FR-06`, `NFR-09`, `DEEP-01`, ...) or is the reserved `TOOLING`; anywhere else it is a compile error.
+//! The attribute goes on a test function, above its test attribute: one whose path ends with `test`
+//! (`#[test]`, `#[tokio::test]`; an attribute placed below `#[test]` never sees it). Anywhere else it is
+//! a compile error. At compile time it checks that every id has the format of a requirement id
+//! (`FR-06`, `NFR-09`, `DEEP-01`, ...) or is the reserved `TOOLING`.
 //! It makes the test print one `ostia-req: <ids>` line (sorted, comma-separated) when it runs. The nextest
 //! `JUnit` report keeps that line (`store-success-output` in `.config/nextest.toml`), and the traceability
 //! matrix (`tools/traceability/matrix.py`) reads each test's ids from it and checks them against the
@@ -115,8 +116,26 @@ fn with_marker(item: &TokenStream, ids: &[String]) -> Option<TokenStream> {
     if !is_test || !is_function || body.delimiter() != Delimiter::Brace {
         return None;
     }
-    let mut statements = marker_statement(&format!("{MARKER}{}", ids.join(",")));
-    statements.extend(body.stream());
+    // Inner attributes (`#![...]`) must stay first in the body; the marker goes right after them.
+    // The line starts with a newline: with one test thread, libtest has already printed
+    // "test <name> ... " without one.
+    let body_tokens: Vec<TokenTree> = body.stream().into_iter().collect();
+    let mut inner = 0;
+    while let [
+        TokenTree::Punct(hash),
+        TokenTree::Punct(bang),
+        TokenTree::Group(group),
+        ..,
+    ] = &body_tokens[inner..]
+        && hash.as_char() == '#'
+        && bang.as_char() == '!'
+        && group.delimiter() == Delimiter::Bracket
+    {
+        inner += 3;
+    }
+    let mut statements: TokenStream = body_tokens[..inner].iter().cloned().collect();
+    statements.extend(marker_statement(&format!("\n{MARKER}{}", ids.join(","))));
+    statements.extend(body_tokens[inner..].iter().cloned());
     let mut tagged = Group::new(Delimiter::Brace, statements);
     tagged.set_span(body.span());
     let last = tokens.len() - 1;

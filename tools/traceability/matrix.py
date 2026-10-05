@@ -14,11 +14,14 @@ Rules (docs/questions.md Q-14):
   (docs/phase-status.md) without a passing test fails;
 - --gate P<n>: every MUST of phase P<n> without a passing test fails; --gate all: every MUST of the spec.
 A test passes only if its report shows it ran without failure, error or skip. Every reported test carries
-exactly one tag. Missing or malformed inputs fail, and so do reports older than the sources (the reports
-come from `just test`; a stale run cannot vouch for the current tree).
+exactly one tag. Missing or malformed inputs fail. Each report must sit next to a fingerprint of the sources
+it was produced from (`sources.sha256`, written by `just test-rust` / `just test-py` with
+`--write-fingerprint` before the suite runs); a report of other sources is refused, since a stale run cannot
+vouch for the current tree.
 """
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -30,16 +33,35 @@ from typing import Any
 import yaml
 from registry import RegistryError, plan_citations
 
-REQ_ATTRIBUTE = re.compile(r"\breq\(([^)]*)\)")
+# `#[req(...)]` or `#[path::req(...)]`, up to the closing `)]`, across lines.
+REQ_ATTRIBUTE = re.compile(r"#\s*\[\s*(?:\w+\s*::\s*)*req\s*\((.*?)\)\s*\]", re.DOTALL)
 MARKER = "ostia-req: "
 STRING = re.compile(r'"([^"]*)"')
 TICKED = re.compile(r"^- \[x\] (WP-\d+\.\d+)\b", re.MULTILINE)
 GATE = re.compile(r"^(P[0-9]|all)$")
 NEXTEST_REPORT = Path("target/nextest/ci/junit.xml")
 PYTEST_REPORT = Path("target/junit/pytest.xml")
-# Sources whose changes make the reports stale (relative to --root, file pattern).
-SOURCES = [("crates", "*.rs"), ("tests", "*.py"), ("tools", "*.py"), ("workers-py", "*.py")]
-IGNORED_PARTS = {"target", ".venv", "__pycache__", "node_modules"}
+FINGERPRINT = "sources.sha256"
+# What a test run depends on: every file under these directories, and these files (relative to --root).
+SOURCE_DIRECTORIES = ["crates", "tests", "tools", "workers-py"]
+SOURCE_FILES = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    "pyproject.toml",
+    "uv.lock",
+    ".config/nextest.toml",
+]
+IGNORED_PARTS = {
+    "target",
+    ".venv",
+    "__pycache__",
+    "node_modules",
+    ".hypothesis",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+}
 
 
 class TraceError(Exception):
@@ -61,6 +83,7 @@ class Case:
     name: str
     status: str
     ids: list[str]
+    tags: int
     output: str
 
 
@@ -88,36 +111,48 @@ def read_cases(root: Path, report: Path) -> list[Case]:
             status = "skipped"
         else:
             status = "passed"
-        ids = [
-            rid.strip()
-            for prop in case.iter("property")
-            if prop.get("name") == "req"
-            for rid in prop.get("value", "").split(",")
-            if rid.strip()
+        values = [
+            prop.get("value", "") for prop in case.iter("property") if prop.get("name") == "req"
         ]
+        ids = [rid.strip() for value in values for rid in value.split(",") if rid.strip()]
         output = case.findtext("system-out", "")
-        cases.append(Case(case.get("classname", ""), case.get("name", ""), status, ids, output))
+        name = case.get("name", "")
+        cases.append(Case(case.get("classname", ""), name, status, ids, len(values), output))
     return cases
 
 
 def sources(root: Path) -> list[Path]:
-    found = []
-    for directory, pattern in SOURCES:
-        for path in (root / directory).rglob(pattern):
-            if not IGNORED_PARTS.intersection(path.relative_to(root).parts):
+    found = [root / name for name in SOURCE_FILES if (root / name).is_file()]
+    for directory in SOURCE_DIRECTORIES:
+        for path in (root / directory).rglob("*"):
+            parts = path.relative_to(root).parts
+            if path.is_file() and path.suffix != ".pyc" and not IGNORED_PARTS.intersection(parts):
                 found.append(path)
     return sorted(found)
 
 
+def fingerprint(root: Path, files: list[Path]) -> str:
+    """SHA-256 over the relative path and the content hash of every source."""
+    digest = hashlib.sha256()
+    for path in files:
+        try:
+            content = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError as exc:
+            raise TraceError(f"cannot read {path}: {exc}") from exc
+        digest.update(f"{path.relative_to(root).as_posix()}\0{content}\n".encode())
+    return digest.hexdigest()
+
+
 def check_fresh(root: Path, files: list[Path]) -> None:
-    """Refuse reports older than the newest source."""
-    if not files:
-        return
-    newest = max(files, key=lambda path: path.stat().st_mtime_ns)
+    """Refuse a report whose fingerprint is missing or differs from the current sources."""
+    current = fingerprint(root, files)
     for report in (NEXTEST_REPORT, PYTEST_REPORT):
-        if (root / report).stat().st_mtime_ns < newest.stat().st_mtime_ns:
-            relative = newest.relative_to(root).as_posix()
-            raise TraceError(f"{report} is older than {relative}: run `just test` first")
+        try:
+            recorded = (root / report.parent / FINGERPRINT).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise TraceError(f"{report} has no source fingerprint: run `just test` first") from exc
+        if recorded != current:
+            raise TraceError(f"{report} was produced from other sources: run `just test` first")
 
 
 def source_tags(root: Path, files: list[Path]) -> list[tuple[str, list[str]]]:
@@ -158,10 +193,12 @@ def python_tests(cases: list[Case], failures: list[str]) -> list[TestRecord]:
     records = []
     for case in cases:
         name = f"{case.classname}::{case.name}"
-        if case.ids:
-            records.append(TestRecord("python", name, case.status, case.ids, name))
-        else:
+        if case.tags == 0:
             failures.append(f"Python test {name} has no req property")
+        elif case.tags > 1:
+            failures.append(f"Python test {name} has {case.tags} req properties")
+        else:
+            records.append(TestRecord("python", name, case.status, case.ids, name))
     return records
 
 
@@ -236,10 +273,26 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Ostia traceability matrix")
     parser.add_argument("--root", type=Path, default=Path("."))
     parser.add_argument("--gate")
+    parser.add_argument(
+        "--write-fingerprint",
+        type=Path,
+        metavar="PATH",
+        help="write the fingerprint of the current sources to PATH (under --root) and exit",
+    )
     args = parser.parse_args(argv)
     if args.gate is not None and not GATE.match(args.gate):
         parser.error("--gate must be P0 to P9 or all")
     root: Path = args.root
+    if args.write_fingerprint is not None:
+        try:
+            value = fingerprint(root, sources(root))
+            destination = root / args.write_fingerprint
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(value + "\n", encoding="utf-8")
+        except (TraceError, OSError) as exc:
+            print(f"trace: {exc}")
+            return 1
+        return 0
     try:
         document, failures = build(root, args.gate)
     except TraceError as exc:

@@ -48,6 +48,7 @@ test: test-rust test-py
 # nextest leaves #[ignore] tests out of its JUnit report, so the test list is checked too.
 test-rust *args:
     rm -f target/nextest/ci/junit.xml target/nextest/list.json
+    uv run python tools/traceability/matrix.py --write-fingerprint target/nextest/ci/sources.sha256
     cargo nextest run --workspace --locked --profile ci --no-tests=pass {{args}}
     mkdir -p target/nextest
     cargo nextest list --workspace --locked --message-format json > target/nextest/list.json
@@ -57,6 +58,7 @@ test-rust *args:
 test-py *args:
     mkdir -p target/junit
     rm -f target/junit/pytest.xml
+    uv run python tools/traceability/matrix.py --write-fingerprint target/junit/sources.sha256
     uv run python tools/ci/run_pytest.py {{py_test_dirs}} -- -m "not bench" --junitxml=target/junit/pytest.xml {{args}}
 
 # Informational run of an acceptance directory (hardened, same isolation as the gate)
