@@ -20,3 +20,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   loop devices and exFAT/NTFS support; `--install` for the owner), disk-image scripts `mkimage.sh` and
   `loopmount.sh` (root helper behind a sudoers rule on a root-owned copy), a Debian 13 dev container and CI
   built from the same package and version lists; disk-image smoke tests for FAT32, exFAT, NTFS and ext4.
+- Traceability tool (WP-0.4): `#[req("ID")]` attribute (crate `ostia-traceability`), pytest `req` marker
+  checked against the registry at collection, and `just trace`: a matrix (`target/traceability.{json,md}`)
+  built from the test reports; it fails on unknown ids and on requirements of ticked work packages without a
+  passing test, and `--gate P<n>|all` on MUSTs without one. `just check` runs it.

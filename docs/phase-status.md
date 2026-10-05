@@ -12,7 +12,7 @@ Legend: `- [x] WP-x.y scope — branch` once merged. Gate: ticked by the owner a
 - [x] WP-0.1 Repository skeleton: Cargo workspace, uv project, justfile, rust-toolchain.toml, pre-commit hooks, Apache-2... (after: —) — wp/0.1-repository-skeleton
 - [x] WP-0.2 Dev environment: Debian WSL setup script, dev container identical to the CI image; checks for loop devices,... (after: 0.1) — wp/0.2-dev-environment
 - [x] WP-0.3 Requirements registry: requirements.yaml (id, level, phase, ANSSI) generated from the specification (after: 0.1) — wp/0.3-requirements-registry
-- [ ] WP-0.4 Traceability tool: #[req] attribute and pytest marker, matrix generator, CI rule “a MUST of the active phas... (after: 0.3)
+- [x] WP-0.4 Traceability tool: #[req] attribute and pytest marker, matrix generator, CI rule “a MUST of the active phas... (after: 0.3) — wp/0.4-traceability-tool
 - [ ] WP-0.5 Protobuf contracts v1 and framing libraries in Rust and Python: length prefix, size cap, version check (after: 0.1)
 - [ ] WP-0.6 Fuzz target for the frame decoder, wired into CI (short run per merge, long nightly) (after: 0.5)
 - [ ] WP-0.7 Test doubles: fake engine (configurable hint, score, delay, crash), fake clock, fake collector and fake pro... (after: 0.5)
