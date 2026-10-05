@@ -2,24 +2,26 @@
 
 Usage: matrix.py [--root .] [--gate P<n>|all]
 
-Inputs (under --root): requirements.yaml, docs/plan.md, docs/phase-status.md, the `#[req(...)]` attributes
-of Rust functions under crates/, the nextest report target/nextest/ci/junit.xml and the pytest report
-target/junit/pytest.xml (whose testcases carry the `req` property written by the pytest plugin).
+Inputs (under --root): requirements.yaml, docs/plan.md, docs/phase-status.md, the nextest report
+target/nextest/ci/junit.xml (each tagged test prints one `ostia-req: <ids>` line, kept in its system-out:
+see crates/traceability) and the pytest report target/junit/pytest.xml (each testcase carries the `req`
+property written by the pytest plugin). The ids of every `#[req(...)]` under crates/ (comments included) are
+checked against the registry, but only the reports say which tests ran and passed.
 Outputs: target/traceability.json and target/traceability.md.
 
 Rules (docs/questions.md Q-14):
 - always: an id that is not in the registry fails; a requirement cited by a ticked work package
   (docs/phase-status.md) without a passing test fails;
 - --gate P<n>: every MUST of phase P<n> without a passing test fails; --gate all: every MUST of the spec.
-A test passes only if its report shows it ran without failure, error or skip. A Rust test absent from the
-nextest report did not run. Missing or malformed inputs fail.
+A test passes only if its report shows it ran without failure, error or skip. Every reported test carries
+exactly one tag. Missing or malformed inputs fail, and so do reports older than the sources (the reports
+come from `just test`; a stale run cannot vouch for the current tree).
 """
 
 import argparse
 import json
 import re
 import sys
-import tomllib
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,14 +30,16 @@ from typing import Any
 import yaml
 from registry import RegistryError, plan_citations
 
-REQ_ATTRIBUTE = re.compile(r"#\[req\(([^)]*)\)\]")
-FUNCTION = re.compile(r"\bfn\s+([A-Za-z_][A-Za-z0-9_]*)")
-OTHER_ATTRIBUTES = re.compile(r"#\[[^\]]*\]")
+REQ_ATTRIBUTE = re.compile(r"\breq\(([^)]*)\)")
+MARKER = "ostia-req: "
 STRING = re.compile(r'"([^"]*)"')
 TICKED = re.compile(r"^- \[x\] (WP-\d+\.\d+)\b", re.MULTILINE)
 GATE = re.compile(r"^(P[0-9]|all)$")
 NEXTEST_REPORT = Path("target/nextest/ci/junit.xml")
 PYTEST_REPORT = Path("target/junit/pytest.xml")
+# Sources whose changes make the reports stale (relative to --root, file pattern).
+SOURCES = [("crates", "*.rs"), ("tests", "*.py"), ("tools", "*.py"), ("workers-py", "*.py")]
+IGNORED_PARTS = {"target", ".venv", "__pycache__", "node_modules"}
 
 
 class TraceError(Exception):
@@ -57,6 +61,7 @@ class Case:
     name: str
     status: str
     ids: list[str]
+    output: str
 
 
 def read_registry(root: Path) -> list[dict[str, Any]]:
@@ -73,6 +78,8 @@ def read_cases(root: Path, report: Path) -> list[Case]:
         tree = ET.parse(root / report)
     except (OSError, ET.ParseError) as exc:
         raise TraceError(f"cannot read JUnit report {report}: {exc}") from exc
+    if tree.getroot().tag not in ("testsuites", "testsuite"):
+        raise TraceError(f"{report} is not a JUnit report (root element <{tree.getroot().tag}>)")
     cases = []
     for case in tree.getroot().iter("testcase"):
         if case.find("failure") is not None or case.find("error") is not None:
@@ -88,72 +95,96 @@ def read_cases(root: Path, report: Path) -> list[Case]:
             for rid in prop.get("value", "").split(",")
             if rid.strip()
         ]
-        cases.append(Case(case.get("classname", ""), case.get("name", ""), status, ids))
+        output = case.findtext("system-out", "")
+        cases.append(Case(case.get("classname", ""), case.get("name", ""), status, ids, output))
     return cases
 
 
-def crate_name(source: Path) -> str:
-    for directory in source.parents:
-        manifest = directory / "Cargo.toml"
-        if manifest.is_file():
-            with manifest.open("rb") as f:
-                package = tomllib.load(f).get("package", {})
-            if "name" in package:
-                return str(package["name"])
-    raise TraceError(f"no Cargo package for {source}")
+def sources(root: Path) -> list[Path]:
+    found = []
+    for directory, pattern in SOURCES:
+        for path in (root / directory).rglob(pattern):
+            if not IGNORED_PARTS.intersection(path.relative_to(root).parts):
+                found.append(path)
+    return sorted(found)
 
 
-def rust_tests(root: Path, cases: list[Case]) -> list[TestRecord]:
-    records = []
-    for source in sorted((root / "crates").rglob("*.rs")):
-        text = source.read_text(encoding="utf-8")
+def check_fresh(root: Path, files: list[Path]) -> None:
+    """Refuse reports older than the newest source."""
+    if not files:
+        return
+    newest = max(files, key=lambda path: path.stat().st_mtime_ns)
+    for report in (NEXTEST_REPORT, PYTEST_REPORT):
+        if (root / report).stat().st_mtime_ns < newest.stat().st_mtime_ns:
+            relative = newest.relative_to(root).as_posix()
+            raise TraceError(f"{report} is older than {relative}: run `just test` first")
+
+
+def source_tags(root: Path, files: list[Path]) -> list[tuple[str, list[str]]]:
+    """(file, ids) of every `req(...)` in the Rust sources, comments included."""
+    tags = []
+    for source in files:
+        if source.suffix != ".rs":
+            continue
+        try:
+            text = source.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise TraceError(f"cannot read {source}: {exc}") from exc
         location = source.relative_to(root).as_posix()
-        for attribute in REQ_ATTRIBUTE.finditer(text):
-            function = FUNCTION.search(text, attribute.end())
-            if not function:
-                continue
-            between = OTHER_ATTRIBUTES.sub("", text[attribute.end() : function.start()]).split()
-            if any(word not in ("pub", "async") for word in between):
-                continue  # the attribute does not decorate this function
-            name, crate = function.group(1), crate_name(source)
-            ids = STRING.findall(attribute.group(1))
-            matches = [
-                case
-                for case in cases
-                if (case.classname == crate or case.classname.startswith(f"{crate}::"))
-                and case.name.split("::")[-1] == name
-            ]
-            for case in matches:
-                full_name = f"{case.classname}::{case.name}"
-                records.append(
-                    TestRecord("rust", full_name, case.status, ids, f"{location} ({name})")
-                )
-            if not matches:
-                records.append(
-                    TestRecord("rust", f"{crate}::{name}", "not run", ids, f"{location} ({name})")
-                )
+        tags += [(location, STRING.findall(m.group(1))) for m in REQ_ATTRIBUTE.finditer(text)]
+    return tags
+
+
+def rust_tests(cases: list[Case], failures: list[str]) -> list[TestRecord]:
+    records = []
+    for case in cases:
+        name = f"{case.classname}::{case.name}"
+        markers = [
+            line.strip()[len(MARKER) :]
+            for line in case.output.splitlines()
+            if line.strip().startswith(MARKER)
+        ]
+        if not markers:
+            failures.append(f"Rust test {name} has no #[req] marker in the nextest report")
+        elif len(markers) > 1:
+            failures.append(f"Rust test {name} has {len(markers)} #[req] markers")
+        else:
+            ids = [rid.strip() for rid in markers[0].split(",") if rid.strip()]
+            records.append(TestRecord("rust", name, case.status, ids, name))
     return records
 
 
-def python_tests(cases: list[Case]) -> list[TestRecord]:
-    return [
-        TestRecord(
-            "python", f"{c.classname}::{c.name}", c.status, c.ids, f"{c.classname}::{c.name}"
-        )
-        for c in cases
-        if c.ids
-    ]
+def python_tests(cases: list[Case], failures: list[str]) -> list[TestRecord]:
+    records = []
+    for case in cases:
+        name = f"{case.classname}::{case.name}"
+        if case.ids:
+            records.append(TestRecord("python", name, case.status, case.ids, name))
+        else:
+            failures.append(f"Python test {name} has no req property")
+    return records
 
 
 def build(root: Path, gate: str | None) -> tuple[dict[str, Any], list[str]]:
     registry = read_registry(root)
     known = {str(entry["id"]) for entry in registry}
-    tests = rust_tests(root, read_cases(root, NEXTEST_REPORT))
-    tests += python_tests(read_cases(root, PYTEST_REPORT))
-    failures = [
+    nextest_cases = read_cases(root, NEXTEST_REPORT)
+    pytest_cases = read_cases(root, PYTEST_REPORT)
+    files = sources(root)
+    check_fresh(root, files)
+    failures: list[str] = []
+    tests = rust_tests(nextest_cases, failures)
+    tests += python_tests(pytest_cases, failures)
+    failures += [
         f"unknown requirement id {rid!r} in {test.location}"
         for test in tests
         for rid in test.ids
+        if rid not in known
+    ]
+    failures += [
+        f"unknown requirement id {rid!r} in {location}"
+        for location, ids in source_tags(root, files)
+        for rid in ids
         if rid not in known
     ]
     matrix: dict[str, Any] = {}
@@ -212,7 +243,7 @@ def main(argv: list[str]) -> int:
     try:
         document, failures = build(root, args.gate)
     except TraceError as exc:
-        print(f"trace: {exc}", file=sys.stderr)
+        print(f"trace: {exc}")
         print("traceability FAILED")
         return 1
     target = root / "target"

@@ -3,3 +3,5 @@ fail-fast = false
 
 [profile.ci.junit]
 path = "junit.xml"
+# Keep the stdout of passing tests: it carries the `ostia-req: <ids>` line of #[req] (traceability matrix).
+store-success-output = true
