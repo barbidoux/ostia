@@ -5,7 +5,7 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 import 'tools/kit/rails.just'
 
 # Python test directories of the fast suite (acceptance runs only through test-acceptance and gate)
-py_test_dirs := "tests/tooling"
+py_test_dirs := "tests/tooling workers-py/common/tests"
 
 default:
     @just --list

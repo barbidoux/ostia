@@ -308,6 +308,7 @@ def test_unknown_ids_fail(
         "add a test file",
         "change a Cargo.toml",
         "change the nextest configuration",
+        "change a contract or golden vector",
     ],
 )
 def test_reports_of_other_sources_are_refused(tmp_path: Path, change: str) -> None:
@@ -325,6 +326,9 @@ def test_reports_of_other_sources_are_refused(tmp_path: Path, change: str) -> No
     elif change == "change the nextest configuration":
         (root / ".config").mkdir()
         (root / ".config" / "nextest.toml").write_text("[profile.ci]\n")
+    elif change == "change a contract or golden vector":
+        (root / "proto" / "testdata").mkdir(parents=True)
+        (root / "proto" / "testdata" / "frame_empty.bin").write_bytes(b"\x00\x00\x00\x00")
     code, lines = matrix(root)
     assert code == 1
     assert (

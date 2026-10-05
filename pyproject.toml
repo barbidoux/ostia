@@ -51,7 +51,7 @@ known-first-party = ["tooling_support", "ostia_common"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["tools", "tests", "workers-py/common/src"]
+files = ["tools", "tests", "workers-py/common/src", "workers-py/common/tests"]
 mypy_path = "workers-py/common/src"
 # The rails kit is owner-managed and checked by its own self-tests (tools/kit/test_kit.py).
 exclude = ['^\.claude/', '^tools/kit/', '^tools/lock/']
@@ -60,7 +60,7 @@ exclude = ['^\.claude/', '^tools/kit/', '^tools/lock/']
 # The req plugin refuses a run whose tests lack valid requirement ids (WP-0.4); it never deselects.
 addopts = ["--strict-markers", "-p", "tools.traceability.pytest_plugin"]
 pythonpath = [".", "workers-py/common/src"]
-testpaths = ["tests/tooling"]
+testpaths = ["tests/tooling", "workers-py/common/tests"]
 markers = [
     "req(*ids): requirement ids proven by the test (FR-06, NFR-09, TOOLING, ...)",
     "bench: needs real hardware on the Debian bench; never skipped",
