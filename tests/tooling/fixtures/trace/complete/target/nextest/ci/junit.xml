@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="nextest-run" tests="2" failures="0" errors="0">
+    <testsuite name="demo" tests="2" disabled="0" errors="0" failures="0">
+        <testcase name="tests::medium_is_read_only" classname="demo" time="0.001"/>
+        <testcase name="tests::helper_works" classname="demo" time="0.001"/>
+    </testsuite>
+</testsuites>

@@ -1,0 +1,39 @@
+# Fixture registry for the traceability matrix tests (tests/tooling/test_trace_matrix.py).
+version: 1
+requirements:
+- id: FR-01
+  level: MUST
+  phases: [P1]
+  phase_source: spec
+  anssi: [FS1]
+  section: 5. Functional requirements
+  text: Read the medium read-only
+- id: FR-02
+  level: MUST
+  phases: [P1]
+  phase_source: spec
+  anssi: []
+  section: 5. Functional requirements
+  text: Hash every object
+- id: FR-03
+  level: SHOULD
+  phases: [P1]
+  phase_source: spec
+  anssi: []
+  section: 5. Functional requirements
+  text: Show a summary
+- id: NFR-01
+  level: MUST
+  phases: [P2]
+  phase_source: plan
+  anssi: []
+  section: 6. Non-functional requirements
+  area: Performance
+  text: Scan in 10 minutes
+- id: TOOLING
+  level: n/a
+  phases: []
+  phase_source: reserved
+  anssi: []
+  section: reserved
+  text: Tests of helpers, fixtures and tooling that prove no product requirement

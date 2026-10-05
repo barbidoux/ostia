@@ -25,8 +25,17 @@ def recipe(name: str) -> list[str]:
 @pytest.mark.req("TOOLING")
 def test_check_runs_every_gate() -> None:
     lines = recipe("check")
-    expected = "check: fmt-check lint types test registry-check verify-locks rails-verify kit-test"
+    expected = (
+        "check: fmt-check lint types test registry-check trace verify-locks rails-verify kit-test"
+    )
     assert expected in lines
+
+
+@pytest.mark.req("TOOLING")
+def test_trace_recipe_runs_the_matrix() -> None:
+    lines = recipe("trace")
+    assert "trace *args:" in lines
+    assert "uv run python tools/traceability/matrix.py {{ args }}" in lines
 
 
 @pytest.mark.req("TOOLING")

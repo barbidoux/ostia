@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<testsuites name="pytest tests">
+  <testsuite name="pytest" errors="0" failures="0" skipped="0" tests="2">
+    <testcase classname="tests.test_hashes" name="test_every_object_is_hashed" time="0.01">
+      <properties><property name="req" value="FR-02,TOOLING"/></properties>
+    </testcase>
+    <testcase classname="tests.test_hashes" name="test_summary_header" time="0.01">
+      <properties><property name="req" value="TOOLING"/></properties>
+    </testcase>
+  </testsuite>
+</testsuites>
