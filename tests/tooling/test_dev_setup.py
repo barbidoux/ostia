@@ -32,7 +32,8 @@ TOOLS = {
     "curl": ("package curl", "--version", "curl 8.14.1 (x86_64-pc-linux-gnu)"),
     "python3": ("package python3", "--version", "Python 3.13.5"),
     "gcc": ("package build-essential", "--version", "gcc (Debian 14.2.0-19) 14.2.0"),
-    "mkfs.vfat": ("package dosfstools", "--version", "mkfs.fat 4.2 (2021-01-31)"),
+    # mkfs.vfat has no version option: the version is the dosfstools package version (dpkg-query).
+    "mkfs.vfat": ("package dosfstools", "-W -f=${Version} dosfstools", "dosfstools 4.2-1.1build1"),
     "mkfs.exfat": ("package exfatprogs", "-V", "exfatprogs version : 1.2.9"),
     "mkfs.ntfs": ("package ntfs-3g", "--version", "mkntfs v2022.10.3 (libntfs-3g)"),
     "mkfs.ext4": ("package e2fsprogs", "-V", "mke2fs 1.47.2 (1-Jan-2025)"),
@@ -58,12 +59,13 @@ TOOLS = {
         f"cargo-nextest-nextest {PINNED['NEXTEST_VERSION']} (abcdef 2026-09-01)",
     ),
 }
+USER_TOOLS = ("rustup", "rustc", "cargo", "uv", "just", "cargo-nextest")
 COREUTILS = ["grep", "cmp", "head", "id", "cat", "tr", "sed", "cut", "sort"]
 
 
 def fake_tool(bin_dir: Path, name: str, args: str, line: str) -> None:
     script = bin_dir / name
-    script.write_text(f'#!/bin/sh\n[ "$*" = "{args}" ] || exit 1\necho \'{line}\'\n')
+    script.write_text(f"#!/bin/sh\n[ \"$*\" = '{args}' ] || exit 1\necho '{line}'\n")
     script.chmod(0o755)
 
 
@@ -76,6 +78,18 @@ def fake_environment(
     for tool, (_, args, line) in TOOLS.items():
         if tool not in omit:
             fake_tool(bin_dir, tool, args, (lines or {}).get(tool, line))
+    # As the real tools do: mkfs.vfat only prints its usage; dpkg-query knows the package version;
+    # mkntfs prints an empty line before its version.
+    usage = bin_dir / "mkfs.vfat"
+    if usage.exists():
+        usage.write_text("#!/bin/sh\necho 'Usage: mkfs.vfat [OPTIONS] TARGET [BLOCKS]'\nexit 1\n")
+    fake_tool(bin_dir, "dpkg-query", "-W -f=${Version} dosfstools", "4.2-1.1build1")
+    ntfs = bin_dir / "mkfs.ntfs"
+    if ntfs.exists():
+        ntfs.write_text(
+            '#!/bin/sh\n[ "$*" = "--version" ] || exit 1\n'
+            "printf '\\nmkntfs v2022.10.3 (libntfs-3g)\\n\\n'\n"
+        )
     for tool in COREUTILS:
         real = shutil.which(tool)
         assert real, f"{tool} is needed by the test harness"
@@ -236,9 +250,11 @@ def test_location_overrides_are_ignored_outside_tests(tmp_path: Path) -> None:
     assert any(" helper /usr/local/sbin/ostia-loopmount" in line for line in lines)
 
 
-def install_environment(tmp_path: Path, apt_status: int = 0) -> tuple[dict[str, str], Path]:
+def install_environment(
+    tmp_path: Path, apt_status: int = 0, omit: tuple[str, ...] = ()
+) -> tuple[dict[str, str], Path]:
     """Fake root (id -u prints 0), apt-get and install that log their arguments."""
-    env = fake_environment(tmp_path)
+    env = fake_environment(tmp_path, omit)
     bin_dir = Path(env["PATH"])
     log = tmp_path / "calls.log"
     (bin_dir / "id").unlink()
@@ -267,6 +283,33 @@ def test_install_installs_the_package_list_and_the_root_owned_helper(tmp_path: P
         f"install -o root -g root -m 0755 {LOOPMOUNT} /usr/local/sbin/ostia-loopmount"
     )
     assert len(calls) == 3
+
+
+@pytest.mark.req("NFR-15")
+def test_install_checks_only_the_system_part(tmp_path: Path) -> None:
+    # Under sudo, root has no user-level PATH (~/.cargo/bin, ~/.local/bin): the user checks those.
+    env, _ = install_environment(tmp_path, omit=USER_TOOLS)
+    del env["OSTIA_AS_USER"]
+    result = run(["/bin/bash", SETUP, "--install"], cwd=REPO, env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    lines = result.stdout.splitlines()
+    assert "ok: mkfs.exfat: exfatprogs version : 1.2.9" in lines
+    assert [line for line in lines if line.startswith("missing:")] == []
+    assert lines[-1] == "system part OK; now run tools/dev/setup-debian.sh --check as your user"
+
+
+@pytest.mark.req("NFR-15")
+def test_install_still_reports_a_missing_system_tool(tmp_path: Path) -> None:
+    env, _ = install_environment(tmp_path, omit=("mkfs.exfat", *USER_TOOLS))
+    del env["OSTIA_AS_USER"]
+    result = run(["/bin/bash", SETUP, "--install"], cwd=REPO, env=env)
+    assert result.returncode == 1
+    lines = result.stdout.splitlines()
+    assert "missing: mkfs.exfat (package exfatprogs)" in lines
+    assert [line for line in lines if line.startswith("missing:")] == [
+        "missing: mkfs.exfat (package exfatprogs)"
+    ]
+    assert lines[-1] == "environment incomplete"
 
 
 @pytest.mark.req("NFR-15")

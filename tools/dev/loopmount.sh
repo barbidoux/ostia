@@ -101,7 +101,8 @@ if [[ "$mode" == umount ]]; then
     if [[ -n "$backing" ]]; then
         # One detach request: if a FUSE driver still holds the device, the kernel detaches it when the
         # driver closes it. Wait for that, watching only this device with this backing file.
-        losetup -d -- "$source" 2>/dev/null || true
+        # No `--`: util-linux 2.39 takes the next word as the device of -d.
+        losetup -d "$source" || fail "could not detach $source"
         for _ in $(seq 50); do
             [[ "$(cat "/sys/block/${source#/dev/}/loop/backing_file" 2>/dev/null || true)" == "$backing" ]] ||
                 break
@@ -120,7 +121,7 @@ loop="" created_mount_point=0 mounted=0 done=0
 cleanup() {
     if [[ $done -eq 1 ]]; then return 0; fi
     if [[ $mounted -eq 1 ]]; then umount -- "$mount_point" || true; fi
-    if [[ -n "$loop" ]]; then losetup -d -- "$loop" 2>/dev/null || true; fi
+    if [[ -n "$loop" ]]; then losetup -d "$loop" || true; fi
     if [[ $created_mount_point -eq 1 ]]; then rmdir -- "$mount_point" 2>/dev/null || true; fi
 }
 trap cleanup EXIT

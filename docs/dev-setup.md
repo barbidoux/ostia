@@ -13,7 +13,8 @@ sudo tools/dev/setup-debian.sh --install
 
 This installs `tools/dev/packages.txt` with apt and copies `tools/dev/loopmount.sh` to
 `/usr/local/sbin/ostia-loopmount` (owned by root, mode 0755). Run it again after `loopmount.sh` changes:
-the disk-image tests refuse a stale copy.
+the disk-image tests refuse a stale copy. It then checks only the system part (root has no user-level
+`PATH`) and ends with `system part OK; now run tools/dev/setup-debian.sh --check as your user`.
 
 ## 2. Sudoers rule for the mount helper (once, as root)
 
