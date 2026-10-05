@@ -8,11 +8,12 @@
 #   loopmount.sh umount   <mount-name>
 #
 # Mount points are /run/ostia-loopmount/<uid>/<mount-name>, in directories owned by root, so the caller
-# cannot redirect a mount with a symlink (docs/questions.md Q-15). The image is opened once, then checked
-# and used only through that open descriptor (regular file, owned by the caller, under a target/ dir), so
-# it cannot be swapped for a device between the check and the use. It is attached to a loop device
-# (read-only for `ro`) and mounted with noexec,nosuid,nodev (and ro for `ro`); the effective per-mount
-# options are verified. The kernel driver is used when the kernel offers the file system, otherwise the
+# cannot redirect a mount with a symlink (docs/questions.md Q-15). The image is opened once (no final
+# symlink, non-blocking, never created), checked on that descriptor (regular file, owned by the caller,
+# under a target/ dir) and attached to a loop device from that same descriptor (LOOP_SET_FD), so it
+# cannot be swapped for a device between the check and the use. The loop device is read-only for `ro`;
+# the file system type is read from the loop device. Mounts get noexec,nosuid,nodev (and ro for `ro`);
+# the effective per-mount options are verified. Runs are serialised per user with a lock. The kernel driver is used when the kernel offers the file system, otherwise the
 # FUSE driver (exfat-fuse, ntfs-3g) runs on the loop device.
 #
 # Residual risk, accepted for development use: root parses the caller's image (libblkid, the kernel or
@@ -77,26 +78,34 @@ mount_point="$user_dir/$name"
 # Root-owned directories: the caller can read them but never replace them.
 for dir in "$BASE" "$user_dir"; do
     [[ ! -L "$dir" ]] || fail "$dir is a symlink"
-    [[ -d "$dir" ]] || mkdir -m 0755 -- "$dir"
+    mkdir -m 0755 -- "$dir" 2>/dev/null || [[ -d "$dir" ]] || fail "cannot create $dir"
     chown root:root -- "$dir"
     chmod 0755 -- "$dir"
 done
+# One run at a time per user: no two runs race on the same mount name.
+exec {lock_fd}>"$user_dir/.lock"
+flock -w 60 "$lock_fd" || fail "another loopmount run holds $user_dir/.lock"
 
 # --- umount ----------------------------------------------------------------------------------------
 if [[ "$mode" == umount ]]; then
     mountpoint -q -- "$mount_point" || fail "$mount_point is not mounted"
-    source="$(findmnt -n -o SOURCE --mountpoint "$mount_point" | head -n 1)"
+    source="$(findmnt -n -o SOURCE --mountpoint "$mount_point" | tail -n 1)"
+    backing=""
+    if [[ "$source" =~ ^/dev/loop[0-9]+$ ]]; then
+        backing="$(cat "/sys/block/${source#/dev/}/loop/backing_file" 2>/dev/null || true)"
+    fi
     umount -- "$mount_point"
-    if [[ "$source" == /dev/loop* ]]; then
-        loop_name="${source#/dev/}"
+    if [[ -n "$backing" ]]; then
+        # One detach request: if a FUSE driver still holds the device, the kernel detaches it when the
+        # driver closes it. Wait for that, watching only this device with this backing file.
         losetup -d -- "$source" 2>/dev/null || true
-        # A FUSE driver may close the device just after umount returns: wait for the detach.
         for _ in $(seq 50); do
-            [[ -e "/sys/block/$loop_name/loop/backing_file" ]] || break
+            [[ "$(cat "/sys/block/${source#/dev/}/loop/backing_file" 2>/dev/null || true)" == "$backing" ]] ||
+                break
             sleep 0.1
-            losetup -d -- "$source" 2>/dev/null || true
         done
-        [[ ! -e "/sys/block/$loop_name/loop/backing_file" ]] || fail "$source is still attached"
+        [[ "$(cat "/sys/block/${source#/dev/}/loop/backing_file" 2>/dev/null || true)" != "$backing" ]] ||
+            fail "$source is still attached to $backing"
     fi
     rmdir -- "$mount_point"
     echo "loopmount: unmounted $mount_point"
@@ -113,23 +122,75 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [[ "$mode" == ro ]]; then
-    exec {image_fd}<"$image_arg"
-else
-    exec {image_fd}<>"$image_arg"
-fi
-image_fd_path="/proc/self/fd/$image_fd"
-[[ -f "$image_fd_path" ]] || refuse "image must be a regular file: '$image_arg'"
-image="$(readlink -- "$image_fd_path")"
-[[ "$image" =~ $IMAGE_RE ]] || refuse "image must be <dir>/target/[fixtures/]<name>.img, got '$image'"
-if [[ "$mode" == rw-image ]]; then
-    [[ "$image" =~ $FIXTURE_RE ]] ||
-        refuse "rw-image only accepts <dir>/target/fixtures/<name>.img, got '$image'"
-fi
-[[ "$(stat -L -c %u -- "$image_fd_path")" == "$uid" ]] || refuse "image is not owned by the invoking user"
 ! mountpoint -q -- "$mount_point" 2>/dev/null || fail "$mount_point is already a mount point"
+image="$image_arg"
 
-fs="$(blkid -p -o value -s TYPE -- "$image_fd_path" || true)"
+# Open, check and attach in one process, from one descriptor: the image is opened without following a
+# final symlink and without blocking or creating anything, checked on that descriptor, reopened
+# read-write through /proc/self/fd only for rw-image, and handed to the loop driver with LOOP_SET_FD.
+# No path is looked up again after the checks. A read-only descriptor gives a read-only loop device.
+loop="$(
+    python3 - "$mode" "$image_arg" "$uid" "$IMAGE_RE" "$FIXTURE_RE" <<'PY'
+import errno, fcntl, os, re, stat, sys
+
+mode, path, uid, image_re, fixture_re = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4], sys.argv[5]
+LOOP_SET_FD, LOOP_CTL_GET_FREE, LOOP_MAJOR = 0x4C00, 0x4C82, 7
+
+
+def refuse(message: str) -> None:
+    print(f"loopmount: {message}", file=sys.stderr)
+    sys.exit(2)
+
+
+def fail(message: str) -> None:
+    print(f"loopmount: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOCTTY | os.O_CLOEXEC
+try:
+    image_fd = os.open(path, flags)
+except OSError as exc:
+    refuse(f"image must be a regular file, not a symlink: '{path}' ({exc.strerror})")
+info = os.fstat(image_fd)
+if not stat.S_ISREG(info.st_mode):
+    refuse(f"image must be a regular file: '{path}'")
+real = os.readlink(f"/proc/self/fd/{image_fd}")
+if not re.match(image_re, real):
+    refuse(f"image must be <dir>/target/[fixtures/]<name>.img, got '{real}'")
+if mode == "rw-image" and not re.match(fixture_re, real):
+    refuse(f"rw-image only accepts <dir>/target/fixtures/<name>.img, got '{real}'")
+if info.st_uid != uid:
+    refuse("image is not owned by the invoking user")
+
+backing_fd = image_fd
+if mode == "rw-image":
+    backing_fd = os.open(f"/proc/self/fd/{image_fd}", os.O_RDWR | os.O_NOCTTY | os.O_CLOEXEC)
+    reopened = os.fstat(backing_fd)
+    if (reopened.st_dev, reopened.st_ino) != (info.st_dev, info.st_ino):
+        fail(f"{path} changed while it was opened")
+
+control = os.open("/dev/loop-control", os.O_RDWR | os.O_CLOEXEC)
+for _ in range(20):
+    number = fcntl.ioctl(control, LOOP_CTL_GET_FREE)
+    device = f"/dev/loop{number}"
+    if not os.path.exists(device):  # a privileged container may lack nodes created after it started
+        os.mknod(device, 0o660 | stat.S_IFBLK, os.makedev(LOOP_MAJOR, number))
+    loop_fd = os.open(device, os.O_RDWR | os.O_CLOEXEC)
+    try:
+        fcntl.ioctl(loop_fd, LOOP_SET_FD, backing_fd)
+    except OSError as exc:
+        os.close(loop_fd)
+        if exc.errno == errno.EBUSY:  # taken by someone else since LOOP_CTL_GET_FREE: try again
+            continue
+        fail(f"cannot attach {path} to {device}: {exc.strerror}")
+    print(device)
+    sys.exit(0)
+fail("no free loop device")
+PY
+)"
+
+fs="$(blkid -p -o value -s TYPE -- "$loop" || true)"
 case "$fs" in
     vfat) module=vfat kernel_type=vfat fuse="" ;;
     exfat) module=exfat kernel_type=exfat fuse=mount.exfat-fuse ;;
@@ -153,13 +214,12 @@ fi
 
 if [[ "$mode" == ro ]]; then
     required="ro,noexec,nosuid,nodev" options="$required"
-    loop="$(losetup --find --show --read-only -- "$image_fd_path")"
+    [[ "$(cat "/sys/block/${loop#/dev/}/ro")" == 1 ]] || fail "$loop is not read-only"
 else
     required="noexec,nosuid,nodev" options="rw,$required"
     case "$fs" in
         vfat | exfat | ntfs) options="$options,uid=$uid,gid=$gid" ;;
     esac
-    loop="$(losetup --find --show -- "$image_fd_path")"
 fi
 
 if [[ ! -d "$mount_point" ]]; then

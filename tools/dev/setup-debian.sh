@@ -7,16 +7,24 @@
 #
 # --install is idempotent and is run by the owner (`sudo tools/dev/setup-debian.sh --install`), never by
 # an agent. User-level tools (rustup, cargo, uv, just, cargo-nextest) are installed as in docs/dev-setup.md.
-# Test hooks (--check only): OSTIA_EXTRA_PATH, OSTIA_PROC_FILESYSTEMS, OSTIA_LOOP_CONTROL, OSTIA_HELPER,
-# OSTIA_AS_USER=1 (check the helper and sudoers rule even when running as root).
+# OSTIA_AS_USER=1 checks the helper and sudoers rule even when running as root (it only adds checks).
+# Test hooks, honoured only with OSTIA_TEST_HOOKS=1: OSTIA_EXTRA_PATH, OSTIA_PROC_FILESYSTEMS,
+# OSTIA_LOOP_CONTROL, OSTIA_HELPER (so a stray variable cannot make --check report a false OK).
 set -uo pipefail
 
 script_dir="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 repo="$(cd "$script_dir/../.." && pwd)"
-PATH="$PATH${OSTIA_EXTRA_PATH-:/usr/sbin:/sbin}"
-proc_filesystems="${OSTIA_PROC_FILESYSTEMS:-/proc/filesystems}"
-loop_control="${OSTIA_LOOP_CONTROL:-/dev/loop-control}"
-helper="${OSTIA_HELPER:-/usr/local/sbin/ostia-loopmount}"
+if [[ "${OSTIA_TEST_HOOKS:-}" == 1 ]]; then
+    PATH="$PATH${OSTIA_EXTRA_PATH-:/usr/sbin:/sbin}"
+    proc_filesystems="${OSTIA_PROC_FILESYSTEMS:-/proc/filesystems}"
+    loop_control="${OSTIA_LOOP_CONTROL:-/dev/loop-control}"
+    helper="${OSTIA_HELPER:-/usr/local/sbin/ostia-loopmount}"
+else
+    PATH="$PATH:/usr/sbin:/sbin"
+    proc_filesystems=/proc/filesystems
+    loop_control=/dev/loop-control
+    helper=/usr/local/sbin/ostia-loopmount
+fi
 readonly MIN_PYTHON_MINOR=12
 
 # tool:package:version arguments
@@ -75,7 +83,8 @@ check_tool() {
     local pin="${PIN_OF[$tool]:-}"
     if [[ -n "$pin" ]]; then
         local expected="${PINNED[$pin]:-}" pattern
-        pattern="(^|[^0-9.])${expected//./\\.}([^0-9.]|$)"
+        # The exact release: no other digits around it, no pre-release or build suffix.
+        pattern="(^|[^0-9.])${expected//./\\.}([^0-9.+-]|$)"
         if [[ -z "$expected" || ! "$version" =~ $pattern ]]; then
             echo "wrong version: $tool: $version (${expected:-?} required)"
             missing=$((missing + 1))

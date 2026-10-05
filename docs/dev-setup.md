@@ -64,7 +64,8 @@ uvx pre-commit@4.6.2 install --hook-type pre-commit --hook-type commit-msg
 ```
 
 Read the two installer scripts before running them. The pinned versions live in `tools/dev/versions.env`
-and `rust-toolchain.toml`; `--check` reports any other version as `wrong version`.
+and `rust-toolchain.toml`; `--check` reports any other version as `wrong version`. `cargo-llvm-cov` and
+`pre-commit` are pinned on this page only; `--check` does not verify them.
 Make `~/.cargo/bin` and `~/.local/bin` visible to non-interactive shells too (for example
 `. "$HOME/.cargo/env"` at the top of `~/.bashrc`).
 
