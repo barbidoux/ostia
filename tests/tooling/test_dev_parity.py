@@ -77,9 +77,18 @@ def test_package_list_covers_the_image_and_analysis_tools() -> None:
 @pytest.mark.req("NFR-15")
 def test_versions_file_pins_every_downloaded_tool() -> None:
     entries = versions()
-    assert set(entries) == {"UV_VERSION", "JUST_VERSION", "NEXTEST_VERSION"}
-    for value in entries.values():
-        assert re.fullmatch(r"\d+\.\d+\.\d+", value), value
+    assert set(entries) == {
+        "UV_VERSION",
+        "JUST_VERSION",
+        "NEXTEST_VERSION",
+        "NIGHTLY_TOOLCHAIN",
+        "CARGO_FUZZ_VERSION",
+    }
+    for key, value in entries.items():
+        if key == "NIGHTLY_TOOLCHAIN":
+            assert re.fullmatch(r"nightly-\d{4}-\d{2}-\d{2}", value), value
+        else:
+            assert re.fullmatch(r"\d+\.\d+\.\d+", value), value
 
 
 @pytest.mark.req("NFR-15")

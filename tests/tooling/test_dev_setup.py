@@ -58,8 +58,13 @@ TOOLS = {
         "nextest --version",
         f"cargo-nextest-nextest {PINNED['NEXTEST_VERSION']} (abcdef 2026-09-01)",
     ),
+    "cargo-fuzz": (
+        "see docs/dev-setup.md",
+        "--version",
+        f"cargo-fuzz {PINNED['CARGO_FUZZ_VERSION']}",
+    ),
 }
-USER_TOOLS = ("rustup", "rustc", "cargo", "uv", "just", "cargo-nextest")
+USER_TOOLS = ("rustup", "rustc", "cargo", "uv", "just", "cargo-nextest", "cargo-fuzz")
 COREUTILS = ["grep", "cmp", "head", "id", "cat", "tr", "sed", "cut", "sort"]
 
 
@@ -190,8 +195,9 @@ def test_check_refuses_an_old_python(tmp_path: Path) -> None:
         ("rustc", "rustc 1.90.0 (x 2026-01-01)", RUST),
         ("just", f"just {PINNED['JUST_VERSION']}-rc1", PINNED["JUST_VERSION"]),
         ("rustc", f"rustc {RUST}-nightly (x 2026-01-01)", RUST),
+        ("cargo-fuzz", "cargo-fuzz 0.12.0", PINNED["CARGO_FUZZ_VERSION"]),
     ],
-    ids=["just", "uv", "nextest", "rustc", "just pre-release", "rustc nightly"],
+    ids=["just", "uv", "nextest", "rustc", "just pre-release", "rustc nightly", "cargo-fuzz"],
 )
 def test_check_enforces_pinned_versions(
     tmp_path: Path, tool: str, line: str, required: str
