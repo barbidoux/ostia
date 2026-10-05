@@ -110,9 +110,15 @@ fn with_marker(item: &TokenStream, ids: &[String]) -> Option<TokenStream> {
         }
         previous_is_hash = matches!(token, TokenTree::Punct(punct) if punct.as_char() == '#');
     }
-    let Some(TokenTree::Group(body)) = tokens.last() else {
+    let Some(TokenTree::Group(mut body)) = tokens.last().cloned() else {
         return None;
     };
+    // A `$b:block` fragment from macro_rules arrives wrapped in an invisible-delimited group.
+    if body.delimiter() == Delimiter::None
+        && let [TokenTree::Group(inner)] = body.stream().into_iter().collect::<Vec<_>>().as_slice()
+    {
+        body = inner.clone();
+    }
     if !is_test || !is_function || body.delimiter() != Delimiter::Brace {
         return None;
     }
@@ -145,8 +151,15 @@ fn with_marker(item: &TokenStream, ids: &[String]) -> Option<TokenStream> {
 
 /// Whether the attribute's path ends with `test` (`test`, `tokio::test`, ...).
 fn attribute_is_test(attribute: &Group) -> bool {
+    let mut tokens: Vec<TokenTree> = attribute.stream().into_iter().collect();
+    // A `$m:meta` fragment from macro_rules (proptest!, ...) arrives as one invisible-delimited group.
+    if let [TokenTree::Group(fragment)] = tokens.as_slice()
+        && fragment.delimiter() == Delimiter::None
+    {
+        tokens = fragment.stream().into_iter().collect();
+    }
     let mut last = None;
-    for token in attribute.stream() {
+    for token in tokens {
         match token {
             TokenTree::Ident(ident) => last = Some(ident.to_string()),
             TokenTree::Punct(punct) if punct.as_char() == ':' => {}
