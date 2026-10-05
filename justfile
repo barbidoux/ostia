@@ -11,7 +11,15 @@ default:
     @just --list
 
 # Everything that must be green before a work package is done (trace from WP-0.4, audit from WP-0.8)
-check: fmt-check lint types test verify-locks rails-verify kit-test
+check: fmt-check lint types test registry-check verify-locks rails-verify kit-test
+
+# Regenerate requirements.yaml from docs/spec.md and docs/plan.md
+registry:
+    uv run python tools/traceability/registry.py generate
+
+# requirements.yaml is valid and up to date with the specification and the plan
+registry-check:
+    uv run python tools/traceability/registry.py check
 
 # Format Rust and Python sources in place
 fmt:

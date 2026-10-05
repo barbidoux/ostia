@@ -25,7 +25,14 @@ def recipe(name: str) -> list[str]:
 @pytest.mark.req("TOOLING")
 def test_check_runs_every_gate() -> None:
     lines = recipe("check")
-    assert "check: fmt-check lint types test verify-locks rails-verify kit-test" in lines
+    expected = "check: fmt-check lint types test registry-check verify-locks rails-verify kit-test"
+    assert expected in lines
+
+
+@pytest.mark.req("TOOLING")
+def test_registry_recipes_generate_and_check_requirements_yaml() -> None:
+    assert "uv run python tools/traceability/registry.py generate" in recipe("registry")
+    assert "uv run python tools/traceability/registry.py check" in recipe("registry-check")
 
 
 @pytest.mark.req("TOOLING")
