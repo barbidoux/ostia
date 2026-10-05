@@ -299,6 +299,17 @@ dependencies = [
 [[package]]
 name = "ostia-core-domain"
 version = "0.0.0"
+dependencies = [
+ "ostia-traceability",
+]
+
+[[package]]
+name = "ostia-fake-clock"
+version = "0.0.0"
+dependencies = [
+ "ostia-core-domain",
+ "ostia-traceability",
+]
 
 [[package]]
 name = "ostia-traceability"
