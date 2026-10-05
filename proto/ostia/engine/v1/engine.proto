@@ -1,0 +1,128 @@
+// Ostia engine contract, major version 1 (spec section 14, ADR-03).
+//
+// Every message is sent on the worker's standard input or output as one frame: a 4-byte big-endian length,
+// then the encoded message. The analysed object is never in a message: it is passed read-only as file
+// descriptor 3. Within major version 1, changes are additive only (new fields, new enum values); field
+// numbers and types never change (CTR-04, checked against compat.json).
+syntax = "proto3";
+
+package ostia.engine.v1;
+
+// Version of the contract a message was written against. A decoder refuses any major other than its
+// own (a missing version reads as major 0); a newer minor is accepted.
+message ContractVersion {
+  // Major version: 1 for this package.
+  uint32 major = 1;
+  // Minor version: additive changes within the major.
+  uint32 minor = 2;
+}
+
+// Where an object comes from.
+enum Origin {
+  // Not set: refused.
+  ORIGIN_UNSPECIFIED = 0;
+  // A file of the medium's file system.
+  FILE = 1;
+  // An object extracted from a container (archive, document, installer).
+  EXTRACTED = 2;
+  // An alternate data stream.
+  ALT_STREAM = 3;
+  // An object carved from unallocated or slack space.
+  CARVED = 4;
+  // Boot code (MBR, VBR, EFI system partition).
+  BOOT_CODE = 5;
+}
+
+// Resource limits the engine runs under.
+message Limits {
+  // Memory limit in bytes.
+  uint64 memory_bytes = 1;
+  // Wall-clock limit in milliseconds.
+  uint32 duration_ms = 2;
+  // Limit on bytes the engine may write to its private scratch space.
+  uint64 write_bytes = 3;
+}
+
+// Request to analyse one object; the object itself is file descriptor 3, read-only.
+message AnalyzeRequest {
+  // Session the object belongs to.
+  string session_id = 1;
+  // Object identifier within the session.
+  string object_id = 2;
+  // SHA-256 of the object (32 bytes).
+  bytes sha256 = 3;
+  // Type identified from the content, never from the name.
+  string detected_type = 4;
+  // Size of the object in bytes.
+  uint64 size = 5;
+  // Where the object comes from.
+  Origin origin = 6;
+  // Limits the engine runs under.
+  Limits limits = 7;
+  // Contract version of this message.
+  ContractVersion version = 15;
+}
+
+// Outcome of an engine run.
+enum Status {
+  // Not set: refused.
+  STATUS_UNSPECIFIED = 0;
+  // The engine analysed the object.
+  OK = 1;
+  // The engine failed.
+  ERROR = 2;
+  // The engine ran out of time.
+  TIMEOUT = 3;
+  // The engine does not handle this type of object.
+  UNSUPPORTED = 4;
+}
+
+// The engine's opinion; verdicts are decided by the policy, never by an engine.
+enum Hint {
+  // Not set.
+  HINT_UNSPECIFIED = 0;
+  // No opinion.
+  NONE = 1;
+  // Nothing found.
+  CLEAN = 2;
+  // Something suspicious was found.
+  SUSPICIOUS = 3;
+  // Something malicious was found.
+  MALICIOUS = 4;
+}
+
+// One thing an engine found.
+message Finding {
+  // Rule, signature or model feature identifier.
+  string id = 1;
+  // Short human-readable title.
+  string title = 2;
+  // Severity from 0 (information) to 4 (critical).
+  uint32 severity = 3;
+  // Metadata supporting the finding (offsets, names, scores), never file content.
+  string evidence = 4;
+  // MITRE ATT&CK technique identifiers.
+  repeated string attack_ids = 5;
+}
+
+// Result of analysing one object (CTR-03: engine identity and content version are required).
+message AnalyzeResponse {
+  // Engine identifier.
+  string engine_id = 1;
+  // Engine version.
+  string engine_version = 2;
+  // Version of the rules, signatures or model the engine used.
+  string content_version = 3;
+  // Outcome of the run.
+  Status status = 4;
+  // The engine's opinion.
+  Hint hint = 5;
+  // Score in [0, 1] for scoring engines.
+  optional double score = 6;
+  // What the engine found.
+  repeated Finding findings = 7;
+  // Time the analysis took, in milliseconds.
+  uint32 duration_ms = 8;
+  // Contract version of this message.
+  ContractVersion version = 15;
+}

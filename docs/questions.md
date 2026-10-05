@@ -44,6 +44,24 @@ Blocking: no (blocking for the P1 gate).
 
 ## Answered
 
+### Q-18 · WP-0.5 · CTR-01..04 · dependencies for the Protobuf contracts
+Context: WP-0.5 needs Protobuf code generation and runtimes in Rust and Python, offline (no protoc installed).
+Options: (a) Rust: prost 0.14.4, prost-build 0.14.4 (Apache-2.0), protox 0.9.1 (MIT OR Apache-2.0, pure-Rust
+protobuf compiler, build-time), thiserror 2.0.21 (MIT OR Apache-2.0), proptest 1.11.0 (MIT OR Apache-2.0, dev);
+Python: protobuf 7.36.2 (BSD-3-Clause, runtime), grpcio-tools 1.84.0 (Apache-2.0, dev, bundles protoc),
+types-protobuf 7.35.1.20260906 (Apache-2.0, dev) (b) install protoc/buf on every machine.
+Recommendation: (a).
+Blocking: yes (new dependencies).
+Answer (2026-10-05): (a), all approved.
+
+### Q-19 · WP-0.5 · — · generated Python code and ruff
+Context: protoc's `engine_pb2.py`/`.pyi` (committed) fail ruff (7 findings, formatting).
+Options: (a) exclude the generated files from ruff; mypy checks them through the `.pyi`; a test keeps them in sync
+with the `.proto` (b) run ruff --fix and format on the generated files (c) build classes at runtime (untyped).
+Recommendation: (a).
+Blocking: yes (lint configuration).
+Answer (2026-10-05): (a).
+
 ### Q-4 · WP-0.1 · NFR-09, NFR-15 · requirement tags of the tooling tests
 Context: P0.md says the seeded-bad-sample tests are NFR-09/NFR-15 tests "check the wording". NFR-09 is about
 `unsafe`, NFR-15 about Debian/WSL portability.

@@ -1,0 +1,67 @@
+{
+  "comment": "Frozen shape of ostia.engine.v1 (CTR-04). Within major 1, every field and enum value listed here keeps its number, name, type and label; new ones may be added (append them here in the same change). Field: [name, type, label].",
+  "package": "ostia.engine.v1",
+  "messages": {
+    "ContractVersion": {
+      "1": ["major", "uint32", ""],
+      "2": ["minor", "uint32", ""]
+    },
+    "Limits": {
+      "1": ["memory_bytes", "uint64", ""],
+      "2": ["duration_ms", "uint32", ""],
+      "3": ["write_bytes", "uint64", ""]
+    },
+    "AnalyzeRequest": {
+      "1": ["session_id", "string", ""],
+      "2": ["object_id", "string", ""],
+      "3": ["sha256", "bytes", ""],
+      "4": ["detected_type", "string", ""],
+      "5": ["size", "uint64", ""],
+      "6": ["origin", "enum Origin", ""],
+      "7": ["limits", "message Limits", ""],
+      "15": ["version", "message ContractVersion", ""]
+    },
+    "Finding": {
+      "1": ["id", "string", ""],
+      "2": ["title", "string", ""],
+      "3": ["severity", "uint32", ""],
+      "4": ["evidence", "string", ""],
+      "5": ["attack_ids", "string", "repeated"]
+    },
+    "AnalyzeResponse": {
+      "1": ["engine_id", "string", ""],
+      "2": ["engine_version", "string", ""],
+      "3": ["content_version", "string", ""],
+      "4": ["status", "enum Status", ""],
+      "5": ["hint", "enum Hint", ""],
+      "6": ["score", "double", "optional"],
+      "7": ["findings", "message Finding", "repeated"],
+      "8": ["duration_ms", "uint32", ""],
+      "15": ["version", "message ContractVersion", ""]
+    }
+  },
+  "enums": {
+    "Origin": {
+      "0": "ORIGIN_UNSPECIFIED",
+      "1": "FILE",
+      "2": "EXTRACTED",
+      "3": "ALT_STREAM",
+      "4": "CARVED",
+      "5": "BOOT_CODE"
+    },
+    "Status": {
+      "0": "STATUS_UNSPECIFIED",
+      "1": "OK",
+      "2": "ERROR",
+      "3": "TIMEOUT",
+      "4": "UNSUPPORTED"
+    },
+    "Hint": {
+      "0": "HINT_UNSPECIFIED",
+      "1": "NONE",
+      "2": "CLEAN",
+      "3": "SUSPICIOUS",
+      "4": "MALICIOUS"
+    }
+  }
+}
