@@ -110,9 +110,20 @@ def frame_vector(name: str, expect: str, description: str, frame: bytes) -> Vect
     return Vector(name, "AnalyzeResponse", expect, description, frame, None)
 
 
+def body_vector(name: str, expect: str, description: str, body: bytes) -> Vector:
+    """A response body built byte by byte (described in `description`), framed."""
+    return Vector(
+        name, "AnalyzeResponse", expect, description, len(body).to_bytes(4, "big") + body, None
+    )
+
+
 def vectors() -> list[Vector]:
     clean_frame = encode_frame(response_clean())
+    clean_body = response_clean().SerializeToString()
     major_2 = engine_pb2.ContractVersion(major=2, minor=0)
+    minor_1 = engine_pb2.ContractVersion(major=1, minor=1)
+    severity_5 = response_scored()
+    severity_5.findings[0].severity = 5
     return [
         message_vector("request_pdf", "ok", "a valid request", request_pdf()),
         message_vector("response_clean", "ok", "a valid response", response_clean()),
@@ -180,6 +191,55 @@ def vectors() -> list[Vector]:
             "invalid_request",
             "31-byte sha256",
             changed(request_pdf(), sha256=bytes(31)),
+        ),
+        body_vector(
+            "response_wrong_wire_type",
+            "malformed",
+            "status (field 4) sent length-delimited: 22 00 appended",
+            clean_body + b"\x22\x00",
+        ),
+        body_vector(
+            "response_version_as_varint",
+            "malformed",
+            "version (field 15) sent as a varint: 78 01 appended",
+            clean_body + b"\x78\x01",
+        ),
+        body_vector(
+            "response_finding_id_as_varint",
+            "malformed",
+            "a finding whose id (field 1) is a varint: 3a 02 08 01 appended",
+            clean_body + b"\x3a\x02\x08\x01",
+        ),
+        body_vector(
+            "response_varint_overflow",
+            "malformed",
+            "duration_ms (field 8) as a 10-byte varint overflowing 64 bits",
+            clean_body + b"\x40" + b"\xff" * 9 + b"\x7f",
+        ),
+        body_vector(
+            "response_engine_id_bad_utf8",
+            "malformed",
+            "engine_id holding the invalid UTF-8 bytes ff fe",
+            changed(response_clean(), engine_id="").SerializeToString() + b"\x0a\x02\xff\xfe",
+        ),
+        message_vector("response_hint_unknown", "invalid_response", "hint 99", clean_with(hint=99)),
+        message_vector(
+            "response_severity_5",
+            "invalid_response",
+            "a finding with severity 5",
+            severity_5,
+        ),
+        message_vector(
+            "response_two_faults",
+            "unsupported_major",
+            "major 2 and an empty engine_id: the version is checked first",
+            clean_with(version=major_2, engine_id=""),
+        ),
+        body_vector(
+            "response_minor_1_extra_field",
+            "ok",
+            "minor 1 with field 9 (unknown to this decoder) appended: ignored",
+            changed(response_clean(), version=minor_1).SerializeToString() + b"\x4a\x01x",
         ),
     ]
 

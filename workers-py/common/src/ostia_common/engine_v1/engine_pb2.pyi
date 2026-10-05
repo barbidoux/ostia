@@ -6,7 +6,8 @@ Ostia engine contract, major version 1 (spec section 14, ADR-03).
 Every message is sent on the worker's standard input or output as one frame: a 4-byte big-endian length,
 then the encoded message. The analysed object is never in a message: it is passed read-only as file
 descriptor 3. Within major version 1, changes are additive only (new fields, new enum values); field
-numbers and types never change (CTR-04, checked against compat.json).
+numbers and types never change (CTR-04, checked against compat.json). Decoders ignore unknown fields
+but refuse unknown Origin, Status and Hint values: a new enum value needs its readers upgraded first.
 """
 
 from collections import abc as _abc

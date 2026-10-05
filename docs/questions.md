@@ -44,6 +44,15 @@ Blocking: no (blocking for the P1 gate).
 
 ## Answered
 
+### Q-22 · WP-0.5 · CTR-02 · validating hint and finding severity
+Context: the decoders checked status strictly but accepted any hint (-1, 99) and any severity (up to 2^32-1),
+although the contract says severity is 0 to 4 and the hint feeds the verdict policy.
+Options: (a) decoders refuse a hint outside the enum (HINT_UNSPECIFIED allowed: an engine reporting ERROR or
+only a score need not set it) and a severity above 4 (`invalid_response`) (b) leave it to the policy (WP-1.x).
+Recommendation: (a): fail closed at the boundary, as for status.
+Blocking: no.
+Answer (2026-10-05, decided by the agent under the owner's delegation "prends les décisions"): (a).
+
 ### Q-21 · WP-0.5 · — · clippy on prost's generated code
 Context: prost's generated helpers (`as_str_name`, `from_str_name`) trip clippy pedantic `must_use_candidate`
 and `doc_markdown` (15 findings, none from our `.proto`).

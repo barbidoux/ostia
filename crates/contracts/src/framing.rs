@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 
 use prost::Message;
 
-use crate::v1::{AnalyzeRequest, AnalyzeResponse, ContractVersion, Origin, Status};
+use crate::v1::{AnalyzeRequest, AnalyzeResponse, ContractVersion, Hint, Origin, Status};
 
 /// Default cap on the length of one frame's message: 16 MiB.
 pub const DEFAULT_MAX_FRAME: usize = 16 * 1024 * 1024;
@@ -14,6 +14,9 @@ pub const MAJOR: u32 = 1;
 
 /// Contract minor version this crate writes.
 pub const MINOR: u32 = 0;
+
+/// Highest finding severity (4, critical).
+const MAX_SEVERITY: u32 = 4;
 
 /// Why a frame or a message was refused.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -231,8 +234,8 @@ pub fn decode_request(body: &[u8]) -> Result<AnalyzeRequest, ContractError> {
     }
 }
 
-/// Decodes and validates a response: contract major, engine identity (CTR-03), a known status, a score
-/// in [0, 1] when present.
+/// Decodes and validates a response: contract major, engine identity (CTR-03), a known status, a known
+/// hint (unspecified allowed), finding severities up to 4, a score in [0, 1] when present.
 ///
 /// # Errors
 /// Malformed message, unsupported major, missing engine identity, invalid fields.
@@ -251,6 +254,16 @@ pub fn decode_response(body: &[u8]) -> Result<AnalyzeResponse, ContractError> {
     match Status::try_from(response.status) {
         Ok(status) if status != Status::Unspecified => {}
         _ => return Err(ContractError::InvalidResponse("status")),
+    }
+    if Hint::try_from(response.hint).is_err() {
+        return Err(ContractError::InvalidResponse("hint"));
+    }
+    if response
+        .findings
+        .iter()
+        .any(|finding| finding.severity > MAX_SEVERITY)
+    {
+        return Err(ContractError::InvalidResponse("severity"));
     }
     if let Some(score) = response.score
         && !(0.0..=1.0).contains(&score)

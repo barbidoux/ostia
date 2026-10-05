@@ -297,6 +297,110 @@
           "major": 1
         }
       }
+    },
+    {
+      "name": "response_wrong_wire_type",
+      "message": "AnalyzeResponse",
+      "expect": "malformed",
+      "description": "status (field 4) sent length-delimited: 22 00 appended",
+      "fields": null
+    },
+    {
+      "name": "response_version_as_varint",
+      "message": "AnalyzeResponse",
+      "expect": "malformed",
+      "description": "version (field 15) sent as a varint: 78 01 appended",
+      "fields": null
+    },
+    {
+      "name": "response_finding_id_as_varint",
+      "message": "AnalyzeResponse",
+      "expect": "malformed",
+      "description": "a finding whose id (field 1) is a varint: 3a 02 08 01 appended",
+      "fields": null
+    },
+    {
+      "name": "response_varint_overflow",
+      "message": "AnalyzeResponse",
+      "expect": "malformed",
+      "description": "duration_ms (field 8) as a 10-byte varint overflowing 64 bits",
+      "fields": null
+    },
+    {
+      "name": "response_engine_id_bad_utf8",
+      "message": "AnalyzeResponse",
+      "expect": "malformed",
+      "description": "engine_id holding the invalid UTF-8 bytes ff fe",
+      "fields": null
+    },
+    {
+      "name": "response_hint_unknown",
+      "message": "AnalyzeResponse",
+      "expect": "invalid_response",
+      "description": "hint 99",
+      "fields": {
+        "engine_id": "clamav",
+        "engine_version": "1.4.3",
+        "content_version": "daily-27500",
+        "status": "OK",
+        "hint": 99,
+        "duration_ms": 12,
+        "version": {
+          "major": 1
+        }
+      }
+    },
+    {
+      "name": "response_severity_5",
+      "message": "AnalyzeResponse",
+      "expect": "invalid_response",
+      "description": "a finding with severity 5",
+      "fields": {
+        "engine_id": "ember",
+        "engine_version": "2024.1",
+        "content_version": "model-2024-09",
+        "status": "OK",
+        "hint": "SUSPICIOUS",
+        "score": 0.875,
+        "findings": [
+          {
+            "id": "EMBER-SCORE",
+            "title": "PE model score above threshold",
+            "severity": 5,
+            "evidence": "score=0.875 threshold=0.8",
+            "attack_ids": [
+              "T1204.002"
+            ]
+          }
+        ],
+        "duration_ms": 840,
+        "version": {
+          "major": 1
+        }
+      }
+    },
+    {
+      "name": "response_two_faults",
+      "message": "AnalyzeResponse",
+      "expect": "unsupported_major",
+      "description": "major 2 and an empty engine_id: the version is checked first",
+      "fields": {
+        "engine_version": "1.4.3",
+        "content_version": "daily-27500",
+        "status": "OK",
+        "hint": "CLEAN",
+        "duration_ms": 12,
+        "version": {
+          "major": 2
+        }
+      }
+    },
+    {
+      "name": "response_minor_1_extra_field",
+      "message": "AnalyzeResponse",
+      "expect": "ok",
+      "description": "minor 1 with field 9 (unknown to this decoder) appended: ignored",
+      "fields": null
     }
   ]
 }

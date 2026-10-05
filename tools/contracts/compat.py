@@ -1,14 +1,18 @@
 """CTR-04: check that ostia.engine.v1 still holds every field and enum value of its frozen v1 shape.
 
-Usage: compat.py [--snapshot proto/ostia/engine/v1/compat.json]
+Usage: compat.py [--snapshot FILE] [--base REF | --base-snapshot FILE]
 
 Compares the snapshot with the descriptors of the generated Python code (kept in sync with the .proto by
-tools/contracts/gen_python.py --check). Every message, field (number, name, type, label) and enum value of
-the snapshot must exist unchanged; additions are allowed. A breaking change needs a new major package.
+tools/contracts/gen_python.py --check): every message, field (number, name, type, label) and enum value of
+the snapshot must exist unchanged, and every current one must be in the snapshot. Then compares the snapshot
+with the base branch's copy (default origin/main, read with git; CI checks out the full history): entries
+can only be added, so a field cannot leave the .proto and the snapshot in the same change. A breaking change
+needs a new major package.
 """
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -21,6 +25,7 @@ sys.path.insert(0, str(REPO / "workers-py" / "common" / "src"))
 from ostia_common.engine_v1 import engine_pb2
 
 SNAPSHOT = REPO / "proto" / "ostia" / "engine" / "v1" / "compat.json"
+SNAPSHOT_PATH = "proto/ostia/engine/v1/compat.json"
 SCALARS = {
     FieldDescriptor.TYPE_DOUBLE: "double",
     FieldDescriptor.TYPE_FLOAT: "float",
@@ -94,12 +99,96 @@ def check(snapshot: dict[str, Any], descriptor: FileDescriptor) -> list[str]:
     return problems
 
 
+def unfrozen(snapshot: dict[str, Any], descriptor: FileDescriptor) -> list[str]:
+    """Current messages, fields, enums and enum values missing from the snapshot."""
+    problems = []
+    for name, message in descriptor.message_types_by_name.items():
+        frozen = snapshot["messages"].get(name)
+        if frozen is None:
+            problems.append(f"message {name} is not frozen in compat.json")
+            continue
+        for field in message.fields:
+            if str(field.number) not in frozen:
+                problems.append(
+                    f"{name} field {field.number} ({field.name}) is not frozen in compat.json"
+                )
+    for name, enum in descriptor.enum_types_by_name.items():
+        frozen_values = snapshot["enums"].get(name)
+        if frozen_values is None:
+            problems.append(f"enum {name} is not frozen in compat.json")
+            continue
+        for value in enum.values:
+            if str(value.number) not in frozen_values:
+                problems.append(
+                    f"{name} value {value.number} ({value.name}) is not frozen in compat.json"
+                )
+    return problems
+
+
+def dropped(snapshot: dict[str, Any], base: dict[str, Any]) -> list[str]:
+    """Entries of the base snapshot that the snapshot no longer holds unchanged."""
+    problems = []
+    for name, fields in base["messages"].items():
+        current = snapshot["messages"].get(name, {})
+        for number, shape in fields.items():
+            if current.get(number) != shape:
+                problems.append(
+                    f"compat.json drops {name} field {number} ({shape[0]}) frozen on the base"
+                )
+    for name, values in base["enums"].items():
+        current_values = snapshot["enums"].get(name, {})
+        for number, value_name in values.items():
+            if current_values.get(number) != value_name:
+                problems.append(
+                    f"compat.json drops {name} value {number} ({value_name}) frozen on the base"
+                )
+    return problems
+
+
+def base_snapshot(ref: str) -> dict[str, Any] | None:
+    """The snapshot committed at `ref`, or None when `ref` has none yet (first version)."""
+    exists = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+        cwd=REPO,
+        capture_output=True,
+        check=False,
+    )
+    if exists.returncode != 0:
+        raise ValueError(f"cannot read the base snapshot at {ref}: unknown revision")
+    shown = subprocess.run(
+        ["git", "show", f"{ref}:{SNAPSHOT_PATH}"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if shown.returncode != 0:
+        return None
+    document: dict[str, Any] = json.loads(shown.stdout)
+    return document
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Check ostia.engine.v1 against its v1 snapshot")
     parser.add_argument("--snapshot", type=Path, default=SNAPSHOT)
+    bases = parser.add_mutually_exclusive_group()
+    bases.add_argument("--base", default="origin/main", help="git revision of the base snapshot")
+    bases.add_argument("--base-snapshot", type=Path, help="base snapshot file (instead of git)")
     args = parser.parse_args(argv)
     snapshot = json.loads(Path(args.snapshot).read_text(encoding="utf-8"))
+    try:
+        if args.base_snapshot is not None:
+            base = json.loads(Path(args.base_snapshot).read_text(encoding="utf-8"))
+        else:
+            base = base_snapshot(args.base)
+    except (OSError, ValueError) as error:
+        print(f"compat: {error}")
+        print("ostia.engine.v1 breaks compat.json: a breaking change needs a new major")
+        return 1
     problems = check(snapshot, engine_pb2.DESCRIPTOR)
+    problems += unfrozen(snapshot, engine_pb2.DESCRIPTOR)
+    if base is not None:
+        problems += dropped(snapshot, base)
     for problem in problems:
         print(f"compat: {problem}")
     if problems:

@@ -42,8 +42,16 @@ Chosen option 1.
   when they no longer match the `.proto`. ruff excludes the two generated files (Q-19); mypy checks them
   through the stub. The runtime is protobuf 7.36.2.
 - **Compatibility (CTR-04):** `buf breaking` is not available; `proto/ostia/engine/v1/compat.json` freezes
-  every v1 field and enum value, and tests check the generated descriptors against it. The committed golden
-  vectors (`proto/testdata/`) are the compatibility tests later minors must still decode.
+  every v1 field and enum value. `tools/contracts/compat.py` (run by the tooling tests) checks that the
+  generated descriptors hold every frozen entry unchanged, that every current entry is frozen, and that the
+  snapshot only grows compared with the base branch's copy (`origin/main`; CI checks out the full history),
+  so a field cannot leave the `.proto` and the snapshot in one change. The committed golden vectors
+  (`proto/testdata/`) are the compatibility tests later minors must still decode; one carries a field unknown
+  to v1.0 decoders, which must ignore it. New `Origin`, `Status` or `Hint` values are refused by older
+  decoders (fail closed): their readers are upgraded first.
+- **Parity:** prost is stricter than Python's protobuf runtime about wire types and overflowing varints;
+  `ostia_common.framing` walks the wire format after parsing to refuse what prost refuses, and a test runs
+  every golden vector through the pure-Python protobuf runtime as well.
 
 ## Consequences
 
