@@ -5,13 +5,14 @@ nextest JUnit report keeps (.config/nextest.toml) for the traceability matrix.
 Each test builds a throwaway crate, with the repository lints, that depends on crates/traceability.
 """
 
+import os
 import shutil
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
 
-from tooling_support import REPO, cargo, make_workspace
+from tooling_support import REPO, cargo, make_workspace, run
 
 TRACEABILITY = REPO / "crates" / "traceability"
 PLACEMENT = "#[req] goes on a test function, above its #[test] attribute"
@@ -115,7 +116,23 @@ def test_req_outside_a_test_function_is_a_compile_error(tmp_path: Path, item: st
 
 
 @pytest.mark.req("TOOLING")
-def test_nextest_report_keeps_the_ids_of_each_test(tmp_path: Path) -> None:
+def test_a_body_starting_with_an_inner_attribute_compiles(tmp_path: Path) -> None:
+    item = """#[req("FR-06")]
+    #[test]
+    fn answer_is_forty_two() {
+        #![allow(clippy::unreadable_literal)]
+        assert_eq!(super::answer() * 100_000, 4200000);
+    }"""
+    result = cargo(crate_with_tests(tmp_path, "", item), "test", "--quiet")
+    assert result.returncode == 0, result.stderr
+    assert "1 passed" in result.stdout
+
+
+@pytest.mark.req("TOOLING")
+@pytest.mark.parametrize("threads", [None, "1"], ids=["default threads", "one test thread"])
+def test_nextest_report_keeps_the_ids_of_each_test(tmp_path: Path, threads: str | None) -> None:
+    # With one test thread, libtest prints "test <name> ... " before the test's own output, on the
+    # same line: the marker must still be a line of its own.
     item = """#[req("FR-06", "SEC-10")]
     #[test]
     fn answer_is_forty_two() {
@@ -135,7 +152,10 @@ def test_nextest_report_keeps_the_ids_of_each_test(tmp_path: Path) -> None:
     workspace = crate_with_tests(tmp_path, "", item)
     (workspace / ".config").mkdir()
     shutil.copyfile(REPO / ".config" / "nextest.toml", workspace / ".config" / "nextest.toml")
-    result = cargo(workspace, "nextest", "run", "--profile", "ci")
+    env = {**os.environ, "CARGO_TERM_COLOR": "never"}
+    if threads:
+        env["RUST_TEST_THREADS"] = threads
+    result = run(["cargo", "nextest", "run", "--profile", "ci"], cwd=workspace, env=env)
     assert result.returncode == 0, result.stderr
     cases = {
         (case.get("classname"), case.get("name")): case.findtext("system-out", "")

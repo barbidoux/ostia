@@ -20,18 +20,24 @@ MATRIX = str(REPO / "tools" / "traceability" / "matrix.py")
 COMPLETE = Path(__file__).parent / "fixtures" / "trace" / "complete"
 PYTEST_REPORT = Path("target/junit/pytest.xml")
 NEXTEST_REPORT = Path("target/nextest/ci/junit.xml")
-REPORT_TIME = 1_790_000_000
+FINGERPRINTS = (Path("target/nextest/ci/sources.sha256"), Path("target/junit/sources.sha256"))
 MEDIUM_MARKER = "ostia-req: FR-01\n"
+
+
+def write_fingerprints(root: Path, *paths: Path) -> None:
+    """What `just test-rust` / `just test-py` do before running their suite."""
+    for path in paths or FINGERPRINTS:
+        result = run(
+            [sys.executable, MATRIX, "--root", str(root), "--write-fingerprint", str(path)],
+            cwd=REPO,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
 
 
 def repository(tmp_path: Path) -> Path:
     root = tmp_path / "repo"
     shutil.copytree(COMPLETE, root)
-    # The reports of a run are newer than the sources they were produced from.
-    for source in (root / "crates").rglob("*.rs"):
-        os.utime(source, (REPORT_TIME - 60, REPORT_TIME - 60))
-    for report in (NEXTEST_REPORT, PYTEST_REPORT):
-        os.utime(root / report, (REPORT_TIME, REPORT_TIME))
+    write_fingerprints(root)
     return root
 
 
@@ -205,8 +211,22 @@ def test_a_passing_test_with_the_same_name_does_not_cover_a_failing_one(tmp_path
             "",
             "trace: Python test tests.test_hashes::test_summary_header has no req property",
         ),
+        (
+            PYTEST_REPORT,
+            '<properties><property name="req" value="TOOLING"/></properties>',
+            (
+                '<properties><property name="req" value="TOOLING"/>'
+                '<property name="req" value="FR-01"/></properties>'
+            ),
+            "trace: Python test tests.test_hashes::test_summary_header has 2 req properties",
+        ),
     ],
-    ids=["rust without marker", "rust with two markers", "python without property"],
+    ids=[
+        "rust without marker",
+        "rust with two markers",
+        "python without property",
+        "python with two properties",
+    ],
 )
 def test_every_reported_test_carries_exactly_one_tag(
     tmp_path: Path, relative: Path, old: str, new: str, message: str
@@ -241,36 +261,91 @@ def test_every_reported_test_carries_exactly_one_tag(
             "trace: unknown requirement id 'SEC-77' in crates/demo/src/lib.rs",
         ),
         (
+            "crates/demo/src/lib.rs",
+            '#[req("FR-01")]',
+            '#[req("FR-01", // see read()\n        "FR-98")]',
+            "trace: unknown requirement id 'FR-98' in crates/demo/src/lib.rs",
+        ),
+        (
+            "crates/demo/src/lib.rs",
+            '#[req("TOOLING")]',
+            '#[req ("FR-97")]\n    #[req("TOOLING")]',
+            "trace: unknown requirement id 'FR-97' in crates/demo/src/lib.rs",
+        ),
+        (
             PYTEST_REPORT,
             'value="FR-02,TOOLING"',
             'value="FR-02,SEC-99"',
             "trace: unknown requirement id 'SEC-99' in tests.test_hashes::test_every_object_is_hashed",
         ),
     ],
-    ids=["rust report", "rust source of a test that did not run", "rust comment", "python"],
+    ids=[
+        "rust report",
+        "rust source of a test that did not run",
+        "rust comment",
+        "rust parenthesis in a comment inside the tag",
+        "rust space before the parenthesis",
+        "python",
+    ],
 )
 def test_unknown_ids_fail(
     tmp_path: Path, relative: Path | str, old: str, new: str, message: str
 ) -> None:
     root = repository(tmp_path)
     replace(root, relative, old, new)
+    write_fingerprints(root)
     code, lines = matrix(root)
     assert code == 1
     assert message in lines
 
 
 @pytest.mark.req("TOOLING")
-def test_reports_older_than_the_sources_are_refused(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "change",
+    [
+        "edit a source, same modification time",
+        "delete a source",
+        "add a test file",
+        "change a Cargo.toml",
+        "change the nextest configuration",
+    ],
+)
+def test_reports_of_other_sources_are_refused(tmp_path: Path, change: str) -> None:
     root = repository(tmp_path)
-    source = root / "crates" / "demo" / "src" / "lib.rs"
-    os.utime(source, (REPORT_TIME + 1, REPORT_TIME + 1))
+    lib = Path("crates/demo/src/lib.rs")
+    if change == "edit a source, same modification time":
+        replace(root, lib, "fn helper_works() {}", "fn helper_works() {\n        panic!();\n    }")
+    elif change == "delete a source":
+        (root / lib).unlink()
+    elif change == "add a test file":
+        (root / "tests").mkdir()
+        (root / "tests" / "test_new.py").write_text("def test_new() -> None:\n    pass\n")
+    elif change == "change a Cargo.toml":
+        replace(root, "crates/demo/Cargo.toml", 'name = "demo"', 'name = "demo2"')
+    elif change == "change the nextest configuration":
+        (root / ".config").mkdir()
+        (root / ".config" / "nextest.toml").write_text("[profile.ci]\n")
     code, lines = matrix(root)
     assert code == 1
     assert (
-        f"trace: {NEXTEST_REPORT} is older than crates/demo/src/lib.rs: run `just test` first"
-        in lines
+        f"trace: {NEXTEST_REPORT} was produced from other sources: run `just test` first" in lines
     )
     assert lines[-1] == "traceability FAILED"
+
+
+@pytest.mark.req("TOOLING")
+def test_each_report_needs_its_own_current_fingerprint(tmp_path: Path) -> None:
+    # `just test-rust` alone after an edit: the nextest report is current, the pytest report is not.
+    root = repository(tmp_path)
+    replace(root, "crates/demo/src/lib.rs", "pub fn read() {}", "pub fn read() {\n}")
+    write_fingerprints(root, FINGERPRINTS[0])
+    code, lines = matrix(root)
+    assert code == 1
+    assert f"trace: {PYTEST_REPORT} was produced from other sources: run `just test` first" in lines
+    (root / FINGERPRINTS[1]).unlink()
+    code, lines = matrix(root)
+    assert code == 1
+    assert f"trace: {PYTEST_REPORT} has no source fingerprint: run `just test` first" in lines
 
 
 @pytest.mark.req("TOOLING")

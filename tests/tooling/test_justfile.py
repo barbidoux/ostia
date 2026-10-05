@@ -76,6 +76,25 @@ def test_fast_suite_fails_on_skipped_or_ignored_tests() -> None:
 
 
 @pytest.mark.req("TOOLING")
+@pytest.mark.parametrize(
+    ("name", "fingerprint", "suite"),
+    [
+        ("test-rust", "target/nextest/ci/sources.sha256", "cargo nextest run "),
+        ("test-py", "target/junit/sources.sha256", "uv run python tools/ci/run_pytest.py "),
+    ],
+)
+def test_each_suite_fingerprints_its_sources_before_running(
+    name: str, fingerprint: str, suite: str
+) -> None:
+    lines = recipe(name)
+    write = f"uv run python tools/traceability/matrix.py --write-fingerprint {fingerprint}"
+    assert write in lines
+    runs = [i for i, line in enumerate(lines) if line.startswith(suite)]
+    assert runs, f"{name}: no line starts with {suite!r}"
+    assert lines.index(write) < runs[0]
+
+
+@pytest.mark.req("TOOLING")
 def test_python_suite_excludes_bench_and_writes_junit() -> None:
     lines = recipe("test-py")
     expected = (
