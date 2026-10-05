@@ -1,0 +1,18 @@
+[package]
+name = "ostia-fake-clock"
+description = "Clocks for tests and dev builds: a manual fake clock and a clock read from a file"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+ostia-core-domain = { path = "../../../crates/core-domain" }
+
+[dev-dependencies]
+ostia-traceability = { path = "../../../crates/traceability" }
+
+[lints]
+workspace = true
