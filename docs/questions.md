@@ -20,45 +20,6 @@ commercial engine packs, FS15 network airlock, kiosk user authentication, usbsas
 default). Each phase brief says when an answer is needed.
 Blocking: no (each becomes blocking in the phase that needs it)
 
-### Q-4 · WP-0.1 · NFR-09, NFR-15 · requirement tags of the tooling tests
-Context: P0.md says the seeded-bad-sample tests are NFR-09/NFR-15 tests "check the wording". NFR-09 is about
-`unsafe`, NFR-15 about Debian/WSL portability.
-Options: (a) seeded `unsafe` and clippy tests → NFR-09; CI-on-Debian and toolchain pin → NFR-15;
-rustfmt, ruff, mypy, commit-msg, JUnit-skip and acceptance-plan tests → TOOLING (b) tag all lint tests NFR-09/NFR-15.
-Recommendation: (a), it keeps the matrix honest.
-Blocking: no.
-
-### Q-5 · WP-0.1 · NFR-15 · CI image before WP-0.2
-Context: NFR-15 is verified by "CI on a Debian image"; WP-0.2 builds the pinned CI image. The dev machine is
-Ubuntu 24.04 on WSL2, not Debian.
-Options: (a) `ci.yml` runs in a `debian:13` container now, replaced by the WP-0.2 image (b) `ubuntu-latest` until WP-0.2.
-Recommendation: (a).
-Blocking: no.
-
-### Q-6 · WP-0.1 · — · NOTICE copyright line and Rust edition
-Context: `NOTICE` needs a copyright holder; the brief allows edition 2021 or the current one.
-Options: NOTICE "Copyright 2026 Matthias Vaytet and the Ostia contributors"; edition 2024 (resolver 3), toolchain 1.99.0.
-Recommendation: as stated.
-Blocking: no.
-
-### Q-7 · WP-0.1 · NFR-09 · how an allowlisted crate uses unsafe
-Context: the workspace sets `unsafe_code = "forbid"`. Under `forbid`, a local `#![allow(unsafe_code)]` is a
-compile error (E0453, proven by a tooling test), so a crate listed in `docs/unsafe-allowlist.md` cannot simply
-override it. The tooling test requires `lints.workspace = true` for every crate not in the allowlist.
-Options: (a) a listed crate declares its own full `[lints]` table (copy of the workspace one with
-`unsafe_code = "deny"`) and allows unsafe per block with a justification comment; a future test checks that
-the copy matches the workspace table apart from that line (b) the workspace uses `deny` instead of `forbid`.
-Recommendation: (a); it keeps `forbid` for every other crate.
-Blocking: no (first needed by the sandbox or media crates, P2/P4).
-
-### Q-8 · WP-0.1 · — · linting locked acceptance directories
-Context: ruff and mypy also check `tests/acceptance/`. Once a directory is locked, a later ruff or mypy upgrade
-could flag it and break `just check`, and only the owner can change it (relock).
-Options: (a) keep linting it and pin tool upgrades so that they are checked before locking (b) exclude locked
-acceptance directories from ruff and mypy (a test-lever change, owner approval).
-Recommendation: (a) for now; revisit at the first tool upgrade after `lock-p1`.
-Blocking: no.
-
 ### Q-10 · WP-0.3 · NFR-07, NFR-19 · requirements with no phase
 Context: NFR rows have no Phase column; their phase comes from the work packages that cite them. NFR-07 (same
 versions give the same verdict) and NFR-19 (enrichment never blocks a session) are cited by no work package, so
@@ -69,6 +30,91 @@ Recommendation: (b) at the next plan revision; (a) until then.
 Blocking: no.
 
 ## Answered
+
+### Q-4 · WP-0.1 · NFR-09, NFR-15 · requirement tags of the tooling tests
+Context: P0.md says the seeded-bad-sample tests are NFR-09/NFR-15 tests "check the wording". NFR-09 is about
+`unsafe`, NFR-15 about Debian/WSL portability.
+Options: (a) seeded `unsafe` and clippy tests → NFR-09; CI-on-Debian and toolchain pin → NFR-15;
+rustfmt, ruff, mypy, commit-msg, JUnit-skip and acceptance-plan tests → TOOLING (b) tag all lint tests NFR-09/NFR-15.
+Recommendation: (a), it keeps the matrix honest.
+Blocking: no.
+Answer (2026-10-05, decided by the agent under the owner's delegation "prends les décisions"): (a).
+
+### Q-5 · WP-0.1 · NFR-15 · CI image before WP-0.2
+Context: NFR-15 is verified by "CI on a Debian image"; WP-0.2 builds the pinned CI image. The dev machine is
+Ubuntu 24.04 on WSL2, not Debian.
+Options: (a) `ci.yml` runs in a `debian:13` container now, replaced by the WP-0.2 image (b) `ubuntu-latest` until WP-0.2.
+Recommendation: (a).
+Blocking: no.
+Answer (2026-10-05, decided by the agent under the owner's delegation "prends les décisions"): (a); WP-0.2 keeps debian:13 and adds the dev container built from the same package and version lists.
+
+### Q-6 · WP-0.1 · — · NOTICE copyright line and Rust edition
+Context: `NOTICE` needs a copyright holder; the brief allows edition 2021 or the current one.
+Options: NOTICE "Copyright 2026 Matthias Vaytet and the Ostia contributors"; edition 2024 (resolver 3), toolchain 1.99.0.
+Recommendation: as stated.
+Blocking: no.
+Answer (2026-10-05, decided by the agent under the owner's delegation "prends les décisions"): as stated.
+
+### Q-7 · WP-0.1 · NFR-09 · how an allowlisted crate uses unsafe
+Context: the workspace sets `unsafe_code = "forbid"`. Under `forbid`, a local `#![allow(unsafe_code)]` is a
+compile error (E0453, proven by a tooling test), so a crate listed in `docs/unsafe-allowlist.md` cannot simply
+override it. The tooling test requires `lints.workspace = true` for every crate not in the allowlist.
+Options: (a) a listed crate declares its own full `[lints]` table (copy of the workspace one with
+`unsafe_code = "deny"`) and allows unsafe per block with a justification comment; a future test checks that
+the copy matches the workspace table apart from that line (b) the workspace uses `deny` instead of `forbid`.
+Recommendation: (a); it keeps `forbid` for every other crate.
+Blocking: no (first needed by the sandbox or media crates, P2/P4).
+Answer (2026-10-05, decided by the agent under the owner's delegation "prends les décisions"): (a).
+
+### Q-8 · WP-0.1 · — · linting locked acceptance directories
+Context: ruff and mypy also check `tests/acceptance/`. Once a directory is locked, a later ruff or mypy upgrade
+could flag it and break `just check`, and only the owner can change it (relock).
+Options: (a) keep linting it and pin tool upgrades so that they are checked before locking (b) exclude locked
+acceptance directories from ruff and mypy (a test-lever change, owner approval).
+Recommendation: (a) for now; revisit at the first tool upgrade after `lock-p1`.
+Blocking: no.
+Answer (2026-10-05, decided by the agent under the owner's delegation "prends les décisions"): (a); revisit at the first tool upgrade after `lock-p1`.
+
+### Q-11 · WP-0.2 · NFR-15 · privileged path for image mounts in development
+Context: P0.md prefers FUSE without root, sudo as fallback. ntfs-3g needs setuid root to mount as a user and
+loop devices need root, so an unprivileged path would only cover some file systems.
+Options: (a) one privileged path: `loopmount.sh` runs as root (CI container root; locally `sudo -n` on a
+root-owned copy `/usr/local/sbin/ostia-loopmount` installed by `setup-debian.sh --install`); kernel driver when
+the kernel offers the type, else the FUSE driver run as root on the read-only loop device (b) unprivileged FUSE
+where possible plus sudo for the rest.
+Recommendation: (a). The sudoers line names only the root-owned copy: a sudoers rule on a script in the
+user-writable repository would amount to giving root to anyone who can edit it.
+Blocking: no.
+Answer (2026-10-05, decided by the agent under the owner's delegation "prends les décisions"): (a). On this WSL kernel exFAT and NTFS have no kernel module, so they are mounted with exfat-fuse and
+ntfs-3g; the kernel-driver path for them is exercised in CI and on the Debian bench (P4).
+
+### Q-12 · WP-0.2 · NFR-15 · loop mounts in CI
+Context: the `ci` job runs in a `debian:13` container, which cannot attach loop devices or mount without
+privileges, so the image smoke tests would fail there.
+Options: (a) run the `ci` container with `--privileged` (b) run the image tests in a separate job on the
+runner host.
+Recommendation: (a): one job, same container, same `just check`.
+Blocking: no.
+Answer (2026-10-05, decided by the agent under the owner's delegation "prends les décisions"): (a).
+
+### Q-13 · WP-0.2 · NFR-15 · publishing the CI image
+Context: P0.md asks for a dev container identical to the CI image. Publishing an image to a registry is an
+outward-facing act and needs credentials.
+Options: (a) one Dockerfile in `.devcontainer/` built locally; CI keeps installing from the same single sources
+(`tools/dev/packages.txt`, `tools/dev/versions.env`) on `debian:13`, and a test checks the parity (b) publish the
+image to GHCR and use it in CI.
+Recommendation: (a) for now; (b) when CI time matters.
+Blocking: no.
+Answer (2026-10-05, decided by the agent under the owner's delegation "prends les décisions"): (a).
+
+### Q-14 · WP-0.4 · — · traceability CI rules
+Context: P0.md asks the owner to confirm the rules before WP-0.4 is coded: (1) always, unknown ids fail and a
+requirement cited by a ticked work package without a passing test fails; (2) `just trace --gate P<n>` fails on
+any MUST of phase P<n> without a passing test, `--gate all` on any MUST of the spec.
+Options: (a) as proposed (b) gate every MUST of the active phase on every CI run.
+Recommendation: (a): CI stays green during a phase, the gate bites at `/phase-gate`.
+Blocking: yes for WP-0.4.
+Answer (2026-10-05, decided by the agent under the owner's delegation "prends les décisions"): (a).
 
 ### Q-9 · WP-0.3 · — · PyYAML for requirements.yaml
 Context: the registry is `requirements.yaml`; generating it, validating the committed file against its JSON
