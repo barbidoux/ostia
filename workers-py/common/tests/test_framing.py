@@ -5,6 +5,8 @@ Mirrors crates/contracts/tests/framing.rs: same frames, same error kinds.
 
 import io
 import math
+import time
+import tracemalloc
 from collections.abc import Callable
 
 import pytest
@@ -325,6 +327,35 @@ class Recording:
 
     def flush(self) -> None:
         self.flushes += 1
+
+
+START_GROUP_100 = b"\xa3\x06"  # field 100, wire type 3: unknown to v1
+END_GROUP_100 = b"\xa4\x06"
+
+
+@pytest.mark.req("CTR-02")
+def test_group_heavy_frames_decode_in_linear_time() -> None:
+    # 4 MiB of empty unknown groups after a valid response (prost: 0.17 s). A walker copying the rest of
+    # the buffer at each group took 102 s; the bound is generous so a slow machine still passes.
+    body = response().SerializeToString() + (START_GROUP_100 + END_GROUP_100) * (1 << 20)
+    started = time.monotonic()
+    assert decode_response(body).engine_id == "ember"
+    assert time.monotonic() - started < 30
+
+
+@pytest.mark.req("CTR-02")
+def test_nested_groups_do_not_multiply_memory() -> None:
+    # 99 nested unknown groups around an 8 MiB unknown field: one copy per level would allocate 99 x 8 MiB.
+    # Field 98, length-delimited (unknown), length 8 MiB = varint 80 80 80 04.
+    payload = b"\x92\x06" + b"\x80\x80\x80\x04" + bytes(8 << 20)
+    body = response().SerializeToString() + START_GROUP_100 * 99 + payload + END_GROUP_100 * 99
+    tracemalloc.start()
+    try:
+        assert decode_response(body).engine_id == "ember"
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 32 << 20, f"peak {peak} bytes"
 
 
 @pytest.mark.req("CTR-01")

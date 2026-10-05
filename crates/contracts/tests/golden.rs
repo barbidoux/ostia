@@ -77,7 +77,7 @@ fn response_scored() -> AnalyzeResponse {
 }
 
 /// Invalid vectors: name, message type, expected error kind.
-const INVALID: [(&str, &str, &str); 24] = [
+const INVALID: [(&str, &str, &str); 26] = [
     ("frame_empty", "response", "empty"),
     ("frame_oversized", "response", "oversized"),
     ("frame_truncated_header", "response", "truncated_header"),
@@ -118,14 +118,17 @@ const INVALID: [(&str, &str, &str); 24] = [
     ("response_hint_unknown", "response", "invalid_response"),
     ("response_severity_5", "response", "invalid_response"),
     ("response_two_faults", "response", "unsupported_major"),
+    ("response_unterminated_group", "response", "malformed"),
+    ("response_mismatched_group", "response", "malformed"),
 ];
 
-const VALID: [&str; 5] = [
+const VALID: [&str; 6] = [
     "request_pdf",
     "response_clean",
     "response_scored",
     "response_newer_minor",
     "response_minor_1_extra_field",
+    "response_unknown_group",
 ];
 
 fn decode(name: &str, message: &str) -> Result<(), ContractError> {
@@ -168,6 +171,8 @@ fn rust_decodes_the_python_bytes_of_the_valid_vectors() {
         ("response_newer_minor", response_clean(7)),
         // Minor 1 with a field this decoder does not know (field 9): ignored, not refused.
         ("response_minor_1_extra_field", response_clean(1)),
+        // Nested unknown groups (field 100) are skipped like any unknown field.
+        ("response_unknown_group", response_clean(0)),
     ];
     for (name, message) in cases {
         let frame = vector(name);

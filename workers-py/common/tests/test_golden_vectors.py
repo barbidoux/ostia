@@ -81,7 +81,7 @@ VALID_RESPONSES = {
     "response_scored": response_scored(),
     "response_newer_minor": response_clean(7),
 }
-VALID_DECODE_ONLY = ["response_minor_1_extra_field"]
+VALID_DECODE_ONLY = ["response_minor_1_extra_field", "response_unknown_group"]
 
 INVALID = [
     ("frame_empty", "response", "empty"),
@@ -108,6 +108,8 @@ INVALID = [
     ("response_hint_unknown", "response", "invalid_response"),
     ("response_severity_5", "response", "invalid_response"),
     ("response_two_faults", "response", "unsupported_major"),
+    ("response_unterminated_group", "response", "malformed"),
+    ("response_mismatched_group", "response", "malformed"),
 ]
 
 # Run by a pure-Python protobuf runtime: every vector must give the same outcome as with upb.
@@ -159,6 +161,9 @@ def test_a_newer_minor_with_an_unknown_field_is_accepted() -> None:
     decoded = decode_response(decode_frame(vector("response_minor_1_extra_field")))
     decoded.DiscardUnknownFields()
     assert decoded == response_clean(1)
+    grouped = decode_response(decode_frame(vector("response_unknown_group")))
+    grouped.DiscardUnknownFields()
+    assert grouped == response_clean(0)
 
 
 @pytest.mark.req("CTR-02")

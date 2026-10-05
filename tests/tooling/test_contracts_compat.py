@@ -115,6 +115,14 @@ def test_removing_a_field_from_the_proto_and_the_snapshot_together_is_refused(
 
 
 @pytest.mark.req("CTR-04")
+def test_a_base_without_a_snapshot_is_the_first_version() -> None:
+    root = run(["git", "rev-list", "--max-parents=0", "HEAD"], cwd=REPO).stdout.split()[0]
+    code, lines = compat("--base", root)
+    assert code == 0, "\n".join(lines)
+    assert f"compat: no compat.json at the base ({root[:12]}) yet: first version" in lines
+
+
+@pytest.mark.req("CTR-04")
 def test_an_unreadable_base_fails_closed() -> None:
     code, lines = compat("--base", "no-such-ref")
     assert code == 1
