@@ -1,0 +1,55 @@
+# Monthly version updates, one grouped pull request per dependency set.
+# Security updates are enabled separately in the repository settings.
+# Commits read `build(deps): ...` to pass the commit-msg hook.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    groups:
+      cargo:
+        patterns: ["*"]
+    commit-message:
+      prefix: build
+      include: scope
+
+  # The fuzz targets are a separate Cargo workspace with their own Cargo.lock.
+  - package-ecosystem: cargo
+    directory: /fuzz
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    groups:
+      cargo-fuzz:
+        patterns: ["*"]
+    commit-message:
+      prefix: build
+      include: scope
+
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    groups:
+      uv:
+        patterns: ["*"]
+    commit-message:
+      prefix: build
+      include: scope
+
+  # Actions are pinned to commit SHAs with a `# vX.Y.Z` comment; Dependabot updates both.
+  # rails.yml is owner-managed; Dependabot may propose updates to it, which only the owner merges.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: build
+      include: scope
