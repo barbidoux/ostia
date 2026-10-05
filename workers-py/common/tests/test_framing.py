@@ -16,6 +16,8 @@ from ostia_common.framing import (
     DEFAULT_MAX_FRAME,
     MAJOR,
     MINOR,
+    ByteReader,
+    ByteWriter,
     ContractError,
     current_version,
     decode_frame,
@@ -251,6 +253,111 @@ def test_invalid_request_fields_are_refused(changes: dict[str, object], detail: 
 def test_unknown_statuses_are_refused(status: int) -> None:
     error = refused(decode_response, decode_frame(encode_frame(response(status=status))))
     assert (error.kind, error.detail) == ("invalid_response", "status")
+
+
+@pytest.mark.req("CTR-02")
+@pytest.mark.parametrize("hint", [-1, 5, 99])
+def test_unknown_hints_are_refused(hint: int) -> None:
+    error = refused(decode_response, decode_frame(encode_frame(response(hint=hint))))
+    assert (error.kind, error.detail) == ("invalid_response", "hint")
+
+
+@pytest.mark.req("CTR-02")
+def test_unspecified_hint_is_accepted_and_severity_above_four_refused() -> None:
+    assert decode_response(decode_frame(encode_frame(response(hint=0)))).hint == 0
+    severe = response()
+    severe.findings[0].severity = 5
+    error = refused(decode_response, decode_frame(encode_frame(severe)))
+    assert (error.kind, error.detail) == ("invalid_response", "severity")
+
+
+@pytest.mark.req("CTR-02")
+def test_encoding_honours_the_cap_exactly() -> None:
+    message = engine_pb2.ContractVersion(major=1, minor=0)
+    assert encode_frame(message, 2) == b"\x00\x00\x00\x02\x08\x01"
+    assert refused(encode_frame, message, 1).kind == "oversized"
+    assert refused(encode_frame, engine_pb2.ContractVersion()).kind == "empty"
+    # A cap above what 32 bits can announce: the longest announced frame is merely truncated.
+    assert refused(decode_frame, b"\xff\xff\xff\xff", 2**64).kind == "truncated_body"
+
+
+class Trickle:
+    """A stream that hands out one byte per call."""
+
+    def __init__(self, data: bytes) -> None:
+        self.data = io.BytesIO(data)
+
+    def read(self, size: int, /) -> bytes:
+        return self.data.read(min(size, 1))
+
+
+class Generous:
+    """A broken stream that returns more bytes than asked for."""
+
+    def read(self, size: int, /) -> bytes:
+        return bytes(size + 1)
+
+
+class Failing:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def read(self, size: int, /) -> bytes:
+        raise self.error
+
+    def write(self, data: bytes, /) -> int:
+        raise self.error
+
+
+class Recording:
+    """A writer that accepts one byte per call (or none, like a full non-blocking pipe)."""
+
+    def __init__(self, accept: int | None = 1) -> None:
+        self.accept = accept
+        self.data = bytearray()
+        self.flushes = 0
+
+    def write(self, data: bytes, /) -> int | None:
+        if self.accept is None:
+            return None
+        self.data += data[: self.accept]
+        return min(len(data), self.accept)
+
+    def flush(self) -> None:
+        self.flushes += 1
+
+
+@pytest.mark.req("CTR-01")
+def test_short_reads_are_retried() -> None:
+    assert decode_response(read_frame(Trickle(encode_frame(response())))) == response()
+
+
+@pytest.mark.req("CTR-01", "CTR-02")
+@pytest.mark.parametrize(
+    "stream",
+    [Generous(), Failing(PermissionError("denied")), Failing(ValueError("closed file"))],
+    ids=["more than asked", "OSError", "closed stream"],
+)
+def test_stream_failures_are_io_errors_on_read(stream: ByteReader) -> None:
+    assert refused(read_frame, stream).kind == "io"
+
+
+@pytest.mark.req("CTR-01")
+def test_short_writes_are_completed_and_flushed() -> None:
+    writer = Recording()
+    write_frame(writer, response())
+    assert bytes(writer.data) == encode_frame(response())
+    assert writer.flushes == 1
+
+
+@pytest.mark.req("CTR-01", "CTR-02")
+@pytest.mark.parametrize(
+    "stream",
+    [Recording(accept=None), Failing(BrokenPipeError("pipe")), Failing(ValueError("closed"))],
+    ids=["nothing written", "OSError", "closed stream"],
+)
+def test_stream_failures_are_io_errors_on_write(stream: ByteWriter) -> None:
+    assert refused(write_frame, stream, response()).kind == "io"
 
 
 @pytest.mark.req("CTR-02")

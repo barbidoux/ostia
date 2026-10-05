@@ -376,6 +376,144 @@ fn invalid_request_and_response_fields_are_refused() {
     }
 }
 
+#[req("CTR-02")]
+#[test]
+fn unknown_hints_and_severities_are_refused() {
+    for hint in [-1, 5, 99] {
+        let message = AnalyzeResponse { hint, ..response() };
+        let refused = decode_response_frame(&response_frame(&message)).unwrap_err();
+        assert_eq!(
+            refused,
+            ContractError::InvalidResponse("hint"),
+            "hint {hint}"
+        );
+    }
+    let unspecified = AnalyzeResponse {
+        hint: 0,
+        ..response()
+    };
+    assert!(decode_response_frame(&response_frame(&unspecified)).is_ok());
+    let mut severe = response();
+    severe.findings[0].severity = 5;
+    let refused = decode_response_frame(&response_frame(&severe)).unwrap_err();
+    assert_eq!(refused, ContractError::InvalidResponse("severity"));
+}
+
+#[req("CTR-02")]
+#[test]
+fn encoding_honours_the_cap_exactly() {
+    let message = ContractVersion { major: 1, minor: 0 };
+    assert_eq!(
+        encode_frame(&message, 2),
+        Ok(vec![0x00, 0x00, 0x00, 0x02, 0x08, 0x01])
+    );
+    assert_eq!(
+        encode_frame(&message, 1),
+        Err(ContractError::Oversized { len: 2, cap: 1 })
+    );
+    let empty = ContractVersion { major: 0, minor: 0 };
+    assert_eq!(
+        encode_frame(&empty, DEFAULT_MAX_FRAME),
+        Err(ContractError::Empty)
+    );
+    // A cap above what 32 bits can announce: the longest announced frame is merely truncated.
+    assert_eq!(
+        decode_frame(&[0xff, 0xff, 0xff, 0xff], usize::MAX),
+        Err(ContractError::TruncatedBody)
+    );
+}
+
+/// A reader that hands out one byte per call and is interrupted before each byte.
+struct Trickle {
+    bytes: Cursor<Vec<u8>>,
+    interrupt: bool,
+}
+
+impl Read for Trickle {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.interrupt = !self.interrupt;
+        if self.interrupt {
+            return Err(std::io::ErrorKind::Interrupted.into());
+        }
+        let Some(first) = buf.first_mut() else {
+            return Ok(0);
+        };
+        let mut one = [0_u8; 1];
+        let n = self.bytes.read(&mut one)?;
+        *first = one[0];
+        Ok(n)
+    }
+}
+
+#[req("CTR-01")]
+#[test]
+fn short_and_interrupted_reads_are_retried() {
+    let frame = response_frame(&response());
+    let mut reader = Trickle {
+        bytes: Cursor::new(frame),
+        interrupt: false,
+    };
+    let body = read_frame(&mut reader, DEFAULT_MAX_FRAME).unwrap();
+    assert_eq!(decode_response(&body).unwrap(), response());
+}
+
+struct Failing;
+
+impl Read for Failing {
+    fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+        Err(std::io::ErrorKind::PermissionDenied.into())
+    }
+}
+
+impl std::io::Write for Failing {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::ErrorKind::BrokenPipe.into())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// A writer that accepts one byte per call and counts flushes.
+#[derive(Default)]
+struct Recording {
+    bytes: Vec<u8>,
+    flushes: usize,
+}
+
+impl std::io::Write for Recording {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let Some(first) = buf.first() else {
+            return Ok(0);
+        };
+        self.bytes.push(*first);
+        Ok(1)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.flushes += 1;
+        Ok(())
+    }
+}
+
+#[req("CTR-01", "CTR-02")]
+#[test]
+fn stream_failures_are_io_errors_and_frames_are_flushed() {
+    let refused = read_frame(&mut Failing, DEFAULT_MAX_FRAME).unwrap_err();
+    assert_eq!(
+        refused,
+        ContractError::Io(std::io::ErrorKind::PermissionDenied)
+    );
+    assert_eq!(refused.kind(), "io");
+    let refused = write_frame(&mut Failing, &response(), DEFAULT_MAX_FRAME).unwrap_err();
+    assert_eq!(refused, ContractError::Io(std::io::ErrorKind::BrokenPipe));
+    let mut writer = Recording::default();
+    write_frame(&mut writer, &response(), DEFAULT_MAX_FRAME).unwrap();
+    assert_eq!(writer.bytes, response_frame(&response()));
+    assert_eq!(writer.flushes, 1);
+}
+
 fn fixed_seed() -> Config {
     Config {
         cases: 2_000,

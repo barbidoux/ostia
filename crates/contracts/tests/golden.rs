@@ -77,7 +77,7 @@ fn response_scored() -> AnalyzeResponse {
 }
 
 /// Invalid vectors: name, message type, expected error kind.
-const INVALID: [(&str, &str, &str); 16] = [
+const INVALID: [(&str, &str, &str); 24] = [
     ("frame_empty", "response", "empty"),
     ("frame_oversized", "response", "oversized"),
     ("frame_truncated_header", "response", "truncated_header"),
@@ -110,13 +110,22 @@ const INVALID: [(&str, &str, &str); 16] = [
     ),
     ("request_major_2", "request", "unsupported_major"),
     ("request_short_sha256", "request", "invalid_request"),
+    ("response_wrong_wire_type", "response", "malformed"),
+    ("response_version_as_varint", "response", "malformed"),
+    ("response_finding_id_as_varint", "response", "malformed"),
+    ("response_varint_overflow", "response", "malformed"),
+    ("response_engine_id_bad_utf8", "response", "malformed"),
+    ("response_hint_unknown", "response", "invalid_response"),
+    ("response_severity_5", "response", "invalid_response"),
+    ("response_two_faults", "response", "unsupported_major"),
 ];
 
-const VALID: [&str; 4] = [
+const VALID: [&str; 5] = [
     "request_pdf",
     "response_clean",
     "response_scored",
     "response_newer_minor",
+    "response_minor_1_extra_field",
 ];
 
 fn decode(name: &str, message: &str) -> Result<(), ContractError> {
@@ -157,12 +166,36 @@ fn rust_decodes_the_python_bytes_of_the_valid_vectors() {
         ("response_clean", response_clean(0)),
         ("response_scored", response_scored()),
         ("response_newer_minor", response_clean(7)),
+        // Minor 1 with a field this decoder does not know (field 9): ignored, not refused.
+        ("response_minor_1_extra_field", response_clean(1)),
     ];
     for (name, message) in cases {
         let frame = vector(name);
         let body = decode_frame(&frame, DEFAULT_MAX_FRAME).unwrap();
         assert_eq!(decode_response(body).unwrap(), message, "{name}");
     }
+}
+
+#[req("CTR-01")]
+#[test]
+fn response_clean_is_the_hand_decoded_frame() {
+    // Written out field by field from engine.proto, independently of both encoders.
+    let expected: Vec<u8> = [
+        &[0x00, 0x00, 0x00, 0x26][..],
+        &[0x0a, 0x06, b'c', b'l', b'a', b'm', b'a', b'v'],
+        &[0x12, 0x05, b'1', b'.', b'4', b'.', b'3'],
+        &[
+            0x1a, 0x0b, b'd', b'a', b'i', b'l', b'y', b'-', b'2', b'7', b'5', b'0', b'0',
+        ],
+        &[0x20, 0x01, 0x28, 0x02, 0x40, 0x0c],
+        &[0x7a, 0x02, 0x08, 0x01],
+    ]
+    .concat();
+    assert_eq!(vector("response_clean"), expected);
+    assert_eq!(
+        encode_frame(&response_clean(0), DEFAULT_MAX_FRAME).unwrap(),
+        expected
+    );
 }
 
 #[req("CTR-02", "CTR-03", "CTR-04")]
@@ -174,7 +207,7 @@ fn rust_refuses_the_invalid_vectors_with_the_same_kind() {
     }
 }
 
-#[req("CTR-01")]
+#[req("TOOLING")]
 #[test]
 fn every_committed_vector_is_checked_here() {
     let committed: BTreeSet<String> = fs::read_dir(testdata())

@@ -6,6 +6,9 @@ with the expected kind.
 """
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -78,6 +81,7 @@ VALID_RESPONSES = {
     "response_scored": response_scored(),
     "response_newer_minor": response_clean(7),
 }
+VALID_DECODE_ONLY = ["response_minor_1_extra_field"]
 
 INVALID = [
     ("frame_empty", "response", "empty"),
@@ -96,7 +100,33 @@ INVALID = [
     ("response_status_unspecified", "response", "invalid_response"),
     ("request_major_2", "request", "unsupported_major"),
     ("request_short_sha256", "request", "invalid_request"),
+    ("response_wrong_wire_type", "response", "malformed"),
+    ("response_version_as_varint", "response", "malformed"),
+    ("response_finding_id_as_varint", "response", "malformed"),
+    ("response_varint_overflow", "response", "malformed"),
+    ("response_engine_id_bad_utf8", "response", "malformed"),
+    ("response_hint_unknown", "response", "invalid_response"),
+    ("response_severity_5", "response", "invalid_response"),
+    ("response_two_faults", "response", "unsupported_major"),
 ]
+
+# Run by a pure-Python protobuf runtime: every vector must give the same outcome as with upb.
+PURE_PYTHON_SCRIPT = """
+import json, sys
+from pathlib import Path
+from google.protobuf.internal import api_implementation
+from ostia_common.framing import ContractError, decode_frame, decode_request, decode_response
+assert api_implementation.Type() == "python", api_implementation.Type()
+testdata = Path(sys.argv[1])
+for vector in json.loads((testdata / "vectors.json").read_text())["vectors"]:
+    decode = decode_request if vector["message"] == "AnalyzeRequest" else decode_response
+    try:
+        decode(decode_frame((testdata / (vector["name"] + ".bin")).read_bytes()))
+        outcome = "ok"
+    except ContractError as error:
+        outcome = error.kind
+    print(vector["name"], outcome)
+"""
 
 
 @pytest.mark.req("CTR-01", "CTR-03")
@@ -106,11 +136,44 @@ def test_python_encodes_the_valid_vectors_to_the_committed_bytes() -> None:
         assert encode_frame(message) == vector(name), name
 
 
+@pytest.mark.req("CTR-01")
+def test_response_clean_is_the_hand_decoded_frame() -> None:
+    # Written out field by field from engine.proto, independently of both encoders.
+    expected = bytes.fromhex(
+        "00000026  0a06636c616d6176  1205312e342e33  1a0b6461696c792d3237353030  "
+        "2001  2802  400c  7a020801"
+    )
+    assert vector("response_clean") == expected
+    assert encode_frame(response_clean(0)) == expected
+
+
 @pytest.mark.req("CTR-01", "CTR-03", "CTR-04")
 def test_python_decodes_the_valid_vectors() -> None:
     assert decode_request(decode_frame(vector("request_pdf"))) == request_pdf()
     for name, message in VALID_RESPONSES.items():
         assert decode_response(decode_frame(vector(name))) == message, name
+
+
+@pytest.mark.req("CTR-04")
+def test_a_newer_minor_with_an_unknown_field_is_accepted() -> None:
+    decoded = decode_response(decode_frame(vector("response_minor_1_extra_field")))
+    decoded.DiscardUnknownFields()
+    assert decoded == response_clean(1)
+
+
+@pytest.mark.req("CTR-02")
+def test_the_pure_python_protobuf_runtime_gives_the_same_outcomes() -> None:
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+        "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION": "python",
+    }
+    command = [sys.executable, "-c", PURE_PYTHON_SCRIPT, str(TESTDATA)]
+    result = subprocess.run(command, capture_output=True, text=True, env=env, check=False)
+    assert result.returncode == 0, result.stderr
+    outcomes = dict(line.split(" ", 1) for line in result.stdout.splitlines())
+    manifest = json.loads((TESTDATA / "vectors.json").read_text())
+    assert outcomes == {v["name"]: v["expect"] for v in manifest["vectors"]}
 
 
 @pytest.mark.req("CTR-02", "CTR-03", "CTR-04")
@@ -124,11 +187,12 @@ def test_python_refuses_the_invalid_vectors_with_the_same_kind(
     assert error.value.kind == kind
 
 
-@pytest.mark.req("CTR-01")
+@pytest.mark.req("TOOLING")
 def test_the_manifest_lists_the_same_vectors_and_expectations() -> None:
     manifest = json.loads((TESTDATA / "vectors.json").read_text())
     listed = {v["name"]: v["expect"] for v in manifest["vectors"]}
     expected = {"request_pdf": "ok", **dict.fromkeys(VALID_RESPONSES, "ok")}
+    expected.update(dict.fromkeys(VALID_DECODE_ONLY, "ok"))
     expected.update({name: kind for name, _, kind in INVALID})
     assert listed == expected
     assert sorted(p.stem for p in TESTDATA.glob("*.bin")) == sorted(expected)

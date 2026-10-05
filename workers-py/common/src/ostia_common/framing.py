@@ -25,9 +25,13 @@ class ByteReader(Protocol):
 
 
 class ByteWriter(Protocol):
-    """What write_frame needs from a stream (stdout.buffer, a pipe, io.BytesIO)."""
+    """What write_frame needs from a stream (stdout.buffer, a pipe, io.BytesIO).
 
-    def write(self, data: bytes, /) -> int: ...
+    `write` may write fewer bytes than given, or none (`None`, a full non-blocking pipe). A `flush`
+    method, when the stream has one, is called after each frame.
+    """
+
+    def write(self, data: bytes, /) -> int | None: ...
 
 
 class ContractError(Exception):

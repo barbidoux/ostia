@@ -1,8 +1,9 @@
 """CTR-04: within major 1, ostia.engine.v1 only grows (tools/contracts/compat.py).
 
 proto/ostia/engine/v1/compat.json freezes every v1 field (number, name, type, label) and enum value. The
-check compares it with the descriptors of the generated code: a removed, renumbered, renamed or retyped field
-or enum value fails; an added one passes.
+check compares it with the descriptors of the generated code (a removed, renumbered, renamed or retyped field
+or enum value fails; every current one must be frozen) and with the snapshot of the base branch (entries
+can only be added, so a field cannot be removed from the .proto and the snapshot in one change).
 """
 
 import json
@@ -52,9 +53,12 @@ def edited_snapshot(tmp_path: Path, edit: str) -> Path:
 
 @pytest.mark.req("CTR-04")
 def test_the_generated_contract_matches_its_v1_snapshot() -> None:
+    # Default base: origin/main (CI checks out the full history).
     code, lines = compat()
     assert code == 0, "\n".join(lines)
     assert lines[-1] == "ostia.engine.v1 is compatible with compat.json (5 messages, 3 enums)"
+    code, lines = compat("--base", "HEAD")
+    assert code == 0, "\n".join(lines)
 
 
 @pytest.mark.req("CTR-04")
@@ -76,14 +80,43 @@ def test_the_generated_contract_matches_its_v1_snapshot() -> None:
 )
 def test_a_breaking_change_is_refused(tmp_path: Path, edit: str, message: str) -> None:
     # Editing the snapshot stands for the opposite edit of the .proto.
-    code, lines = compat("--snapshot", str(edited_snapshot(tmp_path, edit)))
+    snapshot = edited_snapshot(tmp_path, edit)
+    code, lines = compat("--snapshot", str(snapshot), "--base-snapshot", str(SNAPSHOT))
     assert code == 1
     assert f"compat: {message}" in lines
     assert lines[-1] == "ostia.engine.v1 breaks compat.json: a breaking change needs a new major"
 
 
 @pytest.mark.req("CTR-04")
+def test_every_current_field_must_be_frozen(tmp_path: Path) -> None:
+    snapshot = edited_snapshot(tmp_path, "fewer fields")
+    code, lines = compat("--snapshot", str(snapshot), "--base-snapshot", str(snapshot))
+    assert code == 1
+    assert "compat: AnalyzeResponse field 8 (duration_ms) is not frozen in compat.json" in lines
+
+
+@pytest.mark.req("CTR-04")
 def test_an_added_field_is_compatible(tmp_path: Path) -> None:
-    # A snapshot without duration_ms stands for an older v1: the current contract added the field.
-    code, lines = compat("--snapshot", str(edited_snapshot(tmp_path, "fewer fields")))
+    # A base snapshot without duration_ms stands for an older v1: this change added the field.
+    base = edited_snapshot(tmp_path, "fewer fields")
+    code, lines = compat("--snapshot", str(SNAPSHOT), "--base-snapshot", str(base))
     assert code == 0, "\n".join(lines)
+
+
+@pytest.mark.req("CTR-04")
+def test_removing_a_field_from_the_proto_and_the_snapshot_together_is_refused(
+    tmp_path: Path,
+) -> None:
+    # The base froze field 9; this change dropped it from both the .proto and compat.json.
+    base = edited_snapshot(tmp_path, "unknown field")
+    code, lines = compat("--snapshot", str(SNAPSHOT), "--base-snapshot", str(base))
+    assert code == 1
+    assert "compat: compat.json drops AnalyzeResponse field 9 (verdict) frozen on the base" in lines
+
+
+@pytest.mark.req("CTR-04")
+def test_an_unreadable_base_fails_closed() -> None:
+    code, lines = compat("--base", "no-such-ref")
+    assert code == 1
+    expected = "compat: cannot read the base snapshot at no-such-ref"
+    assert any(line.startswith(expected) for line in lines), "\n".join(lines)
