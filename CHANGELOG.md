@@ -16,3 +16,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Requirements registry (WP-0.3): `requirements.yaml` generated from the specification and the plan
   (`just registry`), validated against `schemas/requirements.schema.json`; `just check` fails when it is
   out of date or when the plan cites an unknown requirement.
+- Development environment (WP-0.2): `tools/dev/setup-debian.sh` (`--check` reports tools, pinned versions,
+  loop devices and exFAT/NTFS support; `--install` for the owner), disk-image scripts `mkimage.sh` and
+  `loopmount.sh` (root helper behind a sudoers rule on a root-owned copy), a Debian 13 dev container and CI
+  built from the same package and version lists; disk-image smoke tests for FAT32, exFAT, NTFS and ext4.
