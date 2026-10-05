@@ -1,4 +1,4 @@
-# rails manifest, updated 2026-10-02T12:27:15+00:00
+# rails manifest, updated 2026-10-05T10:16:54+00:00
 # by barbidou
 155b0634b158f60cc9d541a217e48865d434b0ccab86b3ab150c401406817297  .claude/agents/reviewer.md
 faac6d29be3deaed7e5d41778a8f9b2cd842df128c78de02a85249cdf9b9bae4  .claude/agents/test-auditor.md
@@ -11,7 +11,7 @@ b2ae4a0415f6e38afab661b569f897be9c1038f4ebafa4cd7205c4fb3a9a33f0  .claude/rules/
 0f22278850076f234f5d3448c060dcc1069a41fd286f6e55573f749925a6b636  .claude/rules/security.md
 5297151bf4ebb6b9296a2f9129a07bb3fad3ef33d40c0f9aaba1c75c5f35d179  .claude/rules/tests.md
 8395faa18922dcbb64dad20adc833fc866096649f1f821be4109e62f1e6b4835  .claude/rules/ui.md
-0c85ccd5ca477bff957530b04b6013293d2c63c35d7abc77c642e4ddf41f4b24  .claude/settings.json
+2838f05d20aa69bb121b829f6a8840d5b8cd3a63fe1c86a9afb9d4024cf70630  .claude/settings.json
 a9e4dc615d9612896c534cf0296255788c474a8069f252e20479ae592fc52696  .claude/skills/phase-gate/SKILL.md
 a9c166425929b66014c6f56e0db416178f8fc2b2d61b0e8be6b9e7e0a235411a  .claude/skills/phase-lock/SKILL.md
 2b12ed6eac3d7dfcfef72d5de36422d06cc12b66541958723886ef5037803e1e  .claude/skills/wp-finish/SKILL.md

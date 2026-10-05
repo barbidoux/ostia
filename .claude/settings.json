@@ -81,9 +81,7 @@
       "Bash(just acceptance-collect *)",
       "Bash(just acceptance-dry-run *)",
       "Bash(python3 tools/lock/ostia_lock.py collect *)",
-      "Bash(python3 tools/lock/ostia_lock.py dry-run *)"
-    ],
-    "ask": [
+      "Bash(python3 tools/lock/ostia_lock.py dry-run *)",
       "Bash(git push *)",
       "Bash(gh *)",
       "Bash(sudo *)",
@@ -110,7 +108,16 @@
       "Bash(git commit --amend *)",
       "Bash(git branch -f *)",
       "Bash(git branch -D *)",
-      "Bash(git clean *)"
+      "Bash(git clean *)",
+      "Bash(git tag *)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(gh pr merge *)",
+      "Bash(gh release *)",
+      "Bash(cargo publish *)"
+    ],
+    "ask": [
+      
     ],
     "deny": [
       "Edit(/CLAUDE.md)",
@@ -129,12 +136,6 @@
       "Edit(/tests/acceptance/LOCKLOG.md)",
       "Bash(just lock *)",
       "Bash(just relock *)",
-      "Bash(git tag *)",
-      "Bash(git push --force *)",
-      "Bash(git push -f *)",
-      "Bash(gh pr merge *)",
-      "Bash(gh release *)",
-      "Bash(cargo publish *)",
       "Read(/.env)",
       "Read(/.env.*)",
       "Read(**/secrets/**)",
