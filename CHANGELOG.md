@@ -24,3 +24,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   checked against the registry at collection, and `just trace`: a matrix (`target/traceability.{json,md}`)
   built from the test reports; it fails on unknown ids and on requirements of ticked work packages without a
   passing test, and `--gate P<n>|all` on MUSTs without one. `just check` runs it.
+- Engine contract and framing (WP-0.5): `proto/ostia/engine/v1/engine.proto` with a frozen v1 shape
+  (`compat.json`), offline code generation (ADR-15), framing libraries in Rust (`ostia-contracts`) and Python
+  (`ostia_common.framing`): 4-byte big-endian length, 16 MiB cap checked before allocation, contract major
+  check, engine identity required in every response; 20 golden vectors shared by both languages.
