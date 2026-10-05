@@ -1,5 +1,6 @@
 # NFR-06: long nightly fuzzing of the frame decoder. The corpus grows from night to night in the Actions
-# cache; a crash fails the run (libFuzzer prints the input). The per-push run is the `fuzz` job of ci.yml.
+# cache; a crash or a timeout fails the run and its input is uploaded as the `fuzz-artifacts` artifact
+# (add it to fuzz/regressions/ as a .hex file). The per-push run is the `fuzz` job of ci.yml.
 name: fuzz-nightly
 on:
   schedule:
@@ -19,6 +20,7 @@ jobs:
     env:
       FUZZ_SECONDS: "1800"
       FUZZ_CORPUS: fuzz/corpus/frame_decoder
+      FUZZ_ARTIFACTS: fuzz/artifacts
     steps:
       - name: Bootstrap packages (for the checkout)
         run: |
@@ -67,3 +69,9 @@ jobs:
           uv sync --frozen
       - name: Fuzz suite (frame decoder for FUZZ_SECONDS on the cached corpus)
         run: just test-fuzz
+      - name: Crash and timeout inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts

@@ -77,6 +77,7 @@ jobs:
     # NFR-06: the frame decoder is fuzzed for a fixed time on every push and pull request, and a planted
     # crash must be caught (tests/fuzz). The long run is .github/workflows/fuzz-nightly.yml.
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     container:
       image: debian:13
     env:

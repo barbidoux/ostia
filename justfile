@@ -37,11 +37,13 @@ fmt:
 # Formatting is clean (no change)
 fmt-check:
     cargo fmt --all --check
+    cargo fmt --manifest-path fuzz/Cargo.toml --check
     uv run ruff format --check
 
 # Lints: clippy with warnings denied, ruff
 lint:
     cargo clippy --workspace --all-targets --locked -- -D warnings
+    cargo clippy --manifest-path fuzz/Cargo.toml --all-targets --features fuzzing_selftest --locked -- -D warnings
     uv run ruff check
 
 # Types: mypy --strict (configured in pyproject.toml)
@@ -80,7 +82,7 @@ test-fuzz *args:
 # Long local fuzzing of the frame decoder, growing fuzz/corpus/frame_decoder (git-ignored): `just fuzz 3600`
 fuzz seconds="1800":
     mkdir -p fuzz/corpus/frame_decoder
-    cargo "+$(sed -n 's/^NIGHTLY_TOOLCHAIN=//p' tools/dev/versions.env)" fuzz run frame_decoder fuzz/corpus/frame_decoder proto/testdata -- -max_total_time={{seconds}}
+    cargo "+$(sed -n 's/^NIGHTLY_TOOLCHAIN=//p' tools/dev/versions.env)" fuzz run frame_decoder fuzz/corpus/frame_decoder proto/testdata -- -max_total_time={{seconds}} -timeout=5
 
 # Informational run of an acceptance directory (hardened, same isolation as the gate)
 test-acceptance dir *args:

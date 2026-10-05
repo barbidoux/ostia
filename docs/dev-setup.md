@@ -83,11 +83,15 @@ FUSE), the helper copy and the sudoers rule, and ends with `environment OK` or `
 
 ## 5. Fuzzing (NFR-06)
 
-`just test-fuzz` runs the fuzz suite: the frame decoder target for `FUZZ_SECONDS` seconds (default 60), the
-harness self-test (a planted crash must be caught) and the regression inputs. `just fuzz 3600` fuzzes longer
-and grows `fuzz/corpus/frame_decoder` (git-ignored). CI runs `just test-fuzz` on every push and pull request,
-and for 30 minutes every night (`.github/workflows/fuzz-nightly.yml`). A crash input the fuzzer finds goes
-into `fuzz/regressions/` as a `.hex` file (hex digits, `#` comments) and is replayed by `just test` forever.
+`just test-fuzz` runs the fuzz suite: the frame decoder target for `FUZZ_SECONDS` seconds (default 60, at
+most 5 s per input), the harness self-test (a crash and a hang planted after decoding must be reported) and
+the regression inputs. `just fuzz 3600` fuzzes longer and grows `fuzz/corpus/frame_decoder` (git-ignored).
+CI runs `just test-fuzz` on every push and pull request, and for 30 minutes every night
+(`.github/workflows/fuzz-nightly.yml`, which uploads any crash or timeout input as `fuzz-artifacts`).
+A crash input goes into `fuzz/regressions/` as a `.hex` file (hex digits, `#` comments); add its name and
+expected outcome to `crates/contracts/tests/fuzz_regressions.rs` and
+`workers-py/common/tests/test_fuzz_regressions.py`, which replay it on every `just test` (they fail until
+the new file is listed).
 
 ## WSL notes
 

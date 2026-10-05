@@ -35,3 +35,12 @@ doc = false
 bench = false
 
 [workspace]
+
+# The main workspace's lints (NFR-09), repeated: this crate is outside it.
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
