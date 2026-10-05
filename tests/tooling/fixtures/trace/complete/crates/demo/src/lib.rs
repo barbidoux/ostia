@@ -1,4 +1,6 @@
-//! Fixture crate for the traceability matrix tests (never compiled).
+//! Fixture crate for the traceability matrix tests (never compiled). The matrix reads the ids of the
+//! tests that ran from the nextest report; it only checks the ids written in the sources against the
+//! registry.
 
 /// Reads nothing.
 pub fn read() {}
@@ -13,10 +15,7 @@ mod tests {
         super::read();
     }
 
-    #[test]
     #[req("TOOLING")]
+    #[test]
     fn helper_works() {}
-
-    /// Not a test: a req attribute only counts on a test function's own attributes.
-    fn not_a_test() {}
 }

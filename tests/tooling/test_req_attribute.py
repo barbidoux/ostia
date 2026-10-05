@@ -1,9 +1,12 @@
-"""The Rust `#[req("ID", ...)]` attribute (crates/traceability): a pass-through attribute that checks the
-format of each requirement id at compile time.
+"""The Rust `#[req("ID", ...)]` attribute (crates/traceability): placed above `#[test]`, it checks the format
+of each requirement id at compile time and makes the test print one `ostia-req: <ids>` line, which the
+nextest JUnit report keeps (.config/nextest.toml) for the traceability matrix.
 
 Each test builds a throwaway crate, with the repository lints, that depends on crates/traceability.
 """
 
+import shutil
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -11,9 +14,16 @@ import pytest
 from tooling_support import REPO, cargo, make_workspace
 
 TRACEABILITY = REPO / "crates" / "traceability"
+PLACEMENT = "#[req] goes on a test function, above its #[test] attribute"
 
 
-def crate_with_tests(tmp_path: Path, attribute: str) -> Path:
+def crate_with_tests(tmp_path: Path, attribute: str, item: str | None = None) -> Path:
+    if item is None:
+        item = f"""{attribute}
+    #[test]
+    fn answer_is_forty_two() {{
+        assert_eq!(super::answer(), 42);
+    }}"""
     lib = f"""//! Sample crate using the req attribute.
 
 /// The answer.
@@ -26,11 +36,7 @@ pub fn answer() -> u32 {{
 mod tests {{
     use ostia_traceability::req;
 
-    {attribute}
-    #[test]
-    fn answer_is_forty_two() {{
-        assert_eq!(super::answer(), 42);
-    }}
+    {item}
 }}
 """
     workspace = make_workspace(tmp_path, lib)
@@ -89,3 +95,61 @@ def test_invalid_ids_are_compile_errors(tmp_path: Path, attribute: str, message:
     result = cargo(crate_with_tests(tmp_path, attribute), "test", "--quiet")
     assert result.returncode != 0
     assert message in result.stderr
+
+
+@pytest.mark.req("TOOLING")
+@pytest.mark.parametrize(
+    "item",
+    [
+        '#[test]\n    #[req("FR-06")]\n    fn answer_is_forty_two() {}',
+        '#[req("FR-06")]\n    fn helper() {}\n\n    #[test]\n    fn answer_is_forty_two() { helper(); }',
+        '#[req("FR-06")]\n    mod inner {}\n\n    #[test]\n    fn answer_is_forty_two() {}',
+        '#[req("FR-06")]\n    struct Marker;\n\n    #[test]\n    fn answer_is_forty_two() {}',
+    ],
+    ids=["below #[test]", "on a helper function", "on a module", "on a struct"],
+)
+def test_req_outside_a_test_function_is_a_compile_error(tmp_path: Path, item: str) -> None:
+    result = cargo(crate_with_tests(tmp_path, "", item), "test", "--quiet")
+    assert result.returncode != 0
+    assert PLACEMENT in result.stderr
+
+
+@pytest.mark.req("TOOLING")
+def test_nextest_report_keeps_the_ids_of_each_test(tmp_path: Path) -> None:
+    item = """#[req("FR-06", "SEC-10")]
+    #[test]
+    fn answer_is_forty_two() {
+        assert_eq!(super::answer(), 42);
+    }
+
+    mod inner {
+        use ostia_traceability::req;
+
+        #[req("TOOLING")]
+        #[test]
+        #[should_panic(expected = "a]")]
+        fn answer_is_forty_two() {
+            panic!("a]");
+        }
+    }"""
+    workspace = crate_with_tests(tmp_path, "", item)
+    (workspace / ".config").mkdir()
+    shutil.copyfile(REPO / ".config" / "nextest.toml", workspace / ".config" / "nextest.toml")
+    result = cargo(workspace, "nextest", "run", "--profile", "ci")
+    assert result.returncode == 0, result.stderr
+    cases = {
+        (case.get("classname"), case.get("name")): case.findtext("system-out", "")
+        for case in ET.parse(workspace / "target/nextest/ci/junit.xml").getroot().iter("testcase")
+    }
+    assert set(cases) == {
+        ("sample", "tests::answer_is_forty_two"),
+        ("sample", "tests::inner::answer_is_forty_two"),
+    }
+    markers = {
+        name: [line for line in out.splitlines() if line.startswith("ostia-req:")]
+        for (_, name), out in cases.items()
+    }
+    assert markers == {
+        "tests::answer_is_forty_two": ["ostia-req: FR-06,SEC-10"],
+        "tests::inner::answer_is_forty_two": ["ostia-req: TOOLING"],
+    }

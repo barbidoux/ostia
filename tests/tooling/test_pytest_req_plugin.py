@@ -115,14 +115,22 @@ def test_ids_from_several_markers_are_merged(tmp_path: Path) -> None:
             "@pytest.mark.req(6)\ndef test_one() -> None:\n    assert True\n",
             "test_one: requirement ids must be strings, got 6",
         ),
+        (
+            '@pytest.mark.req("FR-06", "FR-99")\ndef test_one() -> None:\n    assert True\n',
+            "test_one: unknown requirement id 'FR-99'",
+        ),
     ],
-    ids=["unknown id", "no marker", "marker without id", "not a string"],
+    ids=["unknown id", "no marker", "marker without id", "not a string", "unknown second id"],
 )
 def test_bad_tags_refuse_the_collection(tmp_path: Path, body: str, message: str) -> None:
-    code, output, _ = pytest_run(tmp_path, body)
-    assert code != 0
+    # A well-tagged test comes first: the whole run is refused (usage error, exit code 4), the badly
+    # tagged test is not deselected and nothing runs.
+    good = '@pytest.mark.req("FR-06")\ndef test_good() -> None:\n    assert True\n\n\n'
+    code, output, _ = pytest_run(tmp_path, good + body)
+    assert code == 4, output
     assert message in output
-    assert "1 passed" not in output
+    assert "passed" not in output
+    assert "deselected" not in output
 
 
 @pytest.mark.req("TOOLING")

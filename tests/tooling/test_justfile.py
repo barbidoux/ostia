@@ -11,7 +11,7 @@ from tooling_support import REPO, run
 
 CLIPPY = "cargo clippy --workspace --all-targets --locked -- -D warnings"
 NO_SKIPS = "python3 tools/ci/junit_no_skips.py target/nextest/ci/junit.xml target/junit/pytest.xml"
-GATES = ["check", "fmt-check", "lint", "types", "test", "test-rust", "test-py"]
+GATES = ["check", "fmt-check", "lint", "types", "test", "test-rust", "test-py", "trace"]
 
 
 def recipe(name: str) -> list[str]:

@@ -1,7 +1,27 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="nextest-run" tests="2" failures="0" errors="0">
-    <testsuite name="demo" tests="2" disabled="0" errors="0" failures="0">
-        <testcase name="tests::medium_is_read_only" classname="demo" time="0.001"/>
-        <testcase name="tests::helper_works" classname="demo" time="0.001"/>
+<testsuites name="nextest-run" tests="2" skipped="0" failures="0" errors="0">
+    <testsuite name="demo" tests="2" skipped="0" errors="0" failures="0">
+        <testcase name="tests::medium_is_read_only" classname="demo" time="0.001">
+            <system-out>
+running 1 test
+ostia-req: FR-01
+test tests::medium_is_read_only ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+</system-out>
+            <system-err></system-err>
+        </testcase>
+        <testcase name="tests::helper_works" classname="demo" time="0.001">
+            <system-out>
+running 1 test
+ostia-req: TOOLING
+test tests::helper_works ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+</system-out>
+            <system-err></system-err>
+        </testcase>
     </testsuite>
 </testsuites>
