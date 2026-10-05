@@ -44,6 +44,23 @@ Blocking: no (blocking for the P1 gate).
 
 ## Answered
 
+### Q-21 · WP-0.5 · — · clippy on prost's generated code
+Context: prost's generated helpers (`as_str_name`, `from_str_name`) trip clippy pedantic `must_use_candidate`
+and `doc_markdown` (15 findings, none from our `.proto`).
+Options: (a) `#[allow(clippy::must_use_candidate, clippy::doc_markdown)]` on the generated module only
+(b) rewrite the generated file in build.rs.
+Recommendation: (a), as Q-19 for Python.
+Blocking: yes (lint suppression).
+Answer (2026-10-05): (a).
+
+### Q-20 · WP-0.5 · — · mypy-strict stubs for the generated Python code
+Context: protoc's own `.pyi` fails `mypy --strict` (bare `Mapping` twice).
+Options: (a) mypy-protobuf 5.1.0 (Apache-2.0, dev) as protoc plugin: strict-clean stubs (b) a mypy override
+disabling `type-arg` for the generated module.
+Recommendation: (a).
+Blocking: yes (new dependency or type-check exception).
+Answer (2026-10-05): (a).
+
 ### Q-18 · WP-0.5 · CTR-01..04 · dependencies for the Protobuf contracts
 Context: WP-0.5 needs Protobuf code generation and runtimes in Rust and Python, offline (no protoc installed).
 Options: (a) Rust: prost 0.14.4, prost-build 0.14.4 (Apache-2.0), protox 0.9.1 (MIT OR Apache-2.0, pure-Rust

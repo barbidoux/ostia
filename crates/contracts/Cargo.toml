@@ -1,0 +1,19 @@
+[package]
+name = "ostia-contracts"
+description = "Ostia engine contract (ostia.engine.v1) and its length-prefixed framing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+prost = "=0.14.4"
+
+[build-dependencies]
+prost-build = "=0.14.4"
+protox = "=0.9.1"
+
+[lints]
+workspace = true

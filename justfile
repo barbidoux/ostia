@@ -13,6 +13,10 @@ default:
 # Everything that must be green before a work package is done (audit from WP-0.8)
 check: fmt-check lint types test registry-check trace verify-locks rails-verify kit-test
 
+# Regenerate the committed Python code of proto/ostia/engine/v1/engine.proto (Rust regenerates at build)
+proto:
+    uv run python tools/contracts/gen_python.py
+
 # Regenerate requirements.yaml from docs/spec.md and docs/plan.md
 registry:
     uv run python tools/traceability/registry.py generate
