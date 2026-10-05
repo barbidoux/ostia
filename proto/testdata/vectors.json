@@ -1,0 +1,302 @@
+{
+  "comment": "Written by tools/contracts/gen_vectors.py; each <name>.bin is one complete frame.",
+  "vectors": [
+    {
+      "name": "request_pdf",
+      "message": "AnalyzeRequest",
+      "expect": "ok",
+      "description": "a valid request",
+      "fields": {
+        "session_id": "session-0001",
+        "object_id": "object-0001",
+        "sha256": "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=",
+        "detected_type": "application/pdf",
+        "origin": "FILE",
+        "limits": {
+          "memory_bytes": "268435456",
+          "duration_ms": 30000
+        },
+        "version": {
+          "major": 1
+        }
+      }
+    },
+    {
+      "name": "response_clean",
+      "message": "AnalyzeResponse",
+      "expect": "ok",
+      "description": "a valid response",
+      "fields": {
+        "engine_id": "clamav",
+        "engine_version": "1.4.3",
+        "content_version": "daily-27500",
+        "status": "OK",
+        "hint": "CLEAN",
+        "duration_ms": 12,
+        "version": {
+          "major": 1
+        }
+      }
+    },
+    {
+      "name": "response_scored",
+      "message": "AnalyzeResponse",
+      "expect": "ok",
+      "description": "score and finding",
+      "fields": {
+        "engine_id": "ember",
+        "engine_version": "2024.1",
+        "content_version": "model-2024-09",
+        "status": "OK",
+        "hint": "SUSPICIOUS",
+        "score": 0.875,
+        "findings": [
+          {
+            "id": "EMBER-SCORE",
+            "title": "PE model score above threshold",
+            "severity": 3,
+            "evidence": "score=0.875 threshold=0.8",
+            "attack_ids": [
+              "T1204.002"
+            ]
+          }
+        ],
+        "duration_ms": 840,
+        "version": {
+          "major": 1
+        }
+      }
+    },
+    {
+      "name": "response_newer_minor",
+      "message": "AnalyzeResponse",
+      "expect": "ok",
+      "description": "minor 7 is accepted",
+      "fields": {
+        "engine_id": "clamav",
+        "engine_version": "1.4.3",
+        "content_version": "daily-27500",
+        "status": "OK",
+        "hint": "CLEAN",
+        "duration_ms": 12,
+        "version": {
+          "major": 1,
+          "minor": 7
+        }
+      }
+    },
+    {
+      "name": "frame_empty",
+      "message": "AnalyzeResponse",
+      "expect": "empty",
+      "description": "zero length",
+      "fields": null
+    },
+    {
+      "name": "frame_oversized",
+      "message": "AnalyzeResponse",
+      "expect": "oversized",
+      "description": "16 MiB + 1 announced",
+      "fields": null
+    },
+    {
+      "name": "frame_truncated_header",
+      "message": "AnalyzeResponse",
+      "expect": "truncated_header",
+      "description": "3-byte prefix",
+      "fields": null
+    },
+    {
+      "name": "frame_truncated_body",
+      "message": "AnalyzeResponse",
+      "expect": "truncated_body",
+      "description": "last byte cut",
+      "fields": null
+    },
+    {
+      "name": "frame_trailing_bytes",
+      "message": "AnalyzeResponse",
+      "expect": "trailing_bytes",
+      "description": "one extra byte",
+      "fields": null
+    },
+    {
+      "name": "response_malformed",
+      "message": "AnalyzeResponse",
+      "expect": "malformed",
+      "description": "field 1 announces 5 bytes, 2 follow",
+      "fields": null
+    },
+    {
+      "name": "response_major_2",
+      "message": "AnalyzeResponse",
+      "expect": "unsupported_major",
+      "description": "major 2",
+      "fields": {
+        "engine_id": "clamav",
+        "engine_version": "1.4.3",
+        "content_version": "daily-27500",
+        "status": "OK",
+        "hint": "CLEAN",
+        "duration_ms": 12,
+        "version": {
+          "major": 2
+        }
+      }
+    },
+    {
+      "name": "response_no_version",
+      "message": "AnalyzeResponse",
+      "expect": "unsupported_major",
+      "description": "no version",
+      "fields": {
+        "engine_id": "clamav",
+        "engine_version": "1.4.3",
+        "content_version": "daily-27500",
+        "status": "OK",
+        "hint": "CLEAN",
+        "duration_ms": 12
+      }
+    },
+    {
+      "name": "response_no_engine_id",
+      "message": "AnalyzeResponse",
+      "expect": "missing_engine_identity",
+      "description": "empty engine_id",
+      "fields": {
+        "engine_version": "1.4.3",
+        "content_version": "daily-27500",
+        "status": "OK",
+        "hint": "CLEAN",
+        "duration_ms": 12,
+        "version": {
+          "major": 1
+        }
+      }
+    },
+    {
+      "name": "response_no_engine_version",
+      "message": "AnalyzeResponse",
+      "expect": "missing_engine_identity",
+      "description": "empty engine_version",
+      "fields": {
+        "engine_id": "clamav",
+        "content_version": "daily-27500",
+        "status": "OK",
+        "hint": "CLEAN",
+        "duration_ms": 12,
+        "version": {
+          "major": 1
+        }
+      }
+    },
+    {
+      "name": "response_no_content_version",
+      "message": "AnalyzeResponse",
+      "expect": "missing_engine_identity",
+      "description": "empty content_version",
+      "fields": {
+        "engine_id": "clamav",
+        "engine_version": "1.4.3",
+        "status": "OK",
+        "hint": "CLEAN",
+        "duration_ms": 12,
+        "version": {
+          "major": 1
+        }
+      }
+    },
+    {
+      "name": "response_score_above_one",
+      "message": "AnalyzeResponse",
+      "expect": "invalid_score",
+      "description": "score 1.5",
+      "fields": {
+        "engine_id": "clamav",
+        "engine_version": "1.4.3",
+        "content_version": "daily-27500",
+        "status": "OK",
+        "hint": "CLEAN",
+        "score": 1.5,
+        "duration_ms": 12,
+        "version": {
+          "major": 1
+        }
+      }
+    },
+    {
+      "name": "response_score_nan",
+      "message": "AnalyzeResponse",
+      "expect": "invalid_score",
+      "description": "score NaN",
+      "fields": {
+        "engine_id": "clamav",
+        "engine_version": "1.4.3",
+        "content_version": "daily-27500",
+        "status": "OK",
+        "hint": "CLEAN",
+        "score": "NaN",
+        "duration_ms": 12,
+        "version": {
+          "major": 1
+        }
+      }
+    },
+    {
+      "name": "response_status_unspecified",
+      "message": "AnalyzeResponse",
+      "expect": "invalid_response",
+      "description": "status 0",
+      "fields": {
+        "engine_id": "clamav",
+        "engine_version": "1.4.3",
+        "content_version": "daily-27500",
+        "hint": "CLEAN",
+        "duration_ms": 12,
+        "version": {
+          "major": 1
+        }
+      }
+    },
+    {
+      "name": "request_major_2",
+      "message": "AnalyzeRequest",
+      "expect": "unsupported_major",
+      "description": "request with major 2",
+      "fields": {
+        "session_id": "session-0001",
+        "object_id": "object-0001",
+        "sha256": "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=",
+        "detected_type": "application/pdf",
+        "origin": "FILE",
+        "limits": {
+          "memory_bytes": "268435456",
+          "duration_ms": 30000
+        },
+        "version": {
+          "major": 2
+        }
+      }
+    },
+    {
+      "name": "request_short_sha256",
+      "message": "AnalyzeRequest",
+      "expect": "invalid_request",
+      "description": "31-byte sha256",
+      "fields": {
+        "session_id": "session-0001",
+        "object_id": "object-0001",
+        "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+        "detected_type": "application/pdf",
+        "origin": "FILE",
+        "limits": {
+          "memory_bytes": "268435456",
+          "duration_ms": 30000
+        },
+        "version": {
+          "major": 1
+        }
+      }
+    }
+  ]
+}

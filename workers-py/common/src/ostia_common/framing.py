@@ -9,7 +9,7 @@ shared with the Rust framing (crates/contracts) and the golden vectors (proto/te
 
 from typing import Protocol
 
-from google.protobuf.message import Message
+from google.protobuf.message import DecodeError, Message
 
 from ostia_common.engine_v1 import engine_pb2
 
@@ -41,34 +41,126 @@ class ContractError(Exception):
 
 def current_version() -> engine_pb2.ContractVersion:
     """The version written into every message: {MAJOR, MINOR}."""
-    raise NotImplementedError
+    return engine_pb2.ContractVersion(major=MAJOR, minor=MINOR)
+
+
+def _effective_cap(cap: int) -> int:
+    """The largest message length a frame can carry under `cap` (the prefix is 32 bits)."""
+    return min(cap, 0xFFFFFFFF)
+
+
+def _announced_length(header: bytes, cap: int) -> int:
+    length = int.from_bytes(header, "big")
+    if length == 0:
+        raise ContractError("empty")
+    if length > _effective_cap(cap):
+        raise ContractError("oversized", f"{length} bytes, cap {cap}")
+    return length
 
 
 def encode_frame(message: Message, cap: int = DEFAULT_MAX_FRAME) -> bytes:
     """One frame holding `message`."""
-    raise NotImplementedError
+    body = message.SerializeToString()
+    if not body:
+        raise ContractError("empty")
+    if len(body) > _effective_cap(cap):
+        raise ContractError("oversized", f"{len(body)} bytes, cap {cap}")
+    return len(body).to_bytes(4, "big") + body
 
 
 def decode_frame(buf: bytes, cap: int = DEFAULT_MAX_FRAME) -> bytes:
     """The message bytes of `buf`, which must hold exactly one frame."""
-    raise NotImplementedError
+    if len(buf) < 4:
+        raise ContractError("truncated_header")
+    length = _announced_length(buf[:4], cap)
+    body = buf[4:]
+    if len(body) < length:
+        raise ContractError("truncated_body")
+    if len(body) > length:
+        raise ContractError("trailing_bytes")
+    return body
+
+
+def _read_exactly(stream: ByteReader, size: int) -> bytes:
+    """Up to `size` bytes; fewer only when the stream ends."""
+    chunks = []
+    remaining = size
+    while remaining:
+        try:
+            chunk = stream.read(remaining)
+        except OSError as error:
+            raise ContractError("io", str(error)) from error
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
 
 
 def read_frame(stream: ByteReader, cap: int = DEFAULT_MAX_FRAME) -> bytes:
     """Read one frame from `stream`; the cap is checked before any message byte is read."""
-    raise NotImplementedError
+    header = _read_exactly(stream, 4)
+    if len(header) < 4:
+        raise ContractError("truncated_header")
+    length = _announced_length(header, cap)
+    body = _read_exactly(stream, length)
+    if len(body) < length:
+        raise ContractError("truncated_body")
+    return body
 
 
 def write_frame(stream: ByteWriter, message: Message, cap: int = DEFAULT_MAX_FRAME) -> None:
     """Write `message` to `stream` as one frame."""
-    raise NotImplementedError
+    frame = encode_frame(message, cap)
+    try:
+        stream.write(frame)
+    except OSError as error:
+        raise ContractError("io", str(error)) from error
+
+
+def _check_version(message: engine_pb2.AnalyzeRequest | engine_pb2.AnalyzeResponse) -> None:
+    """A missing version reads as major 0; any major other than MAJOR is refused."""
+    major = message.version.major if message.HasField("version") else 0
+    if major != MAJOR:
+        raise ContractError("unsupported_major", str(major))
+
+
+def _parse[M: Message](message: M, body: bytes) -> M:
+    try:
+        message.ParseFromString(body)
+    except DecodeError as error:
+        raise ContractError("malformed", str(error)) from error
+    return message
 
 
 def decode_request(body: bytes) -> engine_pb2.AnalyzeRequest:
     """Decode and validate a request: contract major, 32-byte SHA-256, known origin."""
-    raise NotImplementedError
+    request = _parse(engine_pb2.AnalyzeRequest(), body)
+    _check_version(request)
+    if len(request.sha256) != 32:
+        raise ContractError("invalid_request", "sha256")
+    if request.origin not in _KNOWN_ORIGINS:
+        raise ContractError("invalid_request", "origin")
+    return request
 
 
 def decode_response(body: bytes) -> engine_pb2.AnalyzeResponse:
     """Decode and validate a response: major, engine identity, known status, score in [0, 1]."""
-    raise NotImplementedError
+    response = _parse(engine_pb2.AnalyzeResponse(), body)
+    _check_version(response)
+    for field, value in (
+        ("engine_id", response.engine_id),
+        ("engine_version", response.engine_version),
+        ("content_version", response.content_version),
+    ):
+        if not value:
+            raise ContractError("missing_engine_identity", field)
+    if response.status not in _KNOWN_STATUSES:
+        raise ContractError("invalid_response", "status")
+    if response.HasField("score") and not 0.0 <= response.score <= 1.0:
+        raise ContractError("invalid_score", str(response.score))
+    return response
+
+
+_KNOWN_ORIGINS = frozenset(engine_pb2.Origin.values()) - {engine_pb2.ORIGIN_UNSPECIFIED}
+_KNOWN_STATUSES = frozenset(engine_pb2.Status.values()) - {engine_pb2.STATUS_UNSPECIFIED}

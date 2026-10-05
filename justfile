@@ -17,6 +17,10 @@ check: fmt-check lint types test registry-check trace verify-locks rails-verify 
 proto:
     uv run python tools/contracts/gen_python.py
 
+# Rewrite the golden vectors in proto/testdata (written once: changing one is a contract change)
+vectors:
+    uv run python tools/contracts/gen_vectors.py
+
 # Regenerate requirements.yaml from docs/spec.md and docs/plan.md
 registry:
     uv run python tools/traceability/registry.py generate
