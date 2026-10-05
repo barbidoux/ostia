@@ -1,0 +1,5 @@
+# A valid framed response whose engine_id is "OSTIA-PLANTED-HANG": the self-test target sleeps on it after
+# decoding, so the per-input timeout of the fuzz runs must report it.
+00000032
+0a12 4f535449412d504c414e5445442d48414e47
+1205312e342e33 1a0b6461696c792d3237353030 2001 2802 400c 7a020801

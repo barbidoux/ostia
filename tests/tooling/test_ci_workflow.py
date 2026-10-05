@@ -90,3 +90,63 @@ def test_workflow_never_bypasses_hooks_or_rails() -> None:
     text = workflow()
     assert "--no-verify" not in text
     assert "rails.yml" not in text
+
+
+NIGHTLY = REPO / ".github" / "workflows" / "fuzz-nightly.yml"
+FUZZ_TOOLS = (
+    'rustup toolchain install "${NIGHTLY_TOOLCHAIN}" --profile minimal',
+    'cargo install --locked "cargo-fuzz@${CARGO_FUZZ_VERSION}"',
+)
+
+
+@pytest.mark.req("NFR-06")
+def test_every_push_and_pull_request_fuzzes_the_frame_decoder_for_a_fixed_time() -> None:
+    fuzz = job("fuzz")
+    assert '      FUZZ_SECONDS: "60"\n' in fuzz
+    assert "    timeout-minutes: 30\n" in fuzz
+    for line in FUZZ_TOOLS:
+        assert line in fuzz, f"fuzz job: missing {line!r}"
+    run = step(fuzz, "Fuzz suite (frame decoder for FUZZ_SECONDS, planted crash caught)")
+    assert run.strip() == "run: just test-fuzz"
+    assert "continue-on-error" not in fuzz
+    assert not re.search(r"^\s+if:", fuzz, re.MULTILINE)
+
+
+@pytest.mark.req("NFR-06")
+def test_a_nightly_run_fuzzes_longer_on_a_cached_corpus() -> None:
+    assert NIGHTLY.is_file(), ".github/workflows/fuzz-nightly.yml is missing"
+    text = NIGHTLY.read_text()
+    assert re.search(r"^  schedule:\n    - cron: \"0 2 \* \* \*\"$", text, re.MULTILINE)
+    assert "  workflow_dispatch:\n" in text
+    assert '      FUZZ_SECONDS: "1800"\n' in text
+    assert "      FUZZ_CORPUS: fuzz/corpus/frame_decoder\n" in text
+    for line in FUZZ_TOOLS:
+        assert line in text, f"nightly: missing {line!r}"
+    assert "actions/cache@v4" in text
+    assert "path: fuzz/corpus" in text
+    assert "run: just test-fuzz" in text
+    assert "continue-on-error" not in text
+    assert "    timeout-minutes: 60\n" in text
+    assert "    container:\n      image: debian:13\n" in text
+    # A crash or timeout found at night is kept: libFuzzer writes it to FUZZ_ARTIFACTS, uploaded on failure.
+    assert "      FUZZ_ARTIFACTS: fuzz/artifacts\n" in text
+    upload = re.search(
+        r"^      - name: Crash and timeout inputs\n"
+        r"        if: failure\(\)\n"
+        r"        uses: actions/upload-artifact@v4\n"
+        r"        with:\n"
+        r"          name: fuzz-artifacts\n"
+        r"          path: fuzz/artifacts\n",
+        text,
+        re.MULTILINE,
+    )
+    assert upload, "nightly: no upload of fuzz/artifacts on failure"
+    conditions = re.findall(r"^\s+if:", text, re.MULTILINE)
+    assert len(conditions) == 1, "only the upload step is conditional"
+
+
+@pytest.mark.req("NFR-15")
+def test_the_fuzzing_toolchain_is_pinned() -> None:
+    versions = (REPO / "tools" / "dev" / "versions.env").read_text().splitlines()
+    assert "NIGHTLY_TOOLCHAIN=nightly-2026-10-04" in versions
+    assert "CARGO_FUZZ_VERSION=0.13.2" in versions

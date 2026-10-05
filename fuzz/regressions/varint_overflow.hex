@@ -1,0 +1,5 @@
+# A valid response (response_clean) followed by duration_ms (field 8) as a 10-byte varint whose last
+# byte overflows 64 bits: malformed for prost, and for the Python decoder since WP-0.5.
+00000031
+0a06636c616d6176 1205312e342e33 1a0b6461696c792d3237353030 2001 2802 400c 7a020801
+40 ffffffffffffffffff 7f

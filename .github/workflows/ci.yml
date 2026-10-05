@@ -73,6 +73,58 @@ jobs:
             python3 tools/lock/ostia_lock.py gate "$dir"
           done
 
+  fuzz:
+    # NFR-06: the frame decoder is fuzzed for a fixed time on every push and pull request, and a planted
+    # crash must be caught (tests/fuzz). The long run is .github/workflows/fuzz-nightly.yml.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: debian:13
+    env:
+      FUZZ_SECONDS: "60"
+    steps:
+      - name: Bootstrap packages (for the checkout)
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git
+      - uses: actions/checkout@v4
+      - name: Trust the workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: System packages and tool versions (tools/dev/packages.txt, tools/dev/versions.env)
+        run: |
+          sed -e 's/#.*//' -e '/^[[:space:]]*$/d' tools/dev/packages.txt \
+            | xargs apt-get install -y --no-install-recommends
+          cat tools/dev/versions.env >> "$GITHUB_ENV"
+      - name: Cache toolchains and fuzz builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry
+            ~/.rustup
+            ~/.cache/uv
+            ~/.local/share/uv
+            ~/.local/bin
+            fuzz/target
+          key: fuzz-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'fuzz/Cargo.lock', 'uv.lock', 'tools/dev/versions.env') }}
+      - name: Toolchains (stable, pinned nightly, cargo-fuzz, uv, just)
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSfo /tmp/rustup-init.sh https://sh.rustup.rs
+          sh /tmp/rustup-init.sh -y --default-toolchain none --profile minimal
+          curl --proto '=https' --tlsv1.2 -LsSfo /tmp/uv-install.sh "https://astral.sh/uv/${UV_VERSION}/install.sh"
+          sh /tmp/uv-install.sh
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+          rustup toolchain install
+          rustup toolchain install "${NIGHTLY_TOOLCHAIN}" --profile minimal
+          cargo fuzz --version 2>/dev/null | grep -q "${CARGO_FUZZ_VERSION}" \
+            || cargo install --locked "cargo-fuzz@${CARGO_FUZZ_VERSION}"
+          uv tool install "rust-just==${JUST_VERSION}"
+          uv sync --frozen
+      - name: Fuzz suite (frame decoder for FUZZ_SECONDS, planted crash caught)
+        run: just test-fuzz
+
   acceptance-current:
     # Informational: the current phase's acceptance tests turn green during the phase.
     needs: ci

@@ -37,11 +37,13 @@ fmt:
 # Formatting is clean (no change)
 fmt-check:
     cargo fmt --all --check
+    cargo fmt --manifest-path fuzz/Cargo.toml --check
     uv run ruff format --check
 
 # Lints: clippy with warnings denied, ruff
 lint:
     cargo clippy --workspace --all-targets --locked -- -D warnings
+    cargo clippy --manifest-path fuzz/Cargo.toml --all-targets --features fuzzing_selftest --locked -- -D warnings
     uv run ruff check
 
 # Types: mypy --strict (configured in pyproject.toml)
@@ -68,6 +70,19 @@ test-py *args:
     rm -f target/junit/pytest.xml
     uv run python tools/traceability/matrix.py --write-fingerprint target/junit/sources.sha256
     uv run python tools/ci/run_pytest.py {{py_test_dirs}} -- -m "not bench" --junitxml=target/junit/pytest.xml {{args}}
+
+# Fuzz suite (pinned nightly + cargo-fuzz, NFR-06): the frame decoder target runs FUZZ_SECONDS (default 60),
+# a planted crash must be caught, regression inputs must not crash (JUnit in target/junit/fuzz.xml)
+test-fuzz *args:
+    mkdir -p target/junit
+    rm -f target/junit/fuzz.xml
+    uv run python tools/ci/run_pytest.py tests/fuzz -- --junitxml=target/junit/fuzz.xml {{args}}
+    python3 tools/ci/junit_no_skips.py target/junit/fuzz.xml
+
+# Long local fuzzing of the frame decoder, growing fuzz/corpus/frame_decoder (git-ignored): `just fuzz 3600`
+fuzz seconds="1800":
+    mkdir -p fuzz/corpus/frame_decoder
+    cargo "+$(sed -n 's/^NIGHTLY_TOOLCHAIN=//p' tools/dev/versions.env)" fuzz run frame_decoder fuzz/corpus/frame_decoder proto/testdata -- -max_total_time={{seconds}} -timeout=5
 
 # Informational run of an acceptance directory (hardened, same isolation as the gate)
 test-acceptance dir *args:

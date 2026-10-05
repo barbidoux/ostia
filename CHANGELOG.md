@@ -27,4 +27,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Engine contract and framing (WP-0.5): `proto/ostia/engine/v1/engine.proto` with a frozen v1 shape
   (`compat.json`), offline code generation (ADR-15), framing libraries in Rust (`ostia-contracts`) and Python
   (`ostia_common.framing`): 4-byte big-endian length, 16 MiB cap checked before allocation, contract major
-  check, engine identity required in every response; 20 golden vectors shared by both languages.
+  check, engine identity required in every response; golden vectors shared by both languages.
+- Fuzzing (WP-0.6): cargo-fuzz target for the frame decoder and message validation (`fuzz/`), with a harness
+  self-test that must catch a planted crash; `just test-fuzz` runs in CI on every push and pull request
+  (60 s) and every night (30 min, growing corpus); regression inputs in `fuzz/regressions/` replay in
+  `just test`.

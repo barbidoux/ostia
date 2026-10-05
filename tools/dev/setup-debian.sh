@@ -38,7 +38,7 @@ APT_TOOLS=(
     "clamd:clamav-daemon:--version" "mmls:sleuthkit:-V"
 )
 USER_TOOLS=("rustup:--version" "rustc:--version" "cargo:--version" "uv:--version" "just:--version"
-    "cargo-nextest:nextest --version")
+    "cargo-nextest:nextest --version" "cargo-fuzz:--version")
 
 # Pinned versions: tools/dev/versions.env and the channel of rust-toolchain.toml.
 declare -A PINNED=()
@@ -46,7 +46,7 @@ while IFS='=' read -r key value; do
     [[ "$key" =~ ^[A-Z_]+$ ]] && PINNED["$key"]="$value"
 done <"$script_dir/versions.env"
 PINNED[RUST]="$(sed -n 's/^channel *= *"\([0-9.]*\)".*/\1/p' "$repo/rust-toolchain.toml")"
-declare -A PIN_OF=([uv]=UV_VERSION [just]=JUST_VERSION [cargo-nextest]=NEXTEST_VERSION [rustc]=RUST)
+declare -A PIN_OF=([uv]=UV_VERSION [just]=JUST_VERSION [cargo-nextest]=NEXTEST_VERSION [cargo-fuzz]=CARGO_FUZZ_VERSION [rustc]=RUST)
 
 is_root() { [[ "$(id -u)" == 0 ]]; }
 # file system:kernel module:FUSE helper

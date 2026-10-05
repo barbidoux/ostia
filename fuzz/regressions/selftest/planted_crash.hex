@@ -1,0 +1,5 @@
+# A valid framed response whose engine_id is "OSTIA-PLANTED-BUG": the self-test target panics on it only
+# after decode_frame and decode_response accepted it, so the crash proves the decoders were reached.
+00000031
+0a11 4f535449412d504c414e5445442d425547
+1205312e342e33 1a0b6461696c792d3237353030 2001 2802 400c 7a020801
