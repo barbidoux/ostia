@@ -54,6 +54,9 @@ def image(tmp_path: Path, relative: str = "target/disk.img") -> Path:
         (("ext4", "16", "{tmp}/target/../a.img"), OUTPUT),
         (("ext4", "16", "{tmp}/target/a.raw"), OUTPUT),
         (("ext4", "16"), "usage: mkimage.sh <type> <size-MiB> <output>"),
+        (("ext4", "-5", "{tmp}/target/a.img"), f"{SIZE} got '-5'"),
+        (("ext4", "16", "/dev/mmcblk0p1"), "mkimage: refusing device path '/dev/mmcblk0p1'"),
+        (("ext4", "16", "{tmp}/target/dangling.img"), "mkimage: refusing to overwrite existing"),
     ],
     ids=[
         "unknown type",
@@ -66,12 +69,33 @@ def image(tmp_path: Path, relative: str = "target/disk.img") -> Path:
         "dot-dot escape",
         "wrong extension",
         "missing argument",
+        "negative size",
+        "sd card device",
+        "dangling symlink output",
     ],
 )
 def test_mkimage_refuses_bad_arguments(tmp_path: Path, args: tuple[str, ...], message: str) -> None:
+    (tmp_path / "target").mkdir()
+    os.symlink(tmp_path / "nowhere", tmp_path / "target" / "dangling.img")
     code, output = mkimage(*(a.replace("{tmp}", str(tmp_path)) for a in args))
     assert code == 2
     assert message in output
+
+
+@pytest.mark.req("TOOLING")
+@pytest.mark.parametrize("size", [1, 4096])
+def test_mkimage_accepts_the_size_limits(tmp_path: Path, size: int) -> None:
+    output = tmp_path / "target" / f"limit-{size}.img"
+    code, text = mkimage("ext4", str(size), str(output))
+    assert code == 0, text
+    assert output.stat().st_size == size * 1024 * 1024
+
+
+@pytest.mark.req("TOOLING")
+def test_loopmount_accepts_a_32_character_name(tmp_path: Path) -> None:
+    code, output = loopmount("ro", str(image(tmp_path, "target/disk.img")), "a" * 32)
+    assert NAME not in output
+    assert code != 2, output
 
 
 @pytest.mark.req("TOOLING")
@@ -98,9 +122,9 @@ def test_mkimage_never_overwrites(tmp_path: Path) -> None:
         (("ro", "{img}", "Disk One"), f"{NAME}, got 'Disk One'"),
         (("ro", "{img}", "a" * 33), NAME),
         (("rw-image", "{img}", "disk"), RW_IMAGE),
-        (("umount", "{tmp}/target/disk"), "loopmount: umount only accepts <dir>/target/mnt/<name>"),
-        (("umount", "/mnt/c"), "loopmount: umount only accepts <dir>/target/mnt/<name>"),
-        (("ro", "{img}"), "usage: loopmount.sh ro|rw-image <image> <name> | umount <mount point>"),
+        (("umount", "{tmp}/target/disk"), NAME),
+        (("umount", "../etc"), f"{NAME}, got '../etc'"),
+        (("ro", "{img}"), "usage: loopmount.sh ro|rw-image <image> <name> | umount <name>"),
     ],
     ids=[
         "unknown mode",
@@ -114,8 +138,8 @@ def test_mkimage_never_overwrites(tmp_path: Path) -> None:
         "name with space",
         "name too long",
         "rw-image outside fixtures",
-        "umount outside target/mnt",
-        "umount of a windows drive",
+        "umount of a path",
+        "umount with dot-dot",
         "missing argument",
     ],
 )
