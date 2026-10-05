@@ -231,7 +231,9 @@ if [[ "$driver" == kernel ]]; then
         fail "mounting $image ($fs, kernel driver) failed"
     mounted=1
 else
-    "$fuse" -o "$options" "$loop" "$mount_point" || fail "mounting $image ($fs, fuse driver) failed"
+    # The FUSE driver stays running as a daemon: it must not inherit the lock.
+    "$fuse" -o "$options" "$loop" "$mount_point" {lock_fd}>&- ||
+        fail "mounting $image ($fs, fuse driver) failed"
     mounted=1
     # FUSE drivers do not all apply the generic flags: set them on the mount itself.
     mount --no-canonicalize -o "remount,bind,$required" -- "$mount_point" ||
