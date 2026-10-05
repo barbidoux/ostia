@@ -45,7 +45,9 @@ files = ["tools", "tests"]
 exclude = ['^\.claude/', '^tools/kit/', '^tools/lock/']
 
 [tool.pytest.ini_options]
-addopts = ["--strict-markers"]
+# The req plugin refuses a run whose tests lack valid requirement ids (WP-0.4); it never deselects.
+addopts = ["--strict-markers", "-p", "tools.traceability.pytest_plugin"]
+pythonpath = ["."]
 testpaths = ["tests/tooling"]
 markers = [
     "req(*ids): requirement ids proven by the test (FR-06, NFR-09, TOOLING, ...)",

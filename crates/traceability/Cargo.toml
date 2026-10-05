@@ -1,0 +1,15 @@
+[package]
+name = "ostia-traceability"
+description = "The #[req] attribute: tags a test with the requirements it proves"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+proc-macro = true
+
+[lints]
+workspace = true
