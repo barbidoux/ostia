@@ -32,7 +32,8 @@ TOOLS = {
     "curl": ("package curl", "--version", "curl 8.14.1 (x86_64-pc-linux-gnu)"),
     "python3": ("package python3", "--version", "Python 3.13.5"),
     "gcc": ("package build-essential", "--version", "gcc (Debian 14.2.0-19) 14.2.0"),
-    "mkfs.vfat": ("package dosfstools", "--version", "mkfs.fat 4.2 (2021-01-31)"),
+    # mkfs.vfat has no version option: the version is the dosfstools package version (dpkg-query).
+    "mkfs.vfat": ("package dosfstools", "-W -f=${Version} dosfstools", "dosfstools 4.2-1.1build1"),
     "mkfs.exfat": ("package exfatprogs", "-V", "exfatprogs version : 1.2.9"),
     "mkfs.ntfs": ("package ntfs-3g", "--version", "mkntfs v2022.10.3 (libntfs-3g)"),
     "mkfs.ext4": ("package e2fsprogs", "-V", "mke2fs 1.47.2 (1-Jan-2025)"),
@@ -76,6 +77,18 @@ def fake_environment(
     for tool, (_, args, line) in TOOLS.items():
         if tool not in omit:
             fake_tool(bin_dir, tool, args, (lines or {}).get(tool, line))
+    # As the real tools do: mkfs.vfat only prints its usage; dpkg-query knows the package version;
+    # mkntfs prints an empty line before its version.
+    usage = bin_dir / "mkfs.vfat"
+    if usage.exists():
+        usage.write_text("#!/bin/sh\necho 'Usage: mkfs.vfat [OPTIONS] TARGET [BLOCKS]'\nexit 1\n")
+    fake_tool(bin_dir, "dpkg-query", "-W -f=${Version} dosfstools", "4.2-1.1build1")
+    ntfs = bin_dir / "mkfs.ntfs"
+    if ntfs.exists():
+        ntfs.write_text(
+            '#!/bin/sh\n[ "$*" = "--version" ] || exit 1\n'
+            "printf '\\nmkntfs v2022.10.3 (libntfs-3g)\\n\\n'\n"
+        )
     for tool in COREUTILS:
         real = shutil.which(tool)
         assert real, f"{tool} is needed by the test harness"
