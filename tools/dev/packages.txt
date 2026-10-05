@@ -1,0 +1,21 @@
+# Debian packages of the development environment and of the CI container (single source).
+# Installed by tools/dev/setup-debian.sh --install, .devcontainer/Dockerfile and .github/workflows/ci.yml.
+ca-certificates
+curl
+git
+build-essential
+python3
+# disk images (WP-0.2, WP-1.3): FAT, exFAT, NTFS, ext; loop devices and FUSE drivers
+dosfstools
+exfatprogs
+exfat-fuse
+ntfs-3g
+e2fsprogs
+fuse3
+mount
+util-linux
+kmod
+# sandbox (P2), ClamAV engine (P3), deep analysis (P5)
+bubblewrap
+clamav-daemon
+sleuthkit
