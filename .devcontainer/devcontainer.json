@@ -1,0 +1,11 @@
+{
+  "name": "ostia",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "runArgs": ["--privileged"],
+  "remoteUser": "root",
+  "workspaceFolder": "/workspaces/ostia",
+  "postCreateCommand": "uv sync --frozen && uvx pre-commit@4.6.2 install --hook-type pre-commit --hook-type commit-msg"
+}

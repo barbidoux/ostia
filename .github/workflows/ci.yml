@@ -9,26 +9,30 @@ permissions:
   contents: read
 env:
   CARGO_TERM_COLOR: always
-  UV_VERSION: "0.12.22"
-  JUST_VERSION: "1.58.0"
-  NEXTEST_VERSION: "0.9.146"
 
 jobs:
   ci:
     runs-on: ubuntu-latest
+    # Privileged: loop devices for the disk-image tests (docs/questions.md Q-12).
     container:
       image: debian:13
+      options: --privileged
     steps:
-      - name: System packages
+      - name: Bootstrap packages (for the checkout)
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends ca-certificates curl git build-essential python3
+          apt-get install -y --no-install-recommends ca-certificates git
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           fetch-tags: true
       - name: Trust the workspace
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: System packages and tool versions (tools/dev/packages.txt, tools/dev/versions.env)
+        run: |
+          sed -e 's/#.*//' -e '/^[[:space:]]*$/d' tools/dev/packages.txt \
+            | xargs apt-get install -y --no-install-recommends
+          cat tools/dev/versions.env >> "$GITHUB_ENV"
       - name: Cache toolchains and builds
         uses: actions/cache@v4
         with:
@@ -40,7 +44,7 @@ jobs:
             ~/.local/share/uv
             ~/.local/bin
             target
-          key: ci-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'uv.lock') }}-${{ env.NEXTEST_VERSION }}
+          key: ci-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'uv.lock', 'tools/dev/versions.env') }}
       - name: Toolchains (rustup from rust-toolchain.toml, uv, just, cargo-nextest)
         run: |
           curl --proto '=https' --tlsv1.2 -sSfo /tmp/rustup-init.sh https://sh.rustup.rs
@@ -73,20 +77,27 @@ jobs:
     # Informational: the current phase's acceptance tests turn green during the phase.
     needs: ci
     runs-on: ubuntu-latest
+    # Privileged: loop devices for the disk-image tests (docs/questions.md Q-12).
     container:
       image: debian:13
+      options: --privileged
     continue-on-error: true
     steps:
-      - name: System packages
+      - name: Bootstrap packages (for the checkout)
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends ca-certificates curl git build-essential python3
+          apt-get install -y --no-install-recommends ca-certificates git
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           fetch-tags: true
       - name: Trust the workspace
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: System packages and tool versions (tools/dev/packages.txt, tools/dev/versions.env)
+        run: |
+          sed -e 's/#.*//' -e '/^[[:space:]]*$/d' tools/dev/packages.txt \
+            | xargs apt-get install -y --no-install-recommends
+          cat tools/dev/versions.env >> "$GITHUB_ENV"
       - name: Cache toolchains and builds
         uses: actions/cache@v4
         with:
@@ -98,7 +109,7 @@ jobs:
             ~/.local/share/uv
             ~/.local/bin
             target
-          key: ci-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'uv.lock') }}-${{ env.NEXTEST_VERSION }}
+          key: ci-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'uv.lock', 'tools/dev/versions.env') }}
       - name: Toolchains
         run: |
           curl --proto '=https' --tlsv1.2 -sSfo /tmp/rustup-init.sh https://sh.rustup.rs

@@ -1,0 +1,5 @@
+# The dev container image only needs the single sources it is built from.
+*
+!tools/dev/packages.txt
+!tools/dev/versions.env
+!rust-toolchain.toml
