@@ -59,6 +59,7 @@ TOOLS = {
         f"cargo-nextest-nextest {PINNED['NEXTEST_VERSION']} (abcdef 2026-09-01)",
     ),
 }
+USER_TOOLS = ("rustup", "rustc", "cargo", "uv", "just", "cargo-nextest")
 COREUTILS = ["grep", "cmp", "head", "id", "cat", "tr", "sed", "cut", "sort"]
 
 
@@ -249,9 +250,11 @@ def test_location_overrides_are_ignored_outside_tests(tmp_path: Path) -> None:
     assert any(" helper /usr/local/sbin/ostia-loopmount" in line for line in lines)
 
 
-def install_environment(tmp_path: Path, apt_status: int = 0) -> tuple[dict[str, str], Path]:
+def install_environment(
+    tmp_path: Path, apt_status: int = 0, omit: tuple[str, ...] = ()
+) -> tuple[dict[str, str], Path]:
     """Fake root (id -u prints 0), apt-get and install that log their arguments."""
-    env = fake_environment(tmp_path)
+    env = fake_environment(tmp_path, omit)
     bin_dir = Path(env["PATH"])
     log = tmp_path / "calls.log"
     (bin_dir / "id").unlink()
@@ -280,6 +283,33 @@ def test_install_installs_the_package_list_and_the_root_owned_helper(tmp_path: P
         f"install -o root -g root -m 0755 {LOOPMOUNT} /usr/local/sbin/ostia-loopmount"
     )
     assert len(calls) == 3
+
+
+@pytest.mark.req("NFR-15")
+def test_install_checks_only_the_system_part(tmp_path: Path) -> None:
+    # Under sudo, root has no user-level PATH (~/.cargo/bin, ~/.local/bin): the user checks those.
+    env, _ = install_environment(tmp_path, omit=USER_TOOLS)
+    del env["OSTIA_AS_USER"]
+    result = run(["/bin/bash", SETUP, "--install"], cwd=REPO, env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    lines = result.stdout.splitlines()
+    assert "ok: mkfs.exfat: exfatprogs version : 1.2.9" in lines
+    assert [line for line in lines if line.startswith("missing:")] == []
+    assert lines[-1] == "system part OK; now run tools/dev/setup-debian.sh --check as your user"
+
+
+@pytest.mark.req("NFR-15")
+def test_install_still_reports_a_missing_system_tool(tmp_path: Path) -> None:
+    env, _ = install_environment(tmp_path, omit=("mkfs.exfat", *USER_TOOLS))
+    del env["OSTIA_AS_USER"]
+    result = run(["/bin/bash", SETUP, "--install"], cwd=REPO, env=env)
+    assert result.returncode == 1
+    lines = result.stdout.splitlines()
+    assert "missing: mkfs.exfat (package exfatprogs)" in lines
+    assert [line for line in lines if line.startswith("missing:")] == [
+        "missing: mkfs.exfat (package exfatprogs)"
+    ]
+    assert lines[-1] == "environment incomplete"
 
 
 @pytest.mark.req("NFR-15")
