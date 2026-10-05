@@ -1,9 +1,9 @@
 # ADR-15: Offline Protobuf code generation with protox/prost (Rust) and grpcio-tools (Python)
 
-- Status: proposed
+- Status: accepted (2026-10-05, replaces `buf lint` / `buf breaking` from spec §19 for this contract)
 - Date: 2026-10-05
-- Deciders: Matthias Vaytet (owner), to accept; dependencies approved in Q-18 and Q-20, lint exceptions
-  for generated code in Q-19 and Q-21
+- Deciders: Matthias Vaytet (owner); dependencies approved in Q-18 and Q-20, lint exceptions for generated
+  code in Q-19 and Q-21
 - Source: ADR-03 (follow-up "the codegen path is chosen and recorded in WP-0.5"), prompts/P0.md WP-0.5
 
 ## Context and problem statement

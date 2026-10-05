@@ -20,7 +20,7 @@ ADR-01 to ADR-13 come from spec §21; they were decided by the owner in the spec
 | [ADR-12](0012-enrichment-off-by-default.md) | Enrichment off by default, user choice within a configured upload mode, harden-only | accepted |
 | [ADR-13](0013-deep-analysis-sleuth-kit.md) | Deep analysis with The Sleuth Kit in the sandbox, time-budgeted mode | accepted |
 | [ADR-14](0014-black-box-acceptance-tests.md) | Acceptance tests drive the product only through its public surfaces | proposed |
-| [ADR-15](0015-offline-protobuf-codegen.md) | Offline Protobuf code generation with protox/prost (Rust) and grpcio-tools (Python) | proposed |
+| [ADR-15](0015-offline-protobuf-codegen.md) | Offline Protobuf code generation with protox/prost (Rust) and grpcio-tools (Python) | accepted |
 
 ## Template for a new record
 
