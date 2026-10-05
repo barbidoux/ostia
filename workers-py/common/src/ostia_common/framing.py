@@ -147,7 +147,7 @@ def _parse[M: Message](message: M, descriptor: Descriptor, body: bytes) -> M:
     except (DecodeError, ValueError, RecursionError) as error:
         # ValueError: UnicodeDecodeError from the pure-Python runtime on invalid UTF-8.
         raise ContractError("malformed", str(error)) from error
-    _check_wire(body, descriptor, 0)
+    _check_wire(memoryview(body), 0, len(body), descriptor, 0, 0)
     return message
 
 
@@ -167,11 +167,11 @@ _LEN_TYPES = {FieldDescriptor.TYPE_STRING, FieldDescriptor.TYPE_BYTES, FieldDesc
 _MAX_DEPTH = 100
 
 
-def _varint(buf: bytes, pos: int) -> tuple[int, int]:
+def _varint(buf: memoryview, pos: int, end: int) -> tuple[int, int]:
     """A varint at `pos`: at most 10 bytes, the 10th at most 1 (no 64-bit overflow), as prost."""
     value = 0
     for index in range(10):
-        if pos + index >= len(buf):
+        if pos + index >= end:
             raise ContractError("malformed", "truncated varint")
         byte = buf[pos + index]
         if index == 9 and byte > 1:
@@ -182,73 +182,66 @@ def _varint(buf: bytes, pos: int) -> tuple[int, int]:
     raise ContractError("malformed", "varint longer than 10 bytes")
 
 
-def _wire_types(field: FieldDescriptor) -> set[int]:
+def _wire_type(field: FieldDescriptor) -> int:
+    """The wire type of a known field. v1 has no repeated scalar field, so packed encoding never
+    applies; a future one must accept it here (prost does)."""
     if field.type in _I64_TYPES:
-        expected = _I64
-    elif field.type in _I32_TYPES:
-        expected = _I32
-    elif field.type in _LEN_TYPES:
-        expected = _LEN
-    elif field.type == FieldDescriptor.TYPE_GROUP:
-        expected = _SGROUP
-    else:
-        expected = _VARINT
-    if field.is_repeated and expected in (_VARINT, _I64, _I32):
-        return {expected, _LEN}  # packed
-    return {expected}
+        return _I64
+    if field.type in _I32_TYPES:
+        return _I32
+    if field.type in _LEN_TYPES:
+        return _LEN
+    if field.type == FieldDescriptor.TYPE_GROUP:
+        return _SGROUP
+    return _VARINT
 
 
-def _check_wire(buf: bytes, descriptor: Descriptor | None, depth: int) -> int:
-    """Walk `buf` (a message, or a group body ending at its end-group tag); return where it ended.
+def _check_wire(
+    buf: memoryview, start: int, end: int, descriptor: Descriptor | None, group: int, depth: int
+) -> int:
+    """Walk buf[start:end] without copying: a message body, or (`group` > 0) a group body that must end
+    with that group's end tag. Returns the position after the body.
 
     A known field must use its own wire type, recursively in known sub-messages; every varint, also in
     unknown fields, must fit 64 bits; keys must fit 32 bits with a non-zero field number.
     """
     if depth > _MAX_DEPTH:
         raise ContractError("malformed", "nested too deeply")
-    pos = 0
-    while pos < len(buf):
-        key, pos = _varint(buf, pos)
+    pos = start
+    while pos < end:
+        key, pos = _varint(buf, pos, end)
         number, wire = key >> 3, key & 7
         if key > 0xFFFFFFFF or number == 0:
             raise ContractError("malformed", f"invalid key {key}")
         if wire == _EGROUP:
+            if number != group:
+                raise ContractError("malformed", f"unexpected end of group {number}")
             return pos
         field = descriptor.fields_by_number.get(number) if descriptor is not None else None
-        if field is not None and wire not in _wire_types(field):
+        if field is not None and wire != _wire_type(field):
             raise ContractError("malformed", f"field {field.name} sent with wire type {wire}")
         if wire == _VARINT:
-            _, pos = _varint(buf, pos)
-        elif wire in (_I64, _I32):
-            pos += 8 if wire == _I64 else 4
+            _, pos = _varint(buf, pos, end)
+        elif wire == _I64:
+            pos += 8
+        elif wire == _I32:
+            pos += 4
         elif wire == _LEN:
-            length, pos = _varint(buf, pos)
-            payload = buf[pos : pos + length]
-            if len(payload) < length:
+            length, pos = _varint(buf, pos, end)
+            if pos + length > end:
                 raise ContractError("malformed", "truncated field")
             if field is not None and field.message_type is not None:
-                _check_wire(payload, field.message_type, depth + 1)
-            elif field is not None and field.is_repeated and field.type not in _LEN_TYPES:
-                _check_packed(payload, field)
+                _check_wire(buf, pos, pos + length, field.message_type, 0, depth + 1)
             pos += length
         elif wire == _SGROUP:
-            pos += _check_wire(buf[pos:], None, depth + 1)
+            pos = _check_wire(buf, pos, end, None, number, depth + 1)
         else:
             raise ContractError("malformed", f"invalid wire type {wire}")
-        if pos > len(buf):
+        if pos > end:
             raise ContractError("malformed", "truncated field")
+    if group:
+        raise ContractError("malformed", f"group {group} is not closed")
     return pos
-
-
-def _check_packed(payload: bytes, field: FieldDescriptor) -> None:
-    """Packed varints must each fit 64 bits; packed fixed-width values must divide evenly."""
-    expected = min(_wire_types(field))
-    if expected == _VARINT:
-        pos = 0
-        while pos < len(payload):
-            _, pos = _varint(payload, pos)
-    elif len(payload) % (8 if expected == _I64 else 4):
-        raise ContractError("malformed", f"packed field {field.name} has a partial value")
 
 
 def decode_request(body: bytes) -> engine_pb2.AnalyzeRequest:

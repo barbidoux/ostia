@@ -50,8 +50,11 @@ Chosen option 1.
   to v1.0 decoders, which must ignore it. New `Origin`, `Status` or `Hint` values are refused by older
   decoders (fail closed): their readers are upgraded first.
 - **Parity:** prost is stricter than Python's protobuf runtime about wire types and overflowing varints;
-  `ostia_common.framing` walks the wire format after parsing to refuse what prost refuses, and a test runs
-  every golden vector through the pure-Python protobuf runtime as well.
+  `ostia_common.framing` walks the wire format after parsing (in linear time, without copies) to refuse
+  what prost refuses, and a test runs every golden vector through the pure-Python protobuf runtime as well.
+  Two known differences remain, both with Python the stricter (fail closed): upb refuses keys and lengths
+  padded beyond 5 bytes, which prost accepts, and the pure-Python runtime nests one level less than prost
+  (99 instead of 100). No conforming encoder produces either.
 
 ## Consequences
 

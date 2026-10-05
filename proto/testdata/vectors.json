@@ -396,6 +396,27 @@
       }
     },
     {
+      "name": "response_unknown_group",
+      "message": "AnalyzeResponse",
+      "expect": "ok",
+      "description": "two nested unknown groups (field 100): a3 06 a3 06 a4 06 a4 06 appended",
+      "fields": null
+    },
+    {
+      "name": "response_unterminated_group",
+      "message": "AnalyzeResponse",
+      "expect": "malformed",
+      "description": "a nested unknown group left open: a3 06 a3 06 a4 06 appended",
+      "fields": null
+    },
+    {
+      "name": "response_mismatched_group",
+      "message": "AnalyzeResponse",
+      "expect": "malformed",
+      "description": "group 100 closed by an end tag of field 101: a3 06 ac 06 appended",
+      "fields": null
+    },
+    {
       "name": "response_minor_1_extra_field",
       "message": "AnalyzeResponse",
       "expect": "ok",

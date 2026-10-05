@@ -27,7 +27,7 @@ def gen(*args: str) -> tuple[int, str]:
 def test_committed_vectors_match_the_generator() -> None:
     code, output = gen("--check")
     assert code == 0, output
-    assert "golden vectors are up to date (29 vectors)" in output
+    assert "golden vectors are up to date (32 vectors)" in output
 
 
 @pytest.mark.req("TOOLING")

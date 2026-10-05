@@ -5,7 +5,8 @@ Usage: compat.py [--snapshot FILE] [--base REF | --base-snapshot FILE]
 Compares the snapshot with the descriptors of the generated Python code (kept in sync with the .proto by
 tools/contracts/gen_python.py --check): every message, field (number, name, type, label) and enum value of
 the snapshot must exist unchanged, and every current one must be in the snapshot. Then compares the snapshot
-with the base branch's copy (default origin/main, read with git; CI checks out the full history): entries
+with its copy at the merge base of the base branch (default origin/main, read with git; CI checks out the
+full history) and HEAD: entries
 can only be added, so a field cannot leave the .proto and the snapshot in the same change. A breaking change
 needs a new major package.
 """
@@ -145,27 +146,32 @@ def dropped(snapshot: dict[str, Any], base: dict[str, Any]) -> list[str]:
     return problems
 
 
-def base_snapshot(ref: str) -> dict[str, Any] | None:
-    """The snapshot committed at `ref`, or None when `ref` has none yet (first version)."""
-    exists = subprocess.run(
-        ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
-        cwd=REPO,
-        capture_output=True,
-        check=False,
-    )
-    if exists.returncode != 0:
+def git(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["git", *args], cwd=REPO, capture_output=True, text=True, check=False)
+
+
+def base_snapshot(ref: str) -> tuple[dict[str, Any] | None, str]:
+    """The snapshot at the merge base of `ref` and HEAD (None before the first version) and that commit.
+
+    The merge base, not the tip of `ref`: entries added on `ref` after this branch forked are not
+    "dropped" by it. Any git failure other than "the file does not exist there" is an error.
+    """
+    resolved = git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+    if resolved.returncode != 0:
         raise ValueError(f"cannot read the base snapshot at {ref}: unknown revision")
-    shown = subprocess.run(
-        ["git", "show", f"{ref}:{SNAPSHOT_PATH}"],
-        cwd=REPO,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    commit = resolved.stdout.strip()
+    merge_base = git("merge-base", commit, "HEAD")
+    base = merge_base.stdout.strip() if merge_base.returncode == 0 else commit
+    listed = git("ls-tree", "--name-only", base, "--", SNAPSHOT_PATH)
+    if listed.returncode != 0:
+        raise ValueError(f"cannot read the base snapshot at {ref}: {listed.stderr.strip()}")
+    if not listed.stdout.strip():
+        return None, base
+    shown = git("show", f"{base}:{SNAPSHOT_PATH}")
     if shown.returncode != 0:
-        return None
+        raise ValueError(f"cannot read the base snapshot at {ref}: {shown.stderr.strip()}")
     document: dict[str, Any] = json.loads(shown.stdout)
-    return document
+    return document, base
 
 
 def main(argv: list[str]) -> int:
@@ -180,7 +186,9 @@ def main(argv: list[str]) -> int:
         if args.base_snapshot is not None:
             base = json.loads(Path(args.base_snapshot).read_text(encoding="utf-8"))
         else:
-            base = base_snapshot(args.base)
+            base, commit = base_snapshot(args.base)
+            if base is None:
+                print(f"compat: no compat.json at the base ({commit[:12]}) yet: first version")
     except (OSError, ValueError) as error:
         print(f"compat: {error}")
         print("ostia.engine.v1 breaks compat.json: a breaking change needs a new major")

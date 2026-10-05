@@ -236,6 +236,24 @@ def vectors() -> list[Vector]:
             clean_with(version=major_2, engine_id=""),
         ),
         body_vector(
+            "response_unknown_group",
+            "ok",
+            "two nested unknown groups (field 100): a3 06 a3 06 a4 06 a4 06 appended",
+            clean_body + b"\xa3\x06\xa3\x06\xa4\x06\xa4\x06",
+        ),
+        body_vector(
+            "response_unterminated_group",
+            "malformed",
+            "a nested unknown group left open: a3 06 a3 06 a4 06 appended",
+            clean_body + b"\xa3\x06\xa3\x06\xa4\x06",
+        ),
+        body_vector(
+            "response_mismatched_group",
+            "malformed",
+            "group 100 closed by an end tag of field 101: a3 06 ac 06 appended",
+            clean_body + b"\xa3\x06\xac\x06",
+        ),
+        body_vector(
             "response_minor_1_extra_field",
             "ok",
             "minor 1 with field 9 (unknown to this decoder) appended: ignored",
