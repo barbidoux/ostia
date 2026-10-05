@@ -11,7 +11,7 @@ from tooling_support import REPO, run
 
 CLIPPY = "cargo clippy --workspace --all-targets --locked -- -D warnings"
 NO_SKIPS = "python3 tools/ci/junit_no_skips.py target/nextest/ci/junit.xml target/junit/pytest.xml"
-GATES = ["check", "fmt-check", "lint", "types", "test", "test-rust", "test-py"]
+GATES = ["check", "fmt-check", "lint", "types", "test", "test-rust", "test-py", "trace"]
 
 
 def recipe(name: str) -> list[str]:
@@ -25,8 +25,17 @@ def recipe(name: str) -> list[str]:
 @pytest.mark.req("TOOLING")
 def test_check_runs_every_gate() -> None:
     lines = recipe("check")
-    expected = "check: fmt-check lint types test registry-check verify-locks rails-verify kit-test"
+    expected = (
+        "check: fmt-check lint types test registry-check trace verify-locks rails-verify kit-test"
+    )
     assert expected in lines
+
+
+@pytest.mark.req("TOOLING")
+def test_trace_recipe_runs_the_matrix() -> None:
+    lines = recipe("trace")
+    assert "trace *args:" in lines
+    assert "uv run python tools/traceability/matrix.py {{ args }}" in lines
 
 
 @pytest.mark.req("TOOLING")
@@ -64,6 +73,25 @@ def test_fast_suite_fails_on_skipped_or_ignored_tests() -> None:
         in rust
     )
     assert "python3 tools/ci/nextest_no_ignored.py target/nextest/list.json" in rust
+
+
+@pytest.mark.req("TOOLING")
+@pytest.mark.parametrize(
+    ("name", "fingerprint", "suite"),
+    [
+        ("test-rust", "target/nextest/ci/sources.sha256", "cargo nextest run "),
+        ("test-py", "target/junit/sources.sha256", "uv run python tools/ci/run_pytest.py "),
+    ],
+)
+def test_each_suite_fingerprints_its_sources_before_running(
+    name: str, fingerprint: str, suite: str
+) -> None:
+    lines = recipe(name)
+    write = f"uv run python tools/traceability/matrix.py --write-fingerprint {fingerprint}"
+    assert write in lines
+    runs = [i for i, line in enumerate(lines) if line.startswith(suite)]
+    assert runs, f"{name}: no line starts with {suite!r}"
+    assert lines.index(write) < runs[0]
 
 
 @pytest.mark.req("TOOLING")

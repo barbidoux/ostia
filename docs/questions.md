@@ -29,6 +29,19 @@ Options: (a) leave them without a phase and cover them in the lock tests of P1 (
 Recommendation: (b) at the next plan revision; (a) until then.
 Blocking: no.
 
+### Q-17 · WP-0.4 · — · acceptance tests in the traceability matrix
+Context: `just trace` reads the nextest report and the pytest report of `just test`. The acceptance tests run in
+the isolated gate pytest (`ostia_lock.py gate`, report `target/gate-<dir>.xml`), which loads no plugin, so their
+report carries no `req` property and the matrix does not see them. They are the main proof of a phase's MUSTs.
+Also, `.claude/skills/phase-gate/SKILL.md` runs `just trace` without `--gate P<n>`, so only rule 1 of Q-14 applies
+there.
+Options: (a) WP-0.12 (first acceptance directory) teaches the matrix to read `target/gate-*.xml` and map each
+testcase to the `@pytest.mark.req` ids of its function (parsed with `ast` from the locked test files, which never
+change after the lock); the owner adds `--gate P<n>` to the phase-gate skill (b) the owner allows the req plugin
+in the isolated gate run.
+Recommendation: (a): the gate run stays isolated, and the mapping is tested on a real gate report.
+Blocking: no (blocking for the P1 gate).
+
 ## Answered
 
 ### Q-4 · WP-0.1 · NFR-09, NFR-15 · requirement tags of the tooling tests
@@ -115,6 +128,18 @@ Options: (a) mount points under the root-owned `/run/ostia-loopmount/<uid>/<name
 opens the image once and works only through that descriptor (b) keep `target/mnt/<name>` and validate the path
 through an opened directory descriptor.
 Recommendation: (a): simpler, no race to get right; fixture generators read the mount point the helper prints.
+Blocking: no.
+Answer (2026-10-05, decided by the agent under the owner's delegation "prends les décisions"): (a).
+
+### Q-16 · WP-0.4 · — · how the matrix knows which Rust test proves which requirement
+Context: the first matrix read `#[req]` from the Rust sources and matched function names against the nextest
+report. The review showed false coverage: a failing tagged test covered by a passing test with the same name in
+another module, a commented-out tag still counted, tags the scanner could not attach skipped silently.
+Options: (a) the attribute makes the test print one `ostia-req: <ids>` line; nextest keeps the stdout of passing
+tests in its JUnit report (`store-success-output = true`), so the report alone says which test ran, passed and
+proves what; `#[req]` must sit above `#[test]` (otherwise a compile error); the sources are only scanned to check
+ids (b) compute full module paths from the sources (files, inline `mod` blocks) and match exactly.
+Recommendation: (a): one source of truth, symmetric with the pytest property; (b) needs a Rust parser to be exact.
 Blocking: no.
 Answer (2026-10-05, decided by the agent under the owner's delegation "prends les décisions"): (a).
 

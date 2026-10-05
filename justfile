@@ -10,8 +10,8 @@ py_test_dirs := "tests/tooling"
 default:
     @just --list
 
-# Everything that must be green before a work package is done (trace from WP-0.4, audit from WP-0.8)
-check: fmt-check lint types test registry-check verify-locks rails-verify kit-test
+# Everything that must be green before a work package is done (audit from WP-0.8)
+check: fmt-check lint types test registry-check trace verify-locks rails-verify kit-test
 
 # Regenerate requirements.yaml from docs/spec.md and docs/plan.md
 registry:
@@ -48,6 +48,7 @@ test: test-rust test-py
 # nextest leaves #[ignore] tests out of its JUnit report, so the test list is checked too.
 test-rust *args:
     rm -f target/nextest/ci/junit.xml target/nextest/list.json
+    uv run python tools/traceability/matrix.py --write-fingerprint target/nextest/ci/sources.sha256
     cargo nextest run --workspace --locked --profile ci --no-tests=pass {{args}}
     mkdir -p target/nextest
     cargo nextest list --workspace --locked --message-format json > target/nextest/list.json
@@ -57,6 +58,7 @@ test-rust *args:
 test-py *args:
     mkdir -p target/junit
     rm -f target/junit/pytest.xml
+    uv run python tools/traceability/matrix.py --write-fingerprint target/junit/sources.sha256
     uv run python tools/ci/run_pytest.py {{py_test_dirs}} -- -m "not bench" --junitxml=target/junit/pytest.xml {{args}}
 
 # Informational run of an acceptance directory (hardened, same isolation as the gate)
@@ -73,10 +75,10 @@ coverage:
     cargo llvm-cov nextest --workspace --locked --no-tests=pass --html
     uv run python tools/ci/run_pytest.py {{py_test_dirs}} -- -m "not bench" --cov=tools/ci --cov-report=term --cov-report=html:target/coverage/python
 
-# Traceability matrix: not built yet (WP-0.4); fails rather than pretending
-trace:
-    @echo "trace: not implemented until WP-0.4" >&2
-    @exit 1
+# Traceability matrix from the reports of `just test` (target/traceability.{json,md});
+# `just trace --gate P1` also fails on a MUST of that phase without a passing test
+trace *args:
+    uv run python tools/traceability/matrix.py {{ args }}
 
 # Supply-chain audit: not built yet (WP-0.8); fails rather than pretending
 audit:
