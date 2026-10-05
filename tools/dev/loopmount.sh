@@ -20,6 +20,11 @@
 # FUSE file-system driver). The production mount helper is WP-4.5.
 set -euo pipefail
 PATH="/usr/sbin:/usr/bin:/sbin:/bin"
+# Absolute image path, then leave the caller's directory: nothing run as root may pick files from it.
+if [[ $# -ge 2 && "$2" != /* && "${1:-}" != umount ]]; then
+    set -- "$1" "$PWD/$2" "${@:3}"
+fi
+cd /
 
 readonly BASE=/run/ostia-loopmount
 readonly IMAGE_RE='^/(.+/)?target/(fixtures/)?[a-z0-9_.-]+\.img$'
@@ -90,10 +95,8 @@ flock -w 60 "$lock_fd" || fail "another loopmount run holds $user_dir/.lock"
 if [[ "$mode" == umount ]]; then
     mountpoint -q -- "$mount_point" || fail "$mount_point is not mounted"
     source="$(findmnt -n -o SOURCE --mountpoint "$mount_point" | tail -n 1)"
-    backing=""
-    if [[ "$source" =~ ^/dev/loop[0-9]+$ ]]; then
-        backing="$(cat "/sys/block/${source#/dev/}/loop/backing_file" 2>/dev/null || true)"
-    fi
+    [[ "$source" =~ ^/dev/loop[0-9]+$ ]] || fail "$mount_point is not a loop mount (source '$source')"
+    backing="$(cat "/sys/block/${source#/dev/}/loop/backing_file" 2>/dev/null || true)"
     umount -- "$mount_point"
     if [[ -n "$backing" ]]; then
         # One detach request: if a FUSE driver still holds the device, the kernel detaches it when the
@@ -130,10 +133,11 @@ image="$image_arg"
 # read-write through /proc/self/fd only for rw-image, and handed to the loop driver with LOOP_SET_FD.
 # No path is looked up again after the checks. A read-only descriptor gives a read-only loop device.
 loop="$(
-    python3 - "$mode" "$image_arg" "$uid" "$IMAGE_RE" "$FIXTURE_RE" <<'PY'
-import errno, fcntl, os, re, stat, sys
+    python3 -I - "$mode" "$image_arg" "$uid" "$gid" "$IMAGE_RE" "$FIXTURE_RE" <<'PY'
+import errno, fcntl, os, pwd, re, stat, sys
 
-mode, path, uid, image_re, fixture_re = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4], sys.argv[5]
+mode, path = sys.argv[1], sys.argv[2]
+uid, gid, image_re, fixture_re = int(sys.argv[3]), int(sys.argv[4]), sys.argv[5], sys.argv[6]
 LOOP_SET_FD, LOOP_CTL_GET_FREE, LOOP_MAJOR = 0x4C00, 0x4C82, 7
 
 
@@ -147,38 +151,47 @@ def fail(message: str) -> None:
     sys.exit(1)
 
 
-flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOCTTY | os.O_CLOEXEC
+# Open with the caller's rights: root opens nothing the caller could not open (no device side effects,
+# no files behind directories the caller cannot traverse). Root is restored for the loop ioctls only.
+access = os.O_RDWR if mode == "rw-image" else os.O_RDONLY
+flags = access | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOCTTY | os.O_CLOEXEC
+saved_groups = os.getgroups()
+if uid != 0:
+    os.initgroups(pwd.getpwuid(uid).pw_name, gid)
+    os.setegid(gid)
+    os.seteuid(uid)
 try:
     image_fd = os.open(path, flags)
 except OSError as exc:
     refuse(f"image must be a regular file, not a symlink: '{path}' ({exc.strerror})")
+finally:
+    if uid != 0:
+        os.seteuid(0)
+        os.setegid(0)
+        os.setgroups(saved_groups)
 info = os.fstat(image_fd)
 if not stat.S_ISREG(info.st_mode):
     refuse(f"image must be a regular file: '{path}'")
 real = os.readlink(f"/proc/self/fd/{image_fd}")
-if not re.match(image_re, real):
+if not re.fullmatch(image_re, real):
     refuse(f"image must be <dir>/target/[fixtures/]<name>.img, got '{real}'")
-if mode == "rw-image" and not re.match(fixture_re, real):
+if mode == "rw-image" and not re.fullmatch(fixture_re, real):
     refuse(f"rw-image only accepts <dir>/target/fixtures/<name>.img, got '{real}'")
 if info.st_uid != uid:
     refuse("image is not owned by the invoking user")
-
-backing_fd = image_fd
-if mode == "rw-image":
-    backing_fd = os.open(f"/proc/self/fd/{image_fd}", os.O_RDWR | os.O_NOCTTY | os.O_CLOEXEC)
-    reopened = os.fstat(backing_fd)
-    if (reopened.st_dev, reopened.st_ino) != (info.st_dev, info.st_ino):
-        fail(f"{path} changed while it was opened")
 
 control = os.open("/dev/loop-control", os.O_RDWR | os.O_CLOEXEC)
 for _ in range(20):
     number = fcntl.ioctl(control, LOOP_CTL_GET_FREE)
     device = f"/dev/loop{number}"
     if not os.path.exists(device):  # a privileged container may lack nodes created after it started
-        os.mknod(device, 0o660 | stat.S_IFBLK, os.makedev(LOOP_MAJOR, number))
+        try:
+            os.mknod(device, 0o660 | stat.S_IFBLK, os.makedev(LOOP_MAJOR, number))
+        except FileExistsError:  # created meanwhile by another run
+            pass
     loop_fd = os.open(device, os.O_RDWR | os.O_CLOEXEC)
     try:
-        fcntl.ioctl(loop_fd, LOOP_SET_FD, backing_fd)
+        fcntl.ioctl(loop_fd, LOOP_SET_FD, image_fd)
     except OSError as exc:
         os.close(loop_fd)
         if exc.errno == errno.EBUSY:  # taken by someone else since LOOP_CTL_GET_FREE: try again
