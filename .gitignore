@@ -17,6 +17,8 @@ node_modules/
 ui/dist/
 playwright-report/
 test-results/
+# SBOMs: cargo-cyclonedx writes next to each Cargo.toml before tools/supply/sbom.py moves them to target/sbom
+*.cdx.json
 # Fuzzing
 fuzz/artifacts/
 fuzz/corpus/

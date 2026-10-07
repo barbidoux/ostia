@@ -1,0 +1,24 @@
+# Licence metadata of the Python dependencies that is not plain SPDX, reviewed by hand (NFR-11, Q-28).
+# Read by tools/supply/python_licences.py; the allowlist itself is [licenses] allow in deny.toml.
+
+[aliases]
+# Trove classifiers that name exactly one SPDX licence.
+# The classifier gives no version; every package using it was checked to be Apache-2.0 (2026-10-07).
+"License :: OSI Approved :: Apache Software License" = "Apache-2.0"
+"License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)" = "MPL-2.0"
+
+[packages]
+# Packages whose metadata has no usable licence, pinned to the reviewed version: a new version fails the
+# check until its licence is reviewed again and its line updated.
+# License field "3-Clause BSD License", no classifier.
+"protobuf==7.36.2" = "BSD-3-Clause"
+# License field "Apache License 2.0", no classifier.
+"mypy-protobuf==5.1.0" = "Apache-2.0"
+# License field "PSFL" (Python Software Foundation License), read by cyclonedx-py as Python-2.0.
+"defusedxml==0.7.1" = "PSF-2.0"
+# Classifier "BSD License" only (ambiguous); LICENSE.txt is the 3-clause text.
+"jsonpointer==3.1.1" = "BSD-3-Clause"
+"webcolors==25.10.0" = "BSD-3-Clause"
+# Classifiers "BSD License" and "Apache Software License": older code BSD-3-Clause, newer contributions
+# dual-licensed; both licences apply.
+"python-dateutil==2.9.0.post0" = "Apache-2.0 AND BSD-3-Clause"

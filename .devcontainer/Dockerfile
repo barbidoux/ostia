@@ -1,6 +1,6 @@
 # Ostia development container: the same Debian stable environment as the CI jobs (NFR-15).
 # Built from the single sources tools/dev/packages.txt (Debian packages), tools/dev/versions.env
-# (uv, just, cargo-nextest, the fuzzing nightly and cargo-fuzz) and rust-toolchain.toml. Runs as root, like the CI container; start it with
+# (uv, just, cargo-nextest, the fuzzing nightly, cargo-fuzz and the supply-chain tools) and rust-toolchain.toml. Runs as root, like the CI container; start it with
 # --privileged (devcontainer.json) so the disk-image tests can attach loop devices.
 FROM --platform=linux/amd64 debian:13
 
@@ -23,6 +23,8 @@ RUN set -eu; . /tmp/ostia/versions.env; \
     cargo install --locked "cargo-nextest@${NEXTEST_VERSION}"; \
     rustup toolchain install "${NIGHTLY_TOOLCHAIN}" --profile minimal; \
     cargo install --locked "cargo-fuzz@${CARGO_FUZZ_VERSION}"; \
+    cargo install --locked "cargo-deny@${CARGO_DENY_VERSION}" "cargo-audit@${CARGO_AUDIT_VERSION}" \
+        "cargo-cyclonedx@${CARGO_CYCLONEDX_VERSION}"; \
     rm -rf /tmp/rustup-init.sh /tmp/uv-install.sh /root/.cargo/registry
 
 WORKDIR /workspaces/ostia

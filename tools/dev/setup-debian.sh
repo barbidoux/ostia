@@ -7,7 +7,8 @@
 #                               (root has no user-level PATH: the user runs --check afterwards)
 #
 # --install is idempotent and is run by the owner (`sudo tools/dev/setup-debian.sh --install`), never by
-# an agent. User-level tools (rustup, cargo, uv, just, cargo-nextest) are installed as in docs/dev-setup.md.
+# an agent. User-level tools (rustup, cargo, uv, just, cargo-nextest, cargo-fuzz,
+# cargo-deny, cargo-audit, cargo-cyclonedx) are installed as in docs/dev-setup.md.
 # OSTIA_AS_USER=1 checks the helper and sudoers rule even when running as root (it only adds checks).
 # Test hooks, honoured only with OSTIA_TEST_HOOKS=1: OSTIA_EXTRA_PATH, OSTIA_PROC_FILESYSTEMS,
 # OSTIA_LOOP_CONTROL, OSTIA_HELPER (so a stray variable cannot make --check report a false OK).
@@ -38,7 +39,8 @@ APT_TOOLS=(
     "clamd:clamav-daemon:--version" "mmls:sleuthkit:-V"
 )
 USER_TOOLS=("rustup:--version" "rustc:--version" "cargo:--version" "uv:--version" "just:--version"
-    "cargo-nextest:nextest --version" "cargo-fuzz:--version")
+    "cargo-nextest:nextest --version" "cargo-fuzz:--version" "cargo-deny:--version" "cargo-audit:--version"
+    "cargo-cyclonedx:cyclonedx --version")
 
 # Pinned versions: tools/dev/versions.env and the channel of rust-toolchain.toml.
 declare -A PINNED=()
@@ -46,7 +48,8 @@ while IFS='=' read -r key value; do
     [[ "$key" =~ ^[A-Z_]+$ ]] && PINNED["$key"]="$value"
 done <"$script_dir/versions.env"
 PINNED[RUST]="$(sed -n 's/^channel *= *"\([0-9.]*\)".*/\1/p' "$repo/rust-toolchain.toml")"
-declare -A PIN_OF=([uv]=UV_VERSION [just]=JUST_VERSION [cargo-nextest]=NEXTEST_VERSION [cargo-fuzz]=CARGO_FUZZ_VERSION [rustc]=RUST)
+declare -A PIN_OF=([uv]=UV_VERSION [just]=JUST_VERSION [cargo-nextest]=NEXTEST_VERSION [cargo-fuzz]=CARGO_FUZZ_VERSION
+    [cargo-deny]=CARGO_DENY_VERSION [cargo-audit]=CARGO_AUDIT_VERSION [cargo-cyclonedx]=CARGO_CYCLONEDX_VERSION [rustc]=RUST)
 
 is_root() { [[ "$(id -u)" == 0 ]]; }
 # file system:kernel module:FUSE helper

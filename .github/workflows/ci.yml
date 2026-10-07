@@ -58,6 +58,13 @@ jobs:
           uv tool install "rust-just==${JUST_VERSION}"
           cargo nextest --version 2>/dev/null | grep -q "${NEXTEST_VERSION}" \
             || cargo install --locked "cargo-nextest@${NEXTEST_VERSION}"
+          # Supply-chain gates of `just audit` (WP-0.8), cached in ~/.cargo/bin like nextest.
+          cargo deny --version 2>/dev/null | grep -q "${CARGO_DENY_VERSION}" \
+            || cargo install --locked "cargo-deny@${CARGO_DENY_VERSION}"
+          cargo audit --version 2>/dev/null | grep -q "${CARGO_AUDIT_VERSION}" \
+            || cargo install --locked "cargo-audit@${CARGO_AUDIT_VERSION}"
+          cargo cyclonedx --version 2>/dev/null | grep -q "${CARGO_CYCLONEDX_VERSION}" \
+            || cargo install --locked "cargo-cyclonedx@${CARGO_CYCLONEDX_VERSION}"
           uv sync --frozen
       - name: Check
         run: just check

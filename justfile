@@ -10,8 +10,8 @@ py_test_dirs := "tests/tooling workers-py/common/tests"
 default:
     @just --list
 
-# Everything that must be green before a work package is done (audit from WP-0.8)
-check: fmt-check lint types test registry-check trace verify-locks rails-verify kit-test
+# Everything that must be green before a work package is done
+check: fmt-check lint types test registry-check trace audit verify-locks rails-verify kit-test
 
 # Regenerate the committed Python code of proto/ostia/engine/v1/engine.proto (Rust regenerates at build)
 proto:
@@ -103,7 +103,23 @@ coverage:
 trace *args:
     uv run python tools/traceability/matrix.py {{ args }}
 
-# Supply-chain audit: not built yet (WP-0.8); fails rather than pretending
+# Supply-chain gates (UPD-07, NFR-11): cargo-deny (licences, sources, advisories, bans) and cargo-audit on
+# both workspaces; Python pins and hashes, pip-audit on the hash-pinned export of uv.lock, Python licences
+# against the deny.toml allowlist; CycloneDX SBOMs. Fetches the RustSec database and queries PyPI (Q-27).
 audit:
-    @echo "audit: not implemented until WP-0.8" >&2
-    @exit 1
+    cargo deny --workspace --locked --config deny.toml check
+    cargo deny --manifest-path fuzz/Cargo.toml --locked --config deny.toml check
+    cargo audit --deny warnings
+    cargo audit --deny warnings --file fuzz/Cargo.lock
+    uv lock --locked
+    mkdir -p target/supply
+    uv export --quiet --frozen --all-groups --no-emit-project --format requirements-txt --output-file target/supply/requirements.txt
+    python3 tools/supply/check_pins.py --pyproject pyproject.toml --requirements target/supply/requirements.txt
+    uv run pip-audit --strict --require-hashes --disable-pip --requirement target/supply/requirements.txt
+    uv run cyclonedx-py environment --pyproject pyproject.toml --output-file target/supply/python-environment.cdx.json .venv
+    uv run python tools/supply/python_licences.py --sbom target/supply/python-environment.cdx.json
+    just sbom
+
+# CycloneDX SBOMs of the shipped Rust crates and of the Python runtime dependencies (target/sbom)
+sbom:
+    uv run python tools/supply/sbom.py --out target/sbom
