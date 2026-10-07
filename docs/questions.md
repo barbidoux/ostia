@@ -56,6 +56,24 @@ Blocking: no.
 Also for the owner (WP-0.8): add `deny.toml` (and, if wanted, `tools/supply/python-licences.toml`) to the
 rails manifest and the guard, as prompts/P0.md plans ("after this package deny.toml is owner-gated").
 
+### Q-35 · WP-0.11 · FR-02, FR-03, SEC-08 · usbsas as the media layer (ADR-05)
+Context: the WP-0.11 spike evaluated usbsas v0.3.3 (ADR-05, section "usbsas evaluation"). Every file read
+back correctly through usbsas on the FAT32, exFAT, NTFS and ext4 images, 1.5 to 11 times slower than a
+kernel mount. Its model does not fit Ostia:
+- access to files only, with areas outside files reachable only through a second full read;
+- per-file errors instead of fail-closed;
+- CLEAN/DIRTY per file;
+- no SHA-1, and a plaintext tar;
+- ext2 and ext3 refused;
+- an unversioned protocol with no length cap, and GPL `.proto` files;
+- one integration test, and no fuzzing.
+Options: (a) keep the kernel mount for 1.0 and do not reuse usbsas (b) keep the kernel mount for 1.0, and
+open an ADR later (P4/P5) for a hybrid that uses only the usbsas user-space USB reader, streaming the raw
+device into Ostia's own workers and The Sleuth Kit (c) reuse usbsas as the media layer now.
+Recommendation: (b): (a) for 1.0, with the hybrid kept as a measured candidate on the bench.
+Blocking: no for P1 (the kernel mount is already the accepted decision).
+This also answers the usbsas item of Q-1 (spec §21) once the owner decides.
+
 ### Q-34 · WP-0.9 · — · red-first limits left open
 Context: `tools/ci/red_first.py` (WP-0.9) traces changed Python helpers, fixtures (conftest included) and
 constants to the tests that use them. It does not trace these:

@@ -51,3 +51,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     - only `test(...)` commits touch tests;
     - every subject follows the commit convention.
   - `docs/contracts/repository-settings.md` lists the GitHub settings the owner applies.
+- usbsas evaluation (WP-0.11), recorded in ADR-05:
+  - covers licence, process interface, file systems, sandbox and maturity;
+  - measures reading through usbsas against a kernel mount on FAT32, exFAT, NTFS and ext4 images;
+  - recommends keeping the kernel mount for 1.0, with a later hybrid as a candidate (proposed; Q-35).
