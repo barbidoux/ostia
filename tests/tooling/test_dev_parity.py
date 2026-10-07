@@ -83,6 +83,9 @@ def test_versions_file_pins_every_downloaded_tool() -> None:
         "NEXTEST_VERSION",
         "NIGHTLY_TOOLCHAIN",
         "CARGO_FUZZ_VERSION",
+        "CARGO_DENY_VERSION",
+        "CARGO_AUDIT_VERSION",
+        "CARGO_CYCLONEDX_VERSION",
     }
     for key, value in entries.items():
         if key == "NIGHTLY_TOOLCHAIN":
@@ -123,6 +126,20 @@ def test_ci_jobs_install_from_the_single_sources(name: str) -> None:
 @pytest.mark.req("NFR-15")
 def test_ci_job_installs_the_pinned_nextest() -> None:
     assert "${NEXTEST_VERSION}" in "\n".join(run_bodies("ci"))
+
+
+@pytest.mark.req("NFR-11")
+@pytest.mark.parametrize(
+    ("variable", "crate"),
+    [
+        ("CARGO_DENY_VERSION", "cargo-deny"),
+        ("CARGO_AUDIT_VERSION", "cargo-audit"),
+        ("CARGO_CYCLONEDX_VERSION", "cargo-cyclonedx"),
+    ],
+)
+def test_ci_job_installs_the_pinned_supply_chain_tools(variable: str, crate: str) -> None:
+    # `just check` runs `just audit` (Q-27), so the ci job needs the tools at their pinned versions.
+    assert f'cargo install --locked "{crate}@${{{variable}}}"' in "\n".join(run_bodies("ci"))
 
 
 @pytest.mark.req("NFR-15")

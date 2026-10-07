@@ -41,7 +41,8 @@ def recipe(name: str) -> list[str]:
 def test_check_runs_every_gate() -> None:
     lines = recipe("check")
     expected = (
-        "check: fmt-check lint types test registry-check trace verify-locks rails-verify kit-test"
+        "check: fmt-check lint types test registry-check trace audit verify-locks rails-verify "
+        "kit-test"
     )
     assert expected in lines
 
