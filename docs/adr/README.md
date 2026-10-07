@@ -10,7 +10,7 @@ ADR-01 to ADR-13 come from spec §21; they were decided by the owner in the spec
 | [ADR-02](0002-apache-licence-clamd.md) | Apache-2.0; ClamAV through `clamd` | accepted |
 | [ADR-03](0003-framed-protobuf-stdio.md) | Length-prefixed Protobuf on workers' stdin/stdout | accepted |
 | [ADR-04](0004-lightweight-sandbox.md) | bubblewrap or nsjail sandbox with cgroups v2 | accepted |
-| [ADR-05](0005-kernel-mount-read-only.md) | Read-only kernel mount for 1.0, unless the usbsas evaluation concludes otherwise | accepted (revisited in WP-0.11) |
+| [ADR-05](0005-kernel-mount-read-only.md) | Read-only kernel mount for 1.0, unless the usbsas evaluation concludes otherwise | accepted; WP-0.11 evaluation recommends keeping it (proposed) |
 | [ADR-06](0006-ocsf-logs.md) | OCSF logs | accepted |
 | [ADR-07](0007-tuf-updates-tough.md) | Offline updates with TUF, verified by `tough` | accepted |
 | [ADR-08](0008-web-ui-cage-chromium.md) | Web UI in Chromium kiosk mode under `cage` | accepted |
