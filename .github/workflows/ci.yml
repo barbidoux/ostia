@@ -200,12 +200,16 @@ jobs:
           done
 
   red-first:
-    # Spec §18 cycle rule 3: each test(<ID>) commit of the pull request fails at its commit, for a valid
-    # reason, and a later feat/fix/build/ci(<ID>) commit implements it (tools/ci/red_first.py).
+    # Spec §18 cycle rules 1 and 3: each test(<ID>) commit of the pull request fails at its commit, for a
+    # valid reason, a later feat/fix/build/ci(<ID>) commit implements it, and no other commit touches the
+    # tests (tools/ci/red_first.py).
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # The same container as the ci job: disk-image tests need loop devices (docs/questions.md Q-12).
     container:
       image: debian:13
+      options: --privileged
     steps:
       - name: Bootstrap packages (for the checkout)
         run: |
