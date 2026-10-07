@@ -26,6 +26,8 @@ GATES = [
     "test-py",
     "trace",
     "test-fuzz",
+    "audit",
+    "sbom",
 ]
 
 
