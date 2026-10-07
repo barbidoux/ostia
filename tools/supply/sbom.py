@@ -6,12 +6,15 @@ Usage: sbom.py --out target/sbom
   `cargo cyclonedx`. cargo-cyclonedx writes next to each member's Cargo.toml; the files are moved out
   (or removed, for test doubles such as `tests/fakes/*`) so the source tree stays clean.
 - `python/ostia-python.cdx.json`: the Python runtime dependencies only (no dev or audit group), installed
-  with verified hashes from `uv export` into a throwaway virtual environment, then read by `cyclonedx-py`.
+  by `uv sync --frozen` from uv.lock (hashes checked) into a throwaway virtual environment, then read
+  by `cyclonedx-py`.
 
-Everything runs offline: `uv --offline` from its cache, cargo with CARGO_NET_OFFLINE from the registry
-cache filled by the build. cargo-cyclonedx has no `--locked`, so `cargo metadata --locked` (full
-resolution, for the host platform) first proves that Cargo.lock is up to date. The member directories receive the generated files
-for a moment (cargo-cyclonedx has no output directory option).
+Everything runs offline: `uv sync --frozen --offline` needs only the wheels that the project's own
+`uv sync --frozen` cached (an offline `uv pip install` would also need PyPI's index pages); cargo runs
+with CARGO_NET_OFFLINE from the registry cache filled by the build. cargo-cyclonedx has no `--locked`,
+so `cargo metadata --locked` (full resolution, for the host platform) first proves that Cargo.lock is up
+to date. The member directories receive the generated files for a moment (cargo-cyclonedx has no output
+directory option).
 The timestamp comes from SOURCE_DATE_EPOCH, set to the last commit's time when not given.
 Exit codes: 0 written, 1 a step failed (its output on stderr).
 """
@@ -88,37 +91,21 @@ def python(out: Path, env: dict[str, str]) -> None:
     if not cyclonedx.is_file():
         raise StepError(f"{cyclonedx} is missing (uv group audit)")
     with tempfile.TemporaryDirectory(prefix="ostia-sbom-") as scratch:
-        requirements = Path(scratch) / "requirements.txt"
         venv = Path(scratch) / "venv"
+        # From uv.lock, which uv checks the hashes against, without the dev and audit groups.
         run(
             [
                 "uv",
-                "export",
+                "sync",
                 "--frozen",
-                "--no-default-groups",
-                "--no-emit-project",
-                "--format",
-                "requirements-txt",
-                "--output-file",
-                str(requirements),
-            ],
-            env,
-        )
-        run(["uv", "venv", "--offline", "--quiet", "--python", sys.executable, str(venv)], env)
-        run(
-            [
-                "uv",
-                "pip",
-                "install",
                 "--offline",
                 "--quiet",
-                "--require-hashes",
+                "--no-default-groups",
+                "--no-install-project",
                 "--python",
-                str(venv / "bin" / "python"),
-                "--requirement",
-                str(requirements),
+                sys.executable,
             ],
-            env,
+            {**env, "UV_PROJECT_ENVIRONMENT": str(venv)},
         )
         run(
             [
