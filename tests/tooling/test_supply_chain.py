@@ -576,8 +576,9 @@ def test_repository_pins_and_locked_export_pass(tmp_path: Path) -> None:
 
 @pytest.mark.req("UPD-07")
 def test_python_installs_verify_hashes() -> None:
-    # CI and the dev container install only from uv.lock (`uv sync --frozen` checks its hashes); the
-    # runtime environment of the SBOM is installed with --require-hashes. No bare pip install anywhere.
+    # CI, the dev container and the runtime environment of the SBOM install only from uv.lock
+    # (`uv sync --frozen` checks its hashes). No pip install anywhere: offline, `uv pip install` would
+    # also need PyPI's index pages, which `uv sync --frozen` never caches (CI run of PR #12).
     # rails.yml belongs to the owner's rails kit (agents never edit it); its unhashed `pytest==8.*` is
     # docs/questions.md Q-30.
     workflows = [
@@ -592,7 +593,10 @@ def test_python_installs_verify_hashes() -> None:
         for line in text.splitlines():
             if "uv sync" in line:
                 assert "uv sync --frozen" in line, line
-    assert "--require-hashes" in SBOM.read_text()
+    sbom = SBOM.read_text()
+    assert '"pip"' not in sbom
+    for token in ('"sync"', '"--frozen"', '"--offline"', '"--no-default-groups"'):
+        assert token in sbom, token
 
 
 @pytest.mark.req("NFR-11")
