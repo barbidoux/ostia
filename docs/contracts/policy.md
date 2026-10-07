@@ -2,27 +2,33 @@
 
 Status: proposed in WP-0.12 (P1 lock); implemented in WP-1.2. Schema: `schemas/policy.schema.json`.
 Decision record: ADR-09 (verdicts come only from the signed, declarative policy). The P1 acceptance tests write
-policies in this format, so a later format is a new `schema` value that the loader accepts next to v1 (CTR-04).
+policies in this format, so the loader keeps accepting every valid v1 document (CTR-04). Keys added later to v1
+(E1 and the enrichment settings in P8, D1 and D2 in P4 and P5) are optional, and their absence means the spec
+default (enrichment off, so E1 inactive; D2 alert only); a change that a v1 document cannot express is a new
+`schema` value.
 
 ## File and signature
 
-- A UTF-8 JSON document. Every object refuses unknown keys; every key of the schema is required (no hidden
-  default: what decides a verdict is written in the file).
+- A UTF-8 JSON document of at most 1 MiB. Every object refuses unknown keys; every key of v1.0 is required (no
+  hidden default: what decides a verdict is written in the file). A duplicate key anywhere, or an integer written
+  with a fraction or an exponent (`2.0`), is `policy_invalid`.
 - Signed with Ed25519 over the **exact file bytes** (no canonicalisation): the signature file holds the 64 raw
-  signature bytes, the trusted key file the 32 raw public key bytes.
+  signature bytes, the trusted key file the 32 raw public key bytes; any other size is
+  `policy_signature_invalid` (files are read with a cap, never whole when larger).
 - The loader verifies the signature **before** parsing. Refusals: `policy_signature_invalid` (signature or key
   malformed, or no match), then `policy_invalid` (not JSON, schema mismatch, `thresholds.low >= thresholds.high`).
 - The report records the policy `version` and the SHA-256 of the file bytes.
 
 ## Engines and roles
 
-`engines` maps an engine id to its role. An engine that answers but is not listed counts as a `detector` with
-`trusted_alone: false`.
+`engines` maps an engine id to its role. The engines of a session are exactly the policy's engines: an engine
+missing from the policy, or a policy engine missing from the session, stops the scan before the medium is opened
+(exit 2, [cli.md](cli.md)). Engine ids follow the pattern of the schema everywhere, command line included.
 
 | Role | What its result means |
 |---|---|
 | `detector` | Hint MALICIOUS is a detection. `trusted_alone: true`: one detection is enough (R2). Hint SUSPICIOUS is a risky heuristic (R6). |
-| `scorer` | Its `score` is compared with `thresholds` (`low < high`, both in (0, 1]); its hint is ignored. The EMBER engine of P2 is a scorer (thresholds may then come from its signed model bundle). |
+| `scorer` | Its `score`, in a result with status `OK`, is compared with `thresholds` (`low < high`, both in (0, 1]); its hint is ignored. An answer with status `OK` and no score is a failure (R1). The EMBER engine of P2 is a scorer: when its signed model bundle carries thresholds too, the stricter of each pair applies (the lower `high`, the lower `low`), so the bundle can only harden the policy (open point Q-37). |
 | `reputation` | Hint MALICIOUS: known-bad hash (R2). Hint CLEAN: exact known-good hash (R3). |
 | `heuristic` | Hint SUSPICIOUS or MALICIOUS: risky heuristic (R6). |
 
@@ -34,7 +40,7 @@ The order is fixed by the spec (§8); the first rule that matches decides. Param
 
 | Rule | Matches when | Verdict | `contributing_engines` |
 |---|---|---|---|
-| R1 | Any engine result has status `ERROR` or `TIMEOUT`; or a limit was reached on the object (`limits`, scan time); or the object could not be read, typed or extracted (malformed archive); or `detected_type` is in `rules.R1.risky_types` and no engine answered `OK` | UNSCANNABLE | The engines with `ERROR` or `TIMEOUT` |
+| R1 | Any engine result has status `ERROR` or `TIMEOUT`, or a scorer answered `OK` without a score; or the object is a `symlink` or `special` ([report.md](report.md#objects)); or a limit was reached on the object (`limits`, scan time); or the object could not be read, typed or extracted (malformed archive, an encrypted entry, sizes that do not match the declared ones, an entry path that is absolute or has a `..` component); or `detected_type` is in `rules.R1.risky_types` and no engine answered `OK` | UNSCANNABLE | The engines with `ERROR` or `TIMEOUT`, or the scorer without a score |
 | R2 | A reputation engine says MALICIOUS; or a `trusted_alone` detector says MALICIOUS; or at least `rules.R2.k` other detectors say MALICIOUS; or a critical finding | MALICIOUS | The engines that matched |
 | R3 | A reputation engine says CLEAN | CLEAN | The reputation engine |
 | R4 | A scorer's score `>= thresholds.high` | MALICIOUS | The scorer |
@@ -42,7 +48,8 @@ The order is fixed by the spec (§8); the first rule that matches decides. Param
 | R6 | One of the enabled flags of `rules.R6`: `double_extension` and `extension_mismatch` (from triage, [report.md](report.md#objects)); `single_detection` (1 to `k - 1` detectors that are not `trusted_alone` say MALICIOUS); `suspicious_hint` (a detector says SUSPICIOUS, or a heuristic engine says SUSPICIOUS or MALICIOUS) | SUSPICIOUS | The engines that matched (empty for name flags) |
 | R7 | None of the above | CLEAN | — |
 
-E1 (enrichment, P8) and the medium rules D1, D2 (P4, P5) are added to this format in their phases.
+E1 (enrichment, P8) and the medium rules D1, D2 (P4, P5) are added in their phases as optional keys (see the top
+of this document).
 
 ## Limits
 

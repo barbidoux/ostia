@@ -16,6 +16,37 @@
     "objects",
     "medium_verdict"
   ],
+  "allOf": [
+    {
+      "if": {"properties": {"session": {"properties": {"mode": {"const": "compliant"}}}}},
+      "then": {"properties": {"session": {"properties": {"compliant": {"const": true}}}}},
+      "else": {"properties": {"session": {"properties": {"compliant": {"const": false}}}}}
+    },
+    {
+      "if": {"properties": {"refusal": {"type": "object"}}},
+      "then": {
+        "properties": {
+          "objects": {"maxItems": 0},
+          "medium_verdict": {
+            "properties": {"verdict": {"const": "UNSCANNABLE"}, "blocked": {"const": true}}
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"timing": {"properties": {"aborted": {"const": true}}}}},
+      "then": {"properties": {"medium_verdict": {"properties": {"blocked": {"const": true}}}}}
+    },
+    {
+      "if": {
+        "properties": {
+          "session": {"properties": {"mode": {"enum": ["compliant", "scan-only"]}}},
+          "timing": {"properties": {"expired": {"const": true}}}
+        }
+      },
+      "then": {"properties": {"medium_verdict": {"properties": {"blocked": {"const": true}}}}}
+    }
+  ],
   "properties": {
     "report_version": {"type": "string", "pattern": "^1\\.[0-9]+\\.[0-9]+$"},
     "session": {
@@ -138,6 +169,7 @@
         "id",
         "parent_id",
         "origin",
+        "kind",
         "depth",
         "path",
         "stream",
@@ -162,6 +194,7 @@
         "id": {"type": "string", "minLength": 1},
         "parent_id": {"type": ["string", "null"], "minLength": 1},
         "origin": {"enum": ["FILE", "EXTRACTED", "ALT_STREAM", "XATTR"]},
+        "kind": {"enum": ["file", "symlink", "special"]},
         "depth": {"type": "integer", "minimum": 0},
         "path": {"type": "string", "minLength": 1},
         "stream": {"type": ["string", "null"], "minLength": 1},
@@ -191,7 +224,46 @@
         "explanation": {"type": "string", "minLength": 1},
         "engine_results": {"type": "array", "items": {"$ref": "#/$defs/engine_result"}},
         "transferable": {"type": "boolean"}
-      }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"origin": {"const": "FILE"}}},
+          "then": {"properties": {"parent_id": {"type": "null"}, "depth": {"const": 0}}},
+          "else": {"properties": {"parent_id": {"type": "string"}, "depth": {"minimum": 1}}}
+        },
+        {
+          "if": {"properties": {"transferable": {"const": true}}},
+          "then": {
+            "properties": {
+              "origin": {"const": "FILE"},
+              "kind": {"const": "file"},
+              "verdict": {"const": "CLEAN"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"kind": {"enum": ["symlink", "special"]}}},
+          "then": {
+            "properties": {
+              "size": {"const": 0},
+              "sha256": {"type": "null"},
+              "sha1": {"type": "null"},
+              "verdict": {"const": "UNSCANNABLE"},
+              "rule": {"const": "R1"},
+              "engine_results": {"maxItems": 0},
+              "transferable": {"const": false}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"verdict": {"const": "UNSCANNABLE"}}},
+          "then": {"properties": {"rule": {"const": "R1"}}}
+        },
+        {
+          "if": {"properties": {"limit": {"type": "string"}}},
+          "then": {"properties": {"verdict": {"const": "UNSCANNABLE"}}}
+        }
+      ]
     },
     "engine_result": {
       "type": "object",
