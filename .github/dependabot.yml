@@ -41,9 +41,12 @@ updates:
       include: scope
 
   # Actions are pinned to commit SHAs with a `# vX.Y.Z` comment; Dependabot updates both.
-  # rails.yml is owner-managed; Dependabot may propose updates to it, which only the owner merges.
+  # rails.yml is a rails file: any change outside the owner's rails update fails `rails-verify`, so
+  # Dependabot leaves it out (the owner updates its actions with the rails kit).
   - package-ecosystem: github-actions
     directory: /
+    exclude-paths:
+      - .github/workflows/rails.yml
     schedule:
       interval: monthly
     open-pull-requests-limit: 2
