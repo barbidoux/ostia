@@ -112,7 +112,7 @@ def test_dev_container_is_debian_stable_x86_64_built_from_the_single_sources() -
 
 
 @pytest.mark.req("NFR-15")
-@pytest.mark.parametrize("name", ["ci", "acceptance-current", "fuzz"])
+@pytest.mark.parametrize("name", ["ci", "acceptance-current", "fuzz", "red-first"])
 def test_ci_jobs_install_from_the_single_sources(name: str) -> None:
     bodies = "\n".join(run_bodies(name))
     assert f"{INSTALL_PACKAGES} tools/dev/packages.txt" in bodies

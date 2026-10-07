@@ -167,6 +167,18 @@ def test_a_nightly_run_fuzzes_longer_on_a_cached_corpus() -> None:
     assert len(conditions) == 1, "only the upload step is conditional"
 
 
+@pytest.mark.req("TOOLING")
+def test_pull_requests_run_the_red_first_check_on_their_commits() -> None:
+    # Spec §18 cycle rule 3: the test(...) commit must fail in CI. The check needs the whole history of
+    # the pull request and its base; it runs on pull requests only (a push has no base to compare with).
+    red = job("red-first")
+    assert "    if: github.event_name == 'pull_request'\n" in red
+    assert "          fetch-depth: 0\n" in red
+    check = step(red, "Red-first (each test commit fails before its implementation)")
+    assert 'python3 tools/ci/red_first.py --base "origin/${{ github.base_ref }}"' in check
+    assert "continue-on-error" not in red
+
+
 @pytest.mark.req("NFR-15")
 def test_the_fuzzing_toolchain_is_pinned() -> None:
     versions = (REPO / "tools" / "dev" / "versions.env").read_text().splitlines()
