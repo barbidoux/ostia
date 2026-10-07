@@ -772,15 +772,15 @@ def test_changed_conftest_fixture_marks_the_tests_using_it(repo: Repo) -> None:
 
 @pytest.mark.req("TOOLING")
 def test_async_methods_of_test_classes_are_seen(repo: Repo) -> None:
+    # Seen through the rule on tests outside test(...) commits: running an async test needs a plugin.
     in_class = "class TestAnswer:\n    async def test_value(self) -> None:\n        assert True\n"
-    sha = repo.commit("test(FR-01): async", {"tests/test_feature.py": in_class})
-    repo.commit("feat(FR-01): nothing", {"feature.py": FEATURE_DONE})
+    sha = repo.commit("feat(FR-01): sneak an async test", {"tests/test_feature.py": in_class})
     result = red_first(repo)
     assert result.returncode == 1
-    assert "adds or changes no test" not in result.stdout
-    assert f"{repo.short(sha)} test(FR-01): tests/test_feature.py::TestAnswer::test_value" in (
-        result.stdout
-    )
+    assert (
+        f"{repo.short(sha)} feat(FR-01): adds or changes tests/test_feature.py::TestAnswer::test_value "
+        "outside a test(...) commit"
+    ) in result.stdout
 
 
 # --- Rust tests -----------------------------------------------------------------------------------
