@@ -91,6 +91,17 @@ def test_current_phase_is_the_only_informational_job() -> None:
 
 
 @pytest.mark.req("TOOLING")
+def test_acceptance_runs_build_the_dev_flags() -> None:
+    # The acceptance tests drive `ostia scan --dev-engine` (docs/contracts/cli.md): the binary they run
+    # is a debug build with the `ostia-cli/dev` feature, in the gate and in the informational run.
+    gate = step(job("ci"), "Acceptance gates (closed phases, blocking)")
+    current = step(job("acceptance-current"), "Current phase acceptance (N/M green)")
+    for text in (gate, current):
+        assert "cargo build --workspace --locked --features ostia-cli/dev\n" in text
+        assert "--release" not in text
+
+
+@pytest.mark.req("TOOLING")
 def test_workflow_never_bypasses_hooks_or_rails() -> None:
     text = workflow()
     assert "--no-verify" not in text
