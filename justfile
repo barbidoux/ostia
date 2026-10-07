@@ -84,6 +84,11 @@ fuzz seconds="1800":
     mkdir -p fuzz/corpus/frame_decoder
     cargo "+$(sed -n 's/^NIGHTLY_TOOLCHAIN=//p' tools/dev/versions.env)" fuzz run frame_decoder fuzz/corpus/frame_decoder proto/testdata -- -max_total_time={{seconds}} -timeout=5
 
+# Red-first check of this branch's commits (spec §18): each test(<ID>) commit fails at its commit, then a
+# feat, fix, build or ci commit implements the id (CI runs it on every pull request)
+red-first:
+    python3 tools/ci/red_first.py --base origin/main
+
 # Informational run of an acceptance directory (hardened, same isolation as the gate)
 test-acceptance dir *args:
     just acceptance-dry-run {{dir}} {{args}}
