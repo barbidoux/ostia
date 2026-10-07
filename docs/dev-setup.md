@@ -95,7 +95,21 @@ expected outcome to `crates/contracts/tests/fuzz_regressions.rs` and
 `workers-py/common/tests/test_fuzz_regressions.py`, which replay it on every `just test` (they fail until
 the new file is listed).
 
-## 6. Supply chain (UPD-07, NFR-11)
+## 6. Red first (spec §18)
+
+`just red-first` checks the commits of the branch against `origin/main`, as the `red-first` CI job does on
+every pull request:
+- every subject follows the commit convention;
+- only `test(<ID>)` commits add, change or remove tests;
+- the tests a `test(<ID>)` commit adds or changes fail at that commit, for a valid reason (not a
+  collection, fixture, name or import error, not a skip), unless they are listed on a `Pins:` line;
+- a later `feat`, `fix`, `build` or `ci` commit carries each id.
+
+Bench tests are listed, not run: paste the `just test-bench` output in the merge request. The rules are in
+the docstring of `tools/ci/red_first.py`, and the owner decisions are Q-31 to Q-33 in
+`docs/questions.md`.
+
+## 7. Supply chain (UPD-07, NFR-11)
 
 `just audit` (part of `just check`) runs:
 - `cargo-deny` on both workspaces, with `deny.toml`: licence allowlist, crates.io only, advisories, bans;

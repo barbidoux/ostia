@@ -56,7 +56,51 @@ Blocking: no.
 Also for the owner (WP-0.8): add `deny.toml` (and, if wanted, `tools/supply/python-licences.toml`) to the
 rails manifest and the guard, as prompts/P0.md plans ("after this package deny.toml is owner-gated").
 
+### Q-34 · WP-0.9 · — · red-first limits left open
+Context: `tools/ci/red_first.py` (WP-0.9) traces changed Python helpers, fixtures (conftest included) and
+constants to the tests that use them. It does not trace these:
+- Rust helpers and constants;
+- tests with the same name in two `mod` blocks of one file;
+- `proptest!` blocks;
+- Python helper modules that are not conftest (`tests/fakes`, `tooling_support.py`);
+- imports a test module changes.
+It also does not require that a `feat(<ID>)` commit follows a `test(<ID>)` commit of the same pull request
+(spec §18 rule 1 for code changes): Dependabot and tooling commits have none.
+Options: (a) leave them, documented in the tool, and revisit when a phase needs them (b) close them now.
+Recommendation: (a). Every one of them needs a deliberate weakening to slip through, and the review still
+reads each diff.
+Blocking: no.
+
 ## Answered
+
+### Q-33 · WP-0.9 · — · bench tests in the red-first check
+Context: bench tests (the `bench` marker, Rust targets that require the `bench` feature) cannot run in the
+red-first CI job: there they look red only because the hardware is missing, or nextest cannot find them.
+Options: (a) not run, listed as "not checked (bench)"; the red evidence is the `just test-bench` output in
+the MR, and the implementation commit is still required (b) a `Pins:` line required for each.
+Recommendation: (a).
+Blocking: yes (WP-0.9 design).
+Answer (2026-10-07): (a).
+
+### Q-32 · WP-0.9 · — · tests outside test(...) commits
+Context: the reviews of WP-0.9 showed that checking only `test(...)` commits lets a vacuous test through
+in a `feat(...)` commit, or under a malformed subject, and that CI did not check commit subjects.
+Options: (a) every pull-request subject follows the commit convention, and only `test(...)` commits add,
+change or remove tests (a test refactor goes in a `test(...)` commit with `Pins:`) (b) the same, but
+`refactor` commits may change existing tests (c) the subject format only.
+Recommendation: (a).
+Blocking: yes (WP-0.9 design).
+Answer (2026-10-07): (a).
+
+### Q-31 · WP-0.9 · — · red-first rules
+Context: `tools/ci/red_first.py` checks each `test(<ID>)` commit of a pull request.
+Answer (2026-10-07), the owner's rules:
+- the implementation commit is `feat`, `fix`, `build` or `ci`, carries the same id, and descends from the
+  test commit;
+- a test that passes at its commit, because it pins behaviour that is already correct, is listed on a
+  `Pins: <test ids>` line of the commit message (a pin may name one parametrized case); the tool prints
+  every pinned test;
+- the check runs in CI on every pull request, for Rust and Python (job `red-first`).
 
 ### Q-29 · WP-0.8 · UPD-07, NFR-11 · licences allowed for the Python dependencies only
 Context: the review of WP-0.8 noted that MIT-0 (cffi, via cryptography), 0BSD (chardet, via cyclonedx-bom)
