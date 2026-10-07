@@ -100,16 +100,18 @@ the new file is listed).
 `just audit` (part of `just check`) runs:
 - `cargo-deny` on both workspaces, with `deny.toml`: licence allowlist, crates.io only, advisories, bans;
 - `cargo-audit` on both lockfiles;
-- the Python pin check (`tools/supply/check_pins.py`): exact `==` in `pyproject.toml`, and a sha256 hash on
-  every line of the requirements exported from `uv.lock`;
+- the Python pin check (`tools/supply/check_pins.py`): exact `==` in `pyproject.toml`, a sha256 hash on
+  every line of the requirements exported from `uv.lock`, and PyPI as the only source in `uv.lock`;
 - `pip-audit --require-hashes` on that export;
-- the Python licence check (`tools/supply/python_licences.py`, same allowlist);
+- the Python licence check (`tools/supply/python_licences.py`): the `deny.toml` allowlist plus the
+  Python-only licences of `tools/supply/python-licences.toml` (MIT-0, 0BSD, PSF-2.0);
 - `just sbom`, which writes the CycloneDX SBOMs to `target/sbom`: one per crate under `crates/`, and one for
   the Python runtime dependencies, installed with verified hashes.
 
 It needs the network: the RustSec advisory database and the PyPI vulnerability service. The tests stay
-offline. `deny.toml` and `tools/supply/python-licences.toml` are owner-gated. A dependency update whose
-licence metadata is not plain SPDX fails until its line in `python-licences.toml` is reviewed.
+offline. `deny.toml` is owner-gated. `tools/supply/python-licences.toml` holds licence decisions too:
+a test pins its content, so any change shows up as a failing test for the owner to accept. A dependency
+update whose licence metadata is not plain SPDX fails until its line in `python-licences.toml` is reviewed.
 
 ## WSL notes
 

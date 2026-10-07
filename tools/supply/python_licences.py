@@ -2,13 +2,14 @@
 
 Usage: python_licences.py --sbom env.cdx.json [--deny deny.toml] [--config tools/supply/python-licences.toml]
 
-The SBOM is a CycloneDX JSON document of the Python environment (`cyclonedx-py environment`). Every
-licence entry of every component must be allowed: an SPDX id in the allowlist, or an SPDX expression
-that the allowlist satisfies (`OR`: one side, `AND`: both, `X WITH exception`: X). Non-SPDX names (trove
-classifiers) count only through the `[aliases]` table of the config, reviewed by hand. A package whose
-metadata carries no usable licence needs a `[packages]` override pinned to its exact version
-(`"name==version" = "<SPDX expression>"`), so a new version is reviewed again. A component without any
-licence fails: fail closed.
+The SBOM is a CycloneDX JSON document of the Python environment (`cyclonedx-py environment`); nested
+components are checked too. The allowlist is `[licenses] allow` of deny.toml plus `[allow] python-only`
+of the config. Every licence entry of every component must be allowed: an SPDX id in the allowlist, or
+an SPDX expression that the allowlist satisfies (`OR`: one side, `AND`: both, `X WITH exception`: X).
+Non-SPDX names (trove classifiers) count only through the `[aliases]` table of the config, reviewed by
+hand. A `[packages]` override, pinned to an exact version (`"name==version" = "<SPDX expression>"`),
+replaces the metadata of that version, so a new version is reviewed again. A component without any
+licence, or with an entry CycloneDX does not allow, fails: fail closed.
 
 Exit codes: 0 all allowed, 1 findings (one line each on stderr), 2 usage error or unreadable input.
 """
@@ -115,13 +116,18 @@ def load_sbom(path: Path) -> list[dict[str, Any]]:
         raise UsageError(f"cannot read {path}: {error}") from error
     except ValueError as error:
         raise UsageError(problem) from error
-    if (
-        not isinstance(document, dict)
-        or document.get("bomFormat") != "CycloneDX"
-        or not isinstance(document.get("components"), list)
-    ):
+    if not isinstance(document, dict) or document.get("bomFormat") != "CycloneDX":
         raise UsageError(problem)
-    components: list[dict[str, Any]] = document["components"]
+    components: list[dict[str, Any]] = []
+    pending = [document]
+    while pending:
+        nested = pending.pop().get("components", [])
+        if not isinstance(nested, list) or not all(isinstance(c, dict) for c in nested):
+            raise UsageError(problem)
+        components += nested
+        pending += nested
+    if "components" not in document:
+        raise UsageError(problem)
     return components
 
 
@@ -132,6 +138,13 @@ def allowlist(path: Path) -> set[str]:
     return set(allow)
 
 
+def python_only(config: dict[str, Any], path: Path) -> set[str]:
+    extra = config.get("allow", {}).get("python-only", [])
+    if not isinstance(extra, list) or not all(isinstance(item, str) for item in extra):
+        raise UsageError(f"{path}: [allow] python-only is not a list of licence ids")
+    return set(extra)
+
+
 def string_table(config: dict[str, Any], name: str, path: Path) -> dict[str, str]:
     table = config.get(name, {})
     if not isinstance(table, dict) or not all(isinstance(v, str) for v in table.values()):
@@ -139,27 +152,39 @@ def string_table(config: dict[str, Any], name: str, path: Path) -> dict[str, str
     return table
 
 
+# One licence entry: ("expression", shown, SPDX expression), ("name", shown, None) for a name without an
+# alias, or ("unsupported", shown, None) for a shape CycloneDX does not allow.
+Entry = tuple[str, str, str | None]
+
+
+def parse_entry(entry: object, aliases: dict[str, str]) -> Entry:
+    unsupported: Entry = ("unsupported", f"unsupported licence entry {entry!r}", None)
+    if not isinstance(entry, dict) or len({"expression", "license"} & set(entry)) != 1:
+        return unsupported
+    if "expression" in entry:
+        text = entry["expression"]
+        return ("expression", text, text) if isinstance(text, str) else unsupported
+    licence = entry["license"]
+    if not isinstance(licence, dict):
+        return unsupported
+    if isinstance(licence.get("id"), str):
+        return ("expression", licence["id"], licence["id"])
+    if isinstance(licence.get("name"), str):
+        name = licence["name"]
+        return ("expression", name, aliases[name]) if name in aliases else ("name", name, None)
+    return unsupported
+
+
 def licence_entries(
     component: dict[str, Any], aliases: dict[str, str], packages: dict[str, str]
-) -> list[tuple[str, str | None]]:
-    """(shown text, SPDX expression or None when the text is an unknown name) per licence entry."""
+) -> list[Entry]:
     key = f"{component.get('name')}=={component.get('version')}"
     if key in packages:
-        return [(packages[key], packages[key])]
-    entries: list[tuple[str, str | None]] = []
-    for entry in component.get("licenses") or []:
-        if not isinstance(entry, dict):
-            entries.append((repr(entry), None))
-        elif "expression" in entry:
-            entries.append((str(entry["expression"]), str(entry["expression"])))
-        else:
-            licence = entry.get("license", {})
-            if "id" in licence:
-                entries.append((str(licence["id"]), str(licence["id"])))
-            else:
-                name = str(licence.get("name", ""))
-                entries.append((name, aliases.get(name)))
-    return entries
+        return [("expression", packages[key], packages[key])]
+    licences = component.get("licenses") or []
+    if not isinstance(licences, list):
+        return [("unsupported", f"unsupported licence entry {licences!r}", None)]
+    return [parse_entry(entry, aliases) for entry in licences]
 
 
 def check(
@@ -174,7 +199,10 @@ def check(
         entries = licence_entries(component, aliases, packages)
         if not entries:
             findings.append(f"{label}: no licence")
-        for shown, expression in entries:
+        for kind, shown, expression in entries:
+            if kind == "unsupported":
+                findings.append(f"{label}: {shown}")
+                continue
             if expression is None:
                 if shown not in allowed:
                     findings.append(f"{label}: {shown!r} is not allowed")
@@ -201,8 +229,8 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     try:
         components = load_sbom(args.sbom)
-        allowed = allowlist(args.deny)
         config = load_toml(args.config)
+        allowed = allowlist(args.deny) | python_only(config, args.config)
         aliases = string_table(config, "aliases", args.config)
         packages = string_table(config, "packages", args.config)
     except UsageError as error:

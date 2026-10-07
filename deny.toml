@@ -1,6 +1,6 @@
 # cargo-deny policy for the Rust workspace and the fuzz workspace (UPD-07, NFR-11).
 # Owner-gated after WP-0.8: a change of this file needs the owner's approval.
-# The licence allowlist is also the allowlist of the Python dependencies (tools/supply/python_licences.py).
+# The licence allowlist is also the base allowlist of the Python dependencies (tools/supply/python_licences.py).
 # Run by `just audit`: `cargo deny --workspace --locked --config deny.toml check`.
 
 [graph]
@@ -15,8 +15,8 @@ unmaintained = "all"
 unsound = "all"
 
 [licenses]
-# prompts/P0.md (WP-0.8), MPL-2.0 as file-level copyleft (Q-26), and the permissive licences of the
-# approved Python tools (Q-25: MIT-0, 0BSD, PSF-2.0).
+# prompts/P0.md (WP-0.8) and MPL-2.0 as file-level copyleft (Q-26). Licences allowed for the Python
+# dependencies only are in tools/supply/python-licences.toml (Q-29).
 allow = [
     "Apache-2.0",
     "MIT",
@@ -26,13 +26,8 @@ allow = [
     "Unicode-3.0",
     "Zlib",
     "MPL-2.0",
-    "MIT-0",
-    "0BSD",
-    "PSF-2.0",
 ]
 confidence-threshold = 0.8
-# Some allowed licences serve only the Python side.
-unused-allowed-license = "allow"
 exceptions = [
     # The bundled libFuzzer (fuzz workspace only, never shipped; Q-23).
     { crate = "libfuzzer-sys", allow = ["NCSA"] },

@@ -8,7 +8,10 @@ Usage: sbom.py --out target/sbom
 - `python/ostia-python.cdx.json`: the Python runtime dependencies only (no dev or audit group), installed
   with verified hashes from `uv export` into a throwaway virtual environment, then read by `cyclonedx-py`.
 
-Everything runs offline (`uv` from its cache, `cargo --locked` from the registry cache filled by the build).
+Everything runs offline: `uv --offline` from its cache, cargo with CARGO_NET_OFFLINE from the registry
+cache filled by the build. cargo-cyclonedx has no `--locked`, so `cargo metadata --locked` (full
+resolution) first proves that Cargo.lock is up to date. The member directories receive the generated files
+for a moment (cargo-cyclonedx has no output directory option).
 The timestamp comes from SOURCE_DATE_EPOCH, set to the last commit's time when not given.
 Exit codes: 0 written, 1 a step failed (its output on stderr).
 """
@@ -38,16 +41,15 @@ def run(cmd: list[str], env: dict[str, str]) -> str:
 
 
 def environment() -> dict[str, str]:
-    env = {**os.environ, "CARGO_TERM_COLOR": "never"}
+    env = {**os.environ, "CARGO_TERM_COLOR": "never", "CARGO_NET_OFFLINE": "true"}
     if "SOURCE_DATE_EPOCH" not in env:
         env["SOURCE_DATE_EPOCH"] = run(["git", "log", "-1", "--format=%ct"], env).strip()
     return env
 
 
 def rust(out: Path, env: dict[str, str]) -> None:
-    metadata = json.loads(
-        run(["cargo", "metadata", "--format-version", "1", "--no-deps", "--locked"], env)
-    )
+    # Full resolution with --locked: fails if Cargo.lock would change.
+    metadata = json.loads(run(["cargo", "metadata", "--format-version", "1", "--locked"], env))
     members = [
         package
         for package in metadata["packages"]
@@ -129,10 +131,11 @@ def main(argv: list[str]) -> int:
         env = environment()
         for part, generate in (("rust", rust), ("python", python)):
             directory = args.out / part
-            shutil.rmtree(directory, ignore_errors=True)
+            if directory.exists():
+                shutil.rmtree(directory)
             directory.mkdir(parents=True)
             generate(directory, env)
-    except StepError as error:
+    except (StepError, OSError) as error:
         print(f"sbom: {error}", file=sys.stderr)
         return 1
     print(f"SBOMs written to {args.out}")

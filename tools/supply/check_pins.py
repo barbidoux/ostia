@@ -1,6 +1,6 @@
 """Checks that every Python dependency is pinned exactly and installed only with verified hashes (UPD-07).
 
-Usage: check_pins.py [--pyproject pyproject.toml] [--requirements requirements.txt]
+Usage: check_pins.py [--pyproject pyproject.toml] [--requirements requirements.txt] [--lock uv.lock]
 
 --pyproject: every requirement of `project.dependencies`, `project.optional-dependencies.*`,
 `dependency-groups.*` and `tool.uv.dev-dependencies` is `name[extras]==version` (markers allowed);
@@ -8,6 +8,8 @@ Usage: check_pins.py [--pyproject pyproject.toml] [--requirements requirements.t
 --requirements: a file exported from uv.lock (`uv export --format requirements-txt`, hashes on by default)
 in which every requirement is pinned with == and carries at least one sha256 hash; any other line
 (options, editable or local paths, URLs) is refused, so pip-audit and pip install see only hashed pins.
+--lock: every package of uv.lock comes from the PyPI registry (the Python counterpart of "crates.io
+only"); the project itself (`virtual = "."` or `editable = "."`) is the only other source.
 
 Exit codes: 0 everything pinned, 1 findings (one line each on stderr), 2 usage error or unreadable file.
 """
@@ -25,6 +27,8 @@ STARTS_WITH_NAME = re.compile(rf"{NAME}(?:\s|\[|[=<>!~;@]|$)")
 OPTION = re.compile(r"\s--")
 HASH = re.compile(r"--hash=(\w+):(\S+)")
 SHA256 = re.compile(r"[0-9a-f]{64}")
+PYPI = {"registry": "https://pypi.org/simple"}
+PROJECT_SOURCES = ({"virtual": "."}, {"editable": "."})
 
 
 class UsageError(Exception):
@@ -126,28 +130,50 @@ def check_requirements(path: Path) -> tuple[int, list[str]]:
     return count, findings
 
 
+def check_lock(path: Path) -> tuple[int, list[str]]:
+    try:
+        lock = tomllib.loads(read(path))
+    except tomllib.TOMLDecodeError as error:
+        raise UsageError(f"{path} is not valid TOML: {error}") from error
+    packages = lock.get("package", [])
+    if not isinstance(packages, list) or not all(isinstance(p, dict) for p in packages):
+        raise UsageError(f"{path}: [[package]] is not a list of tables")
+    findings = []
+    for package in packages:
+        source = package.get("source")
+        if source != PYPI and source not in PROJECT_SOURCES:
+            label = f"{package.get('name')} {package.get('version')}"
+            findings.append(f"{path}: {label}: source {source!r} is not the PyPI registry")
+    if not packages:
+        findings.append(f"{path}: no packages")
+    return len(packages), findings
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Python dependencies are pinned and hashed")
     parser.add_argument("--pyproject", type=Path)
     parser.add_argument("--requirements", type=Path)
+    parser.add_argument("--lock", type=Path)
     args = parser.parse_args(argv)
-    if args.pyproject is None and args.requirements is None:
+    checks = [
+        (args.pyproject, check_pyproject, "declared"),
+        (args.requirements, check_requirements, "exported"),
+        (args.lock, check_lock, "from PyPI"),
+    ]
+    if all(path is None for path, _, _ in checks):
         print(
-            "check_pins: nothing to check: give --pyproject, --requirements or both",
+            "check_pins: nothing to check: give --pyproject, --requirements, --lock or several",
             file=sys.stderr,
         )
         return 2
     findings: list[str] = []
     summary = []
     try:
-        if args.pyproject is not None:
-            count, found = check_pyproject(args.pyproject)
-            findings += found
-            summary.append(f"{count} declared")
-        if args.requirements is not None:
-            count, found = check_requirements(args.requirements)
-            findings += found
-            summary.append(f"{count} locked")
+        for path, checker, what in checks:
+            if path is not None:
+                count, found = checker(path)
+                findings += found
+                summary.append(f"{count} {what}")
     except UsageError as error:
         print(f"check_pins: {error}", file=sys.stderr)
         return 2

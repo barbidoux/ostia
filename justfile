@@ -113,8 +113,8 @@ audit:
     cargo audit --deny warnings --file fuzz/Cargo.lock
     uv lock --locked
     mkdir -p target/supply
-    uv export --quiet --frozen --all-groups --no-emit-project --format requirements-txt --output-file target/supply/requirements.txt
-    python3 tools/supply/check_pins.py --pyproject pyproject.toml --requirements target/supply/requirements.txt
+    uv export --quiet --frozen --all-groups --all-extras --no-emit-project --format requirements-txt --output-file target/supply/requirements.txt
+    python3 tools/supply/check_pins.py --pyproject pyproject.toml --requirements target/supply/requirements.txt --lock uv.lock
     uv run pip-audit --strict --require-hashes --disable-pip --requirement target/supply/requirements.txt
     uv run cyclonedx-py environment --pyproject pyproject.toml --output-file target/supply/python-environment.cdx.json .venv
     uv run python tools/supply/python_licences.py --sbom target/supply/python-environment.cdx.json

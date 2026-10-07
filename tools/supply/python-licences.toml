@@ -1,5 +1,11 @@
 # Licence metadata of the Python dependencies that is not plain SPDX, reviewed by hand (NFR-11, Q-28).
-# Read by tools/supply/python_licences.py; the allowlist itself is [licenses] allow in deny.toml.
+# Read by tools/supply/python_licences.py; the base allowlist is [licenses] allow in deny.toml.
+# Every entry is a licence decision for the owner.
+
+[allow]
+# Permissive licences allowed for the Python dependencies only, never for Rust crates (Q-29):
+# MIT-0 (cffi), 0BSD (chardet), PSF-2.0 (typing_extensions, defusedxml).
+python-only = ["MIT-0", "0BSD", "PSF-2.0"]
 
 [aliases]
 # Trove classifiers that name exactly one SPDX licence.
