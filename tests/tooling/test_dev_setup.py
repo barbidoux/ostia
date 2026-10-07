@@ -63,8 +63,34 @@ TOOLS = {
         "--version",
         f"cargo-fuzz {PINNED['CARGO_FUZZ_VERSION']}",
     ),
+    "cargo-deny": (
+        "see docs/dev-setup.md",
+        "--version",
+        f"cargo-deny {PINNED.get('CARGO_DENY_VERSION', 'not pinned')}",
+    ),
+    "cargo-audit": (
+        "see docs/dev-setup.md",
+        "--version",
+        f"cargo-audit {PINNED.get('CARGO_AUDIT_VERSION', 'not pinned')}",
+    ),
+    "cargo-cyclonedx": (
+        "see docs/dev-setup.md",
+        "cyclonedx --version",
+        f"cargo-cyclonedx-cyclonedx {PINNED.get('CARGO_CYCLONEDX_VERSION', 'not pinned')}",
+    ),
 }
-USER_TOOLS = ("rustup", "rustc", "cargo", "uv", "just", "cargo-nextest", "cargo-fuzz")
+USER_TOOLS = (
+    "rustup",
+    "rustc",
+    "cargo",
+    "uv",
+    "just",
+    "cargo-nextest",
+    "cargo-fuzz",
+    "cargo-deny",
+    "cargo-audit",
+    "cargo-cyclonedx",
+)
 COREUTILS = ["grep", "cmp", "head", "id", "cat", "tr", "sed", "cut", "sort"]
 
 
@@ -196,8 +222,26 @@ def test_check_refuses_an_old_python(tmp_path: Path) -> None:
         ("just", f"just {PINNED['JUST_VERSION']}-rc1", PINNED["JUST_VERSION"]),
         ("rustc", f"rustc {RUST}-nightly (x 2026-01-01)", RUST),
         ("cargo-fuzz", "cargo-fuzz 0.12.0", PINNED["CARGO_FUZZ_VERSION"]),
+        ("cargo-deny", "cargo-deny 0.19.0", PINNED.get("CARGO_DENY_VERSION", "not pinned")),
+        ("cargo-audit", "cargo-audit 0.21.0", PINNED.get("CARGO_AUDIT_VERSION", "not pinned")),
+        (
+            "cargo-cyclonedx",
+            "cargo-cyclonedx-cyclonedx 0.5.7",
+            PINNED.get("CARGO_CYCLONEDX_VERSION", "not pinned"),
+        ),
     ],
-    ids=["just", "uv", "nextest", "rustc", "just pre-release", "rustc nightly", "cargo-fuzz"],
+    ids=[
+        "just",
+        "uv",
+        "nextest",
+        "rustc",
+        "just pre-release",
+        "rustc nightly",
+        "cargo-fuzz",
+        "cargo-deny",
+        "cargo-audit",
+        "cargo-cyclonedx",
+    ],
 )
 def test_check_enforces_pinned_versions(
     tmp_path: Path, tool: str, line: str, required: str

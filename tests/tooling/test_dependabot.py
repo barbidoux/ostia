@@ -83,6 +83,17 @@ def test_open_pull_requests_are_limited_to_two(ecosystem: str, directory: str) -
 
 
 @pytest.mark.req("TOOLING")
+def test_rails_workflow_is_left_to_the_owner() -> None:
+    # rails.yml is a rails file: a change by anyone but the owner fails `rails-verify`, so an update
+    # proposed by Dependabot could never pass CI (PR #11). The owner updates it with the rails kit.
+    entry = update("github-actions", "/")
+    assert entry.get("exclude-paths") == [".github/workflows/rails.yml"]
+    for ecosystem, directory in EXPECTED:
+        if ecosystem != "github-actions":
+            assert "exclude-paths" not in update(ecosystem, directory)
+
+
+@pytest.mark.req("TOOLING")
 @pytest.mark.parametrize(("ecosystem", "directory"), EXPECTED)
 def test_commits_read_build_deps(ecosystem: str, directory: str) -> None:
     message = update(ecosystem, directory).get("commit-message", {})

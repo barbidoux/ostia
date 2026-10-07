@@ -62,6 +62,8 @@ uv tool install "rust-just==${JUST_VERSION}"
 cargo install --locked "cargo-nextest@${NEXTEST_VERSION}" cargo-llvm-cov@0.9.1
 rustup toolchain install "${NIGHTLY_TOOLCHAIN}" --profile minimal   # fuzzing only (WP-0.6)
 cargo install --locked "cargo-fuzz@${CARGO_FUZZ_VERSION}"
+cargo install --locked "cargo-deny@${CARGO_DENY_VERSION}" "cargo-audit@${CARGO_AUDIT_VERSION}" \
+    "cargo-cyclonedx@${CARGO_CYCLONEDX_VERSION}"   # supply-chain gates (WP-0.8)
 uv sync
 uvx pre-commit@4.6.2 install --hook-type pre-commit --hook-type commit-msg
 ```
@@ -92,6 +94,24 @@ A crash input goes into `fuzz/regressions/` as a `.hex` file (hex digits, `#` co
 expected outcome to `crates/contracts/tests/fuzz_regressions.rs` and
 `workers-py/common/tests/test_fuzz_regressions.py`, which replay it on every `just test` (they fail until
 the new file is listed).
+
+## 6. Supply chain (UPD-07, NFR-11)
+
+`just audit` (part of `just check`) runs:
+- `cargo-deny` on both workspaces, with `deny.toml`: licence allowlist, crates.io only, advisories, bans;
+- `cargo-audit` on both lockfiles;
+- the Python pin check (`tools/supply/check_pins.py`): exact `==` in `pyproject.toml`, a sha256 hash on
+  every line of the requirements exported from `uv.lock`, and PyPI as the only source in `uv.lock`;
+- `pip-audit --require-hashes` on that export;
+- the Python licence check (`tools/supply/python_licences.py`): the `deny.toml` allowlist plus the
+  Python-only licences of `tools/supply/python-licences.toml` (MIT-0, 0BSD, PSF-2.0);
+- `just sbom`, which writes the CycloneDX SBOMs to `target/sbom`: one per crate under `crates/`, and one for
+  the Python runtime dependencies, installed with verified hashes.
+
+It needs the network: the RustSec advisory database and the PyPI vulnerability service. The tests stay
+offline. `deny.toml` is owner-gated. `tools/supply/python-licences.toml` holds licence decisions too:
+a test pins its content, so any change shows up as a failing test for the owner to accept. A dependency
+update whose licence metadata is not plain SPDX fails until its line in `python-licences.toml` is reviewed.
 
 ## WSL notes
 
