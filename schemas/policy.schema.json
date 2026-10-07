@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/barbidoux/ostia/schemas/policy/v1/policy.schema.json",
+  "title": "Ostia verdict policy",
+  "description": "Signed, declarative verdict policy (ADR-09). Semantics: docs/contracts/policy.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "version", "engines", "rules", "limits"],
+  "properties": {
+    "schema": {"const": "ostia.policy.v1"},
+    "version": {"type": "string", "minLength": 1, "maxLength": 64},
+    "engines": {
+      "type": "object",
+      "propertyNames": {"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},
+      "additionalProperties": {"$ref": "#/$defs/engine"}
+    },
+    "rules": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["R1", "R2", "R6"],
+      "properties": {
+        "R1": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["risky_types"],
+          "properties": {
+            "risky_types": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]*$"}
+            }
+          }
+        },
+        "R2": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["k", "critical_severity"],
+          "properties": {
+            "k": {"type": "integer", "minimum": 2},
+            "critical_severity": {"type": "integer", "minimum": 1, "maximum": 4}
+          }
+        },
+        "R6": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["double_extension", "extension_mismatch", "single_detection", "suspicious_hint"],
+          "properties": {
+            "double_extension": {"type": "boolean"},
+            "extension_mismatch": {"type": "boolean"},
+            "single_detection": {"type": "boolean"},
+            "suspicious_hint": {"type": "boolean"}
+          }
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_depth",
+        "max_ratio",
+        "max_total_bytes",
+        "max_entries",
+        "max_path_length",
+        "engine_timeout_seconds"
+      ],
+      "properties": {
+        "max_depth": {"type": "integer", "minimum": 1, "maximum": 64},
+        "max_ratio": {"type": "integer", "minimum": 1},
+        "max_total_bytes": {"type": "integer", "minimum": 1},
+        "max_entries": {"type": "integer", "minimum": 1},
+        "max_path_length": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "engine_timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 3600}
+      }
+    }
+  },
+  "$defs": {
+    "engine": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["role", "trusted_alone"],
+          "properties": {
+            "role": {"const": "detector"},
+            "trusted_alone": {"type": "boolean"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["role", "thresholds"],
+          "properties": {
+            "role": {"const": "scorer"},
+            "thresholds": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["low", "high"],
+              "properties": {
+                "low": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+                "high": {"type": "number", "exclusiveMinimum": 0, "maximum": 1}
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["role"],
+          "properties": {"role": {"enum": ["reputation", "heuristic"]}}
+        }
+      ]
+    }
+  }
+}

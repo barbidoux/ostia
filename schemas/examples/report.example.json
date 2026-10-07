@@ -1,0 +1,127 @@
+{
+  "report_version": "1.0.0",
+  "session": {"id": "6f1c2b9e-3d4a-4f8e-9b7a-0c5d2e1f3a4b", "mode": "compliant", "compliant": true},
+  "timing": {
+    "started": "2026-10-07T09:00:00Z",
+    "ended": "2026-10-07T09:00:04.250Z",
+    "max_scan_time_seconds": 600,
+    "on_expiry": "block",
+    "expired": false,
+    "aborted": false
+  },
+  "medium": {"image": "target/fixtures/example-ntfs.img", "size": 16777216, "file_system": "ntfs"},
+  "refusal": null,
+  "policy": {
+    "version": "2026.10.0",
+    "sha256": "3f0a8c1e5b2d4f6a7c9e0b1d3f5a7c9e1b3d5f7a9c0e2b4d6f8a0c2e4b6d8f0a"
+  },
+  "engines": [{"id": "fake-av", "version": "1.0.0", "content_version": "rules-1"}],
+  "objects": [
+    {
+      "id": "o1",
+      "parent_id": null,
+      "origin": "FILE",
+      "depth": 0,
+      "path": "docs/bundle.zip",
+      "stream": null,
+      "size": 222,
+      "sha256": "9a1c3e5f7b9d1f3a5c7e9b1d3f5a7c9e0b2d4f6a8c0e2b4d6f8a0c2e4b6d8f0a",
+      "sha1": "2b4d6f8a0c2e4b6d8f0a1c3e5f7b9d1f3a5c7e9b",
+      "modified": "2024-03-01T10:20:30Z",
+      "attributes": ["archive"],
+      "detected_type": "zip",
+      "extension_mismatch": false,
+      "double_extension": false,
+      "verdict": "CLEAN",
+      "rule": "R7",
+      "limit": null,
+      "score": null,
+      "contributing_engines": [],
+      "explanation": "R7: no rule matched; fake-av found nothing.",
+      "engine_results": [
+        {
+          "engine_id": "fake-av",
+          "engine_version": "1.0.0",
+          "content_version": "rules-1",
+          "status": "OK",
+          "hint": "CLEAN",
+          "score": null,
+          "findings": [],
+          "duration_ms": 5
+        }
+      ],
+      "transferable": true
+    },
+    {
+      "id": "o2",
+      "parent_id": "o1",
+      "origin": "EXTRACTED",
+      "depth": 1,
+      "path": "dir/a.txt",
+      "stream": null,
+      "size": 6,
+      "sha256": "c3d5f7a9b1d3f5a7c9e1b3d5f7a9c0e2b4d6f8a0c2e4b6d8f0a1c3e5f7b9d1f3",
+      "sha1": "4d6f8a0c2e4b6d8f0a1c3e5f7b9d1f3a5c7e9b1d",
+      "modified": null,
+      "attributes": [],
+      "detected_type": "unknown",
+      "extension_mismatch": false,
+      "double_extension": false,
+      "verdict": "CLEAN",
+      "rule": "R7",
+      "limit": null,
+      "score": null,
+      "contributing_engines": [],
+      "explanation": "R7: no rule matched; fake-av found nothing.",
+      "engine_results": [
+        {
+          "engine_id": "fake-av",
+          "engine_version": "1.0.0",
+          "content_version": "rules-1",
+          "status": "OK",
+          "hint": "CLEAN",
+          "score": null,
+          "findings": [],
+          "duration_ms": 4
+        }
+      ],
+      "transferable": false
+    },
+    {
+      "id": "o3",
+      "parent_id": "o1",
+      "origin": "ALT_STREAM",
+      "depth": 1,
+      "path": "docs/bundle.zip",
+      "stream": "Zone.Identifier",
+      "size": 26,
+      "sha256": "e5f7a9c0b2d4f6a8c0e2b4d6f8a0c2e4b6d8f0a1c3e5f7b9d1f3a5c7e9b1d3f5",
+      "sha1": "6f8a0c2e4b6d8f0a1c3e5f7b9d1f3a5c7e9b1d3f",
+      "modified": null,
+      "attributes": [],
+      "detected_type": "unknown",
+      "extension_mismatch": false,
+      "double_extension": false,
+      "verdict": "CLEAN",
+      "rule": "R7",
+      "limit": null,
+      "score": null,
+      "contributing_engines": [],
+      "explanation": "R7: no rule matched; fake-av found nothing.",
+      "engine_results": [
+        {
+          "engine_id": "fake-av",
+          "engine_version": "1.0.0",
+          "content_version": "rules-1",
+          "status": "OK",
+          "hint": "CLEAN",
+          "score": null,
+          "findings": [],
+          "duration_ms": 4
+        }
+      ],
+      "transferable": false
+    }
+  ],
+  "medium_verdict": {"verdict": "CLEAN", "blocked": false, "blocking_objects": [], "findings": []}
+}
