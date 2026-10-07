@@ -43,3 +43,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - a licence check of the Python dependencies.
 
   `just sbom` writes CycloneDX SBOMs of the shipped crates and of the Python runtime to `target/sbom`.
+- Test locking and red first (WP-0.9):
+  - A tooling test proves that a locked acceptance directory cannot change without its manifest.
+  - `tools/ci/red_first.py`, run by the `red-first` CI job on every pull request and by `just red-first`:
+    - each `test(<ID>)` commit's tests fail at that commit, for a valid reason;
+    - a later `feat`, `fix`, `build` or `ci` commit implements each id;
+    - only `test(...)` commits touch tests;
+    - every subject follows the commit convention.
+  - `docs/contracts/repository-settings.md` lists the GitHub settings the owner applies.
