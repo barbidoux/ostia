@@ -609,7 +609,12 @@ def test_sbom_generation_leaves_no_file_in_the_source_tree(generated: tuple[Path
         [tool("git"), "status", "--porcelain", "--untracked-files=all", "--ignored"], cwd=REPO
     )
     assert status.returncode == 0, status.stderr
-    leftovers = [line for line in status.stdout.splitlines() if line.endswith(".cdx.json")]
+    # target/ holds the SBOMs of `just audit` and `just sbom` on purpose; nothing may stay elsewhere.
+    leftovers = [
+        line
+        for line in status.stdout.splitlines()
+        if line.endswith(".cdx.json") and not line[3:].startswith("target/")
+    ]
     assert leftovers == []
 
 
@@ -629,7 +634,7 @@ AUDIT_STEPS = [
     "cargo audit --deny warnings --file fuzz/Cargo.lock",
     "uv lock --locked",
     (
-        "uv export --frozen --all-groups --no-emit-project --format requirements-txt "
+        "uv export --quiet --frozen --all-groups --no-emit-project --format requirements-txt "
         "--output-file target/supply/requirements.txt"
     ),
     (
