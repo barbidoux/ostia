@@ -16,7 +16,7 @@ Legend: `- [x] WP-x.y scope — branch` once merged. Gate: ticked by the owner a
 - [x] WP-0.5 Protobuf contracts v1 and framing libraries in Rust and Python: length prefix, size cap, version check (after: 0.1) — wp/0.5-protobuf-framing
 - [x] WP-0.6 Fuzz target for the frame decoder, wired into CI (short run per merge, long nightly) (after: 0.5) — wp/0.6-fuzz-frame-decoder
 - [x] WP-0.7 Test doubles: fake engine (configurable hint, score, delay, crash), fake clock, fake collector and fake pro... (after: 0.5) — wp/0.7-test-doubles
-- [ ] WP-0.8 Supply-chain gates: cargo-deny (licences, sources, advisories), cargo-audit, pip-audit with hash-pinned req... (after: 0.1)
+- [x] WP-0.8 Supply-chain gates: cargo-deny (licences, sources, advisories), cargo-audit, pip-audit with hash-pinned req... (after: 0.1) — wp/0.8-supply-chain-gates
 - [ ] WP-0.9 Test locking: hash manifest per tests/acceptance/pN/, CI check, CODEOWNERS rule; agent instructions file (s... (after: 0.4)
 - [x] WP-0.10 Decision records ADR-01 to ADR-13 in docs/adr/ (after: —) — wp/0.10-decision-records
 - [ ] WP-0.11 Spike: usbsas evaluation as media layer (licence review, process interface, performance on reference images... (after: 0.2)

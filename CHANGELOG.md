@@ -35,3 +35,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Test doubles (WP-0.7): a fake engine speaking the real framing (answers, delays, crashes, garbage by
   sha256, object id or type, from a JSON config), the `Clock` trait with a fake clock and a file-driven clock
   for dev builds, and loopback-only fake collector and fake provider skeletons (`tests/fakes/`).
+- Supply-chain gates (WP-0.8): `just audit`, part of `just check`, runs these checks:
+  - cargo-deny on both Rust workspaces (`deny.toml`: licence allowlist, crates.io only, advisories);
+  - cargo-audit;
+  - exact pins and sha256 hashes for every Python dependency, from PyPI only;
+  - pip-audit on the hash-pinned export of `uv.lock`;
+  - a licence check of the Python dependencies.
+
+  `just sbom` writes CycloneDX SBOMs of the shipped crates and of the Python runtime to `target/sbom`.

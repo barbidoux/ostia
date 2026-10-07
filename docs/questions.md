@@ -42,7 +42,69 @@ in the isolated gate run.
 Recommendation: (a): the gate run stays isolated, and the mapping is tested on a real gate report.
 Blocking: no (blocking for the P1 gate).
 
+### Q-30 · WP-0.8 · UPD-07 · unhashed pytest in rails.yml
+Context: `.github/workflows/rails.yml` (rails kit, owner-managed) runs
+`python -m pip install --disable-pip-version-check pytest==8.*`: neither pinned exactly nor hash-checked,
+which UPD-07 asks of every Python dependency. Agents may not edit the file;
+`tests/tooling/test_supply_chain.py::test_python_installs_verify_hashes` leaves it out by name.
+Options: (a) the owner pins it with a hash (`pip install --require-hashes -r` a two-line requirements file
+in the kit, or `uv tool run --from pytest==8.x.y`) at the next rails update (b) accept it: it only runs the
+kit's own self-tests on an isolated runner.
+Recommendation: (a), together with pinning `actions/setup-python` (see the Dependabot PR).
+Blocking: no.
+
+Also for the owner (WP-0.8): add `deny.toml` (and, if wanted, `tools/supply/python-licences.toml`) to the
+rails manifest and the guard, as prompts/P0.md plans ("after this package deny.toml is owner-gated").
+
 ## Answered
+
+### Q-29 · WP-0.8 · UPD-07, NFR-11 · licences allowed for the Python dependencies only
+Context: the review of WP-0.8 noted that MIT-0 (cffi, via cryptography), 0BSD (chardet, via cyclonedx-bom)
+and PSF-2.0 (typing_extensions, defusedxml) had been added to the shared allowlist of `deny.toml`, which
+would have allowed them for Rust crates too; approving a licence is an owner act.
+Options: (a) Python only: `deny.toml` keeps the brief's list plus MPL-2.0; the three licences go in
+`[allow] python-only` of `tools/supply/python-licences.toml` (b) everywhere (c) refuse.
+Recommendation: (a).
+Blocking: yes (licence).
+Answer (2026-10-07): (a).
+
+### Q-28 · WP-0.8 · NFR-11 · licence check of the Python dependencies
+Context: the WP-0.8 scope names cargo-deny for licences (Rust only); NFR-11 asks for licence-checked dependencies.
+Options: (a) a stdlib script checks the licences in the CycloneDX SBOM of the Python environment against the
+`deny.toml` allowlist, with an explicit alias table for non-SPDX metadata; it fails on a missing or unknown licence
+(b) Rust only for now.
+Recommendation: (a).
+Blocking: yes (scope).
+Answer (2026-10-07): (a), in WP-0.8.
+
+### Q-27 · WP-0.8 · NFR-11 · network access of `just audit`
+Context: cargo-audit and cargo-deny fetch the RustSec advisory database (github.com/rustsec/advisory-db);
+pip-audit queries the PyPI vulnerability service. A new advisory then fails CI, even on an unrelated change.
+Options: (a) `just check` runs `just audit`, so any advisory blocks (fail closed); an advisory that does not apply
+is ignored one by one in `deny.toml`, with the owner's approval (b) licences and pins in `check`, advisories in a
+separate non-blocking job.
+Recommendation: (a). Tests stay offline (licences, sources, pins, SBOM).
+Blocking: yes (network).
+Answer (2026-10-07): (a).
+
+### Q-26 · WP-0.8 · UPD-07 · MPL-2.0 in the licence allowlist
+Context: MPL-2.0 is a file-level copyleft. No Rust dependency uses it today; the Python dev tools hypothesis,
+pathspec (via mypy), certifi and fqdn (via pip-audit) do.
+Options: (a) allow it everywhere, unmodified (b) Python dev tools only (c) refuse it.
+Recommendation: (a): unmodified MPL-2.0 code can be distributed in an Apache-2.0 product.
+Blocking: yes (licence).
+Answer (2026-10-07): (a).
+
+### Q-25 · WP-0.8 · UPD-07, NFR-11 · supply-chain tools
+Context: WP-0.8 needs cargo-deny 0.20.2 (MIT OR Apache-2.0), cargo-audit 0.22.2 (Apache-2.0 OR MIT) and
+cargo-cyclonedx 0.5.9 (Apache-2.0), installed with `cargo install --locked` and pinned in `tools/dev/versions.env`,
+and pip-audit 2.10.1 (Apache-2.0) and cyclonedx-bom 7.5.0 (Apache-2.0) in a new uv dependency group `audit`,
+hash-locked in `uv.lock`. Their dependencies are MIT, BSD, Apache-2.0, ISC, PSF-2.0, 0BSD and MPL-2.0 (certifi,
+fqdn). None of them is shipped.
+Options: (a) approve all (b) Rust tools only.
+Recommendation: (a).
+Blocking: yes (new tools).
+Answer (2026-10-07): (a).
 
 ### Q-24 · WP-0.6 · NFR-06 · CI time budget for fuzzing
 Context: the repository is public (free Actions minutes) but the owner prefers to limit CI use.
