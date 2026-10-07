@@ -605,16 +605,15 @@ def test_python_sbom_lists_runtime_dependencies_only(generated: tuple[Path, str]
 @pytest.mark.req("NFR-11")
 def test_sbom_generation_leaves_no_file_in_the_source_tree(generated: tuple[Path, str]) -> None:
     produced(generated)
-    status = run(
-        [tool("git"), "status", "--porcelain", "--untracked-files=all", "--ignored"], cwd=REPO
+    # cargo-cyclonedx writes `<crate>.cdx.json` next to the Cargo.toml of every workspace member.
+    metadata = run(
+        [tool("cargo"), "metadata", "--format-version", "1", "--no-deps", "--locked"], cwd=REPO
     )
-    assert status.returncode == 0, status.stderr
-    # target/ holds the SBOMs of `just audit` and `just sbom` on purpose; nothing may stay elsewhere.
-    leftovers = [
-        line
-        for line in status.stdout.splitlines()
-        if line.endswith(".cdx.json") and not line[3:].startswith("target/")
-    ]
+    assert metadata.returncode == 0, metadata.stderr
+    members = [Path(p["manifest_path"]).parent for p in json.loads(metadata.stdout)["packages"]]
+    assert REPO / "crates" / "contracts" in members
+    assert REPO / "tests" / "fakes" / "clock" in members
+    leftovers = [str(path) for member in members for path in member.glob("*.cdx.json")]
     assert leftovers == []
 
 
