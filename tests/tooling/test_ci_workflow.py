@@ -175,8 +175,22 @@ def test_pull_requests_run_the_red_first_check_on_their_commits() -> None:
     assert "    if: github.event_name == 'pull_request'\n" in red
     assert "          fetch-depth: 0\n" in red
     check = step(red, "Red-first (each test commit fails before its implementation)")
-    assert 'python3 tools/ci/red_first.py --base "origin/${{ github.base_ref }}"' in check
+    assert (
+        check.strip() == 'run: python3 tools/ci/red_first.py --base "origin/${{ github.base_ref }}"'
+    )
     assert "continue-on-error" not in red
+    # A red test that never ends must not hold the job for GitHub's six-hour default.
+    assert "    timeout-minutes: 60\n" in red
+
+
+@pytest.mark.req("TOOLING")
+def test_red_first_runs_in_the_same_container_as_ci() -> None:
+    # Disk-image tests need loop devices: without them they would fail for the wrong reason.
+    assert re.search(
+        r"^    container:\n      image: debian:13\n      options: --privileged$",
+        job("red-first"),
+        re.MULTILINE,
+    )
 
 
 @pytest.mark.req("NFR-15")

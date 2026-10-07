@@ -74,8 +74,8 @@ def test_changing_a_locked_test_fails_verify(locked: Path) -> None:
     lock(locked)
     (locked / "test_answer.py").write_text(LOCKED_TEST.replace("6 * 7 == 42", "True"))
     result = verify(locked)
-    assert result.returncode != 0
-    assert "test_answer.py" in result.stdout + result.stderr
+    assert result.returncode == 1
+    assert "LOCK VIOLATION  p9: locked file changed: test_answer.py" in result.stdout
 
 
 @pytest.mark.req("TOOLING")
@@ -83,8 +83,8 @@ def test_adding_a_file_to_a_locked_directory_fails_verify(locked: Path) -> None:
     lock(locked)
     (locked / "helpers.py").write_text("ANSWER = 42\n")
     result = verify(locked)
-    assert result.returncode != 0
-    assert "helpers.py" in result.stdout + result.stderr
+    assert result.returncode == 1
+    assert "LOCK VIOLATION  p9: file added after lock: helpers.py" in result.stdout
 
 
 @pytest.mark.req("TOOLING")
@@ -92,8 +92,8 @@ def test_removing_a_locked_file_fails_verify(locked: Path) -> None:
     lock(locked)
     (locked / "test_answer.py").unlink()
     result = verify(locked)
-    assert result.returncode != 0
-    assert "test_answer.py" in result.stdout + result.stderr
+    assert result.returncode == 1
+    assert "LOCK VIOLATION  p9: locked file removed: test_answer.py" in result.stdout
 
 
 @pytest.mark.req("TOOLING")
@@ -115,6 +115,7 @@ def test_ci_runs_the_lock_verification() -> None:
     header = [line for line in check.stdout.splitlines() if line.startswith("check:")]
     assert len(header) == 1 and "verify-locks" in header[0].split()
     verify_recipe = run(["just", "--show", "verify-locks"], cwd=REPO)
+    assert verify_recipe.returncode == 0, verify_recipe.stderr
     assert "tools/lock/ostia_lock.py verify" in verify_recipe.stdout
     rails = (REPO / ".github" / "workflows" / "rails.yml").read_text()
     assert "python tools/lock/ostia_lock.py verify" in rails
