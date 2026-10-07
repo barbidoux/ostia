@@ -10,7 +10,7 @@ Usage: sbom.py --out target/sbom
 
 Everything runs offline: `uv --offline` from its cache, cargo with CARGO_NET_OFFLINE from the registry
 cache filled by the build. cargo-cyclonedx has no `--locked`, so `cargo metadata --locked` (full
-resolution) first proves that Cargo.lock is up to date. The member directories receive the generated files
+resolution, for the host platform) first proves that Cargo.lock is up to date. The member directories receive the generated files
 for a moment (cargo-cyclonedx has no output directory option).
 The timestamp comes from SOURCE_DATE_EPOCH, set to the last commit's time when not given.
 Exit codes: 0 written, 1 a step failed (its output on stderr).
@@ -48,8 +48,20 @@ def environment() -> dict[str, str]:
 
 
 def rust(out: Path, env: dict[str, str]) -> None:
-    # Full resolution with --locked: fails if Cargo.lock would change.
-    metadata = json.loads(run(["cargo", "metadata", "--format-version", "1", "--locked"], env))
+    # Full resolution with --locked: fails if Cargo.lock would change. Filtered to the host platform, the
+    # one cargo-cyclonedx describes: crates of other platforms (r-efi) are never downloaded by the build,
+    # so they are not in the offline cache.
+    host = next(
+        line.removeprefix("host: ")
+        for line in run(["rustc", "-vV"], env).splitlines()
+        if line.startswith("host: ")
+    )
+    metadata = json.loads(
+        run(
+            ["cargo", "metadata", "--format-version", "1", "--locked", "--filter-platform", host],
+            env,
+        )
+    )
     members = [
         package
         for package in metadata["packages"]
