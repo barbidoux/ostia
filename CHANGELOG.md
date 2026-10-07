@@ -32,3 +32,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   self-test that must catch a planted crash; `just test-fuzz` runs in CI on every push and pull request
   (60 s) and every night (30 min, growing corpus); regression inputs in `fuzz/regressions/` replay in
   `just test`.
+- Test doubles (WP-0.7): a fake engine speaking the real framing (answers, delays, crashes, garbage by
+  sha256, object id or type, from a JSON config), the `Clock` trait with a fake clock and a file-driven clock
+  for dev builds, and loopback-only fake collector and fake provider skeletons (`tests/fakes/`).

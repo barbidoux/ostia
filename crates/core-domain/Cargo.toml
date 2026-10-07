@@ -8,5 +8,8 @@ repository.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[dev-dependencies]
+ostia-traceability = { path = "../traceability" }
+
 [lints]
 workspace = true
