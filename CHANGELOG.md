@@ -54,4 +54,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - usbsas evaluation (WP-0.11), recorded in ADR-05:
   - covers licence, process interface, file systems, sandbox and maturity;
   - measures reading through usbsas against a kernel mount on FAT32, exFAT, NTFS and ext4 images;
-  - recommends keeping the kernel mount for 1.0, with a later hybrid as a candidate (proposed; Q-35).
+  - recommends keeping the kernel mount for 1.0, with a later hybrid as a candidate (accepted; Q-35).
+- P1 acceptance tests (WP-0.12), to be locked by the owner:
+  - contracts: the `ostia` command line (`docs/contracts/cli.md`, stub binary from `crates/ostia-cli`), the scan
+    report (`docs/contracts/report.md`, `schemas/report.schema.json`) and the signed verdict policy
+    (`docs/contracts/policy.md`, `schemas/policy.schema.json`);
+  - `tests/acceptance/p1` (416 black-box tests) and the shared helpers of `tests/acceptance/common`;
+  - CI builds the acceptance binary with the `ostia-cli/dev` feature, which release builds refuse.
