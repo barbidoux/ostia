@@ -140,6 +140,19 @@ def test_python_suite_excludes_bench_and_writes_junit() -> None:
     assert expected in lines
 
 
+@pytest.mark.req("NFR-14")
+def test_coverage_measures_the_shipped_code() -> None:
+    # NFR-14 is about the Rust core and the Python workers: the Rust summary is printed, and Python
+    # coverage is measured on the worker library, which the tests import (tools/ci runs as subprocesses
+    # of its tests and would always read 0 %).
+    lines = recipe("coverage")
+    assert "cargo llvm-cov report --summary-only" in lines
+    python = [line for line in lines if "run_pytest.py" in line]
+    assert len(python) == 1
+    assert "--cov=ostia_common" in python[0]
+    assert "--cov=tools/ci" not in python[0]
+
+
 @pytest.mark.req("TOOLING")
 @pytest.mark.parametrize("name", GATES)
 def test_gate_recipes_never_swallow_failures(name: str) -> None:
