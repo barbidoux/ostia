@@ -358,7 +358,8 @@ fn values_at_the_ends_of_their_ranges_load() {
 #[test]
 fn refusal_detail_is_one_short_line() {
     // A detail never carries the policy content verbatim: control characters are escaped, length capped.
-    let long = "a".repeat(10_000);
+    // Both are invalid type names (a control character; upper case), the second 10,000 characters long.
+    let long = "A".repeat(10_000);
     for value in [json!(["a\nb"]), json!([long])] {
         let error = load_signed(&set(&["rules", "R1", "risky_types"], value)).expect_err("refused");
         assert_eq!(error.refusal, Refusal::Invalid);
