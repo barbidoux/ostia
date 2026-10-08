@@ -6,7 +6,8 @@ the generator's manifest lists the same; a request the file system cannot honour
 Expected values are the literal plants of this file. They are read back without the generator: through the
 kernel or FUSE driver on a read-only mount (names, bytes, times, extended attributes, links),
 FAT_IOCTL_GET_ATTRIBUTES (FAT attributes), ntfsinfo and ntfscat (NTFS attributes and streams), a scan of the
-raw exFAT directory entries (exFAT attributes), blkid and fsck. Mounting needs the helper of
+raw exFAT directory entries (exFAT attributes and times), debugfs (ext extended attributes, also on ext2
+whose kernel driver may lack xattr support), blkid and fsck. Mounting needs the helper of
 docs/dev-setup.md, as in test_dev_images.py.
 """
 
@@ -21,6 +22,7 @@ import struct
 import subprocess
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -39,6 +41,7 @@ INSTALLED_HELPER = Path("/usr/local/sbin/ostia-loopmount")
 MOUNT_BASE = Path("/run/ostia-loopmount") / str(os.getuid())
 FIXTURES = REPO / "target" / "fixtures"
 SBIN_PATH = f"{os.environ.get('PATH', '')}:/usr/sbin:/sbin"
+MIB = 1 << 20
 
 FAT = ("fat12", "fat16", "fat32")
 EXT = ("ext2", "ext3", "ext4")
@@ -67,10 +70,18 @@ FSCK = {
 
 MODIFIED = "2024-03-01T10:20:30Z"
 LATER = "2031-12-24T23:58:58Z"
-EPOCH = {MODIFIED: 1_709_288_430, LATER: 1_955_923_138}
+EARLIEST = "1980-01-01T00:00:00Z"
+LATEST = "2037-12-31T23:59:58Z"
+EPOCH = {
+    MODIFIED: 1_709_288_430,
+    LATER: 1_955_923_138,
+    EARLIEST: 315_532_800,
+    LATEST: 2_145_916_798,
+}
 RLO = chr(0x202E)  # RIGHT-TO-LEFT OVERRIDE: "invoice<RLO>fdp.exe" displays as "invoiceexe.pdf"
 BEL = chr(0x07)
-HIDDEN, READ_ONLY = 0x02, 0x01  # FAT and exFAT attribute bits
+E_ACUTE = "\N{LATIN SMALL LETTER E WITH ACUTE}"
+HIDDEN, READ_ONLY, SYSTEM = 0x02, 0x01, 0x04  # FAT and exFAT attribute bits
 FAT_IOCTL_GET_ATTRIBUTES = 0x80047210
 
 
@@ -101,15 +112,20 @@ class Plant:
         return (HIDDEN if self.hidden else 0) | (READ_ONLY if self.read_only else 0)
 
 
-BIG = (bytes(range(251)) * 4178)[
-    : 1_048_576 + 3
-]  # more than 1 MiB, not a multiple of any block size
+# More than 1 MiB, not a multiple of any block size.
+BIG = (bytes(range(251)) * 4178)[: 1_048_576 + 3]
 ZONE = b"[ZoneTransfer]\r\nZoneId=3\r\n"
 ATTRIBUTES = [
     Plant("hid.txt", b"hidden attribute", hidden=True),
     Plant("ro.txt", b"read-only attribute", read_only=True),
     Plant("both.txt", b"hidden and read-only", hidden=True, read_only=True),
     Plant("plain.txt", b"no attribute"),
+    Plant("docs/h.txt", b"hidden in a directory", hidden=True),
+]
+# An exFAT directory spilling over several 4 KiB clusters (three 32-byte entries per file), the hidden
+# file last.
+CROWD = [Plant(f"crowd/f{i:03}.txt", b"") for i in range(150)] + [
+    Plant("crowd/zz.txt", b"hidden after the crowd", hidden=True)
 ]
 STREAMS = [
     Plant("host.txt", b"host of streams", streams={"Zone.Identifier": ZONE, "bin": b"\0\1\2"}),
@@ -125,6 +141,8 @@ LINKS = [
     Plant("docs/inside", symlink="../readme.txt"),
     Plant("dangling", symlink="missing/target", modified=LATER),
 ]
+# Names FAT and exFAT drivers would rewrite (trailing dots and spaces), kept as given elsewhere.
+TRAILING = [Plant("trap.pdf.", b"trailing dot"), Plant("trap.txt ", b"trailing space")]
 
 
 def plants(fs: str) -> list[Plant]:
@@ -135,15 +153,22 @@ def plants(fs: str) -> list[Plant]:
         Plant("big.bin", BIG),
         Plant("photo.jpg.exe", b"MZ double extension"),
         Plant(".dotfile", b"dot file\n", modified=LATER),
-        Plant("n" * 200 + ".txt", b"long name"),
+        Plant("n" * 251 + ".txt", b"longest name: 255 units"),
         Plant(f"invoice{RLO}fdp.exe", b"trapped name"),
-        Plant("caf\N{LATIN SMALL LETTER E WITH ACUTE}.txt", b"accent"),
+        Plant(f"caf{E_ACUTE}.txt", b"accent"),
+        Plant("now.txt", b"no time requested", modified=None),
+        Plant("t-min.txt", b"earliest time", modified=EARLIEST),
+        Plant("t-max.txt", b"latest time", modified=LATEST),
     ]
     if fs in EXT:
-        return files + XATTRS + LINKS + [Plant(f"bell{BEL}.txt", b"control character")]
-    if fs == "ntfs":
-        return files + ATTRIBUTES + STREAMS + [Plant(f"bell{BEL}.txt", b"control character")]
-    return files + ATTRIBUTES
+        files += XATTRS + LINKS + TRAILING + [Plant(f"bell{BEL}.txt", b"control character")]
+    elif fs == "ntfs":
+        files += ATTRIBUTES + STREAMS + TRAILING + [Plant(f"bell{BEL}.txt", b"control character")]
+    elif fs == "exfat":
+        files += ATTRIBUTES + CROWD
+    else:
+        files += ATTRIBUTES
+    return files
 
 
 def loopmount(*args: str) -> subprocess.CompletedProcess[str]:
@@ -177,15 +202,26 @@ def mount_ro(image: Path, names: list[str]) -> Path:
     return MOUNT_BASE / name
 
 
-def listing(root: Path) -> dict[str, os.stat_result]:
-    """Every entry under root that is not a directory, by relative path, links not followed."""
+def listing(root: Path) -> tuple[dict[str, os.stat_result], set[str]]:
+    """Entries under root that are not directories (links not followed) and directories, by relative
+    path."""
     found: dict[str, os.stat_result] = {}
+    directories: set[str] = set()
     for directory, dirs, files in os.walk(root, followlinks=False):
-        links = [d for d in dirs if os.path.islink(os.path.join(directory, d))]
-        for entry in [*files, *links]:
+        for entry in dirs:
+            path = os.path.join(directory, entry)
+            if os.path.islink(path):
+                found[os.path.relpath(path, root)] = os.lstat(path)
+            else:
+                directories.add(os.path.relpath(path, root))
+        for entry in files:
             path = os.path.join(directory, entry)
             found[os.path.relpath(path, root)] = os.lstat(path)
-    return found
+    return found, directories
+
+
+def parents(paths: list[str]) -> set[str]:
+    return {"/".join(p.split("/")[:n]) for p in paths for n in range(1, p.count("/") + 1)}
 
 
 def tool(*args: str) -> subprocess.CompletedProcess[bytes]:
@@ -239,8 +275,9 @@ def test_image_mounts_and_holds_exactly_the_planted_files(
 ) -> None:
     files, image = image_of(fs)
     root = mount_ro(image, mounted)
-    found = listing(root)
+    found, directories = listing(root)
     assert sorted(found) == sorted(p.path for p in files)
+    assert directories - {"lost+found"} == parents([p.path for p in files])
     for plant in files:
         entry = found[plant.path]
         if plant.symlink is None:
@@ -249,8 +286,10 @@ def test_image_mounts_and_holds_exactly_the_planted_files(
         else:
             assert stat.S_ISLNK(entry.st_mode), plant.path
             assert os.readlink(root / plant.path) == plant.symlink, plant.path
-        assert plant.modified is not None
-        assert entry.st_mtime == EPOCH[plant.modified], plant.path
+        if plant.modified is None:
+            assert EPOCH[EARLIEST] <= entry.st_mtime <= EPOCH[LATEST], plant.path
+        else:
+            assert entry.st_mtime == EPOCH[plant.modified], plant.path
 
 
 @pytest.mark.req("TOOLING")
@@ -267,33 +306,73 @@ def test_fat_attributes_are_planted(
             (bits,) = struct.unpack("I", fcntl.ioctl(fd, FAT_IOCTL_GET_ATTRIBUTES, b"\0" * 4))
         finally:
             os.close(fd)
-        assert bits & (HIDDEN | READ_ONLY) == plant.attribute_bits(), plant.path
+        assert bits & (HIDDEN | READ_ONLY | SYSTEM) == plant.attribute_bits(), plant.path
 
 
-def exfat_attributes(image: Path, name: str) -> int:
-    """FileAttributes of the file entry whose name entry holds `name` (at most 15 characters, unique in the
-    image): the file entry is two entries before its first name entry."""
+@dataclass(frozen=True)
+class ExfatEntry:
+    attributes: int
+    modified: datetime
+
+
+def exfat_time(timestamp: int, offset: int) -> datetime:
+    """A File entry's timestamp and UtcOffset field as an instant; no valid offset reads as UTC."""
+    moment = datetime(
+        1980 + (timestamp >> 25),
+        (timestamp >> 21) & 0x0F,
+        (timestamp >> 16) & 0x1F,
+        (timestamp >> 11) & 0x1F,
+        (timestamp >> 5) & 0x3F,
+        (timestamp & 0x1F) * 2,
+        tzinfo=UTC,
+    )
+    if offset & 0x80:
+        quarters = offset & 0x7F
+        quarters = quarters - 0x80 if quarters & 0x40 else quarters
+        moment -= timedelta(minutes=15 * quarters)
+    return moment
+
+
+def exfat_entries(image: Path) -> dict[str, list[ExfatEntry]]:
+    """Every in-use file entry set of the image, found by scanning its 32-byte entries (not by walking the
+    directories as the generator does), by name."""
     data = image.read_bytes()
-    needle = bytes([0xC1, 0x00]) + name.encode("utf-16-le")
-    entries = []
-    start = 0
-    while (found := data.find(needle, start)) != -1:
-        if found % 32 == 0 and data[found - 64] == 0x85 and data[found - 32] == 0xC0:
-            entries.append(found - 64)
-        start = found + 1
-    assert len(entries) == 1, f"{name}: {len(entries)} file entries"
-    return int.from_bytes(data[entries[0] + 4 : entries[0] + 6], "little")
+    found: dict[str, list[ExfatEntry]] = {}
+    for offset in range(0, len(data) - 96, 32):
+        if data[offset] != 0x85 or data[offset + 32] != 0xC0:
+            continue
+        secondary = data[offset + 1]
+        units = data[offset + 35]
+        encoded = b"".join(
+            data[name + 2 : name + 32]
+            for name in range(offset + 64, offset + 32 * (secondary + 1), 32)
+            if data[name] == 0xC1
+        )
+        if len(encoded) < 2 * units or secondary < 2:
+            continue
+        name = encoded[: 2 * units].decode("utf-16-le", "replace")
+        timestamp = int.from_bytes(data[offset + 12 : offset + 16], "little")
+        found.setdefault(name, []).append(
+            ExfatEntry(
+                attributes=int.from_bytes(data[offset + 4 : offset + 6], "little"),
+                modified=exfat_time(timestamp, data[offset + 23]),
+            )
+        )
+    return found
 
 
 @pytest.mark.req("TOOLING")
 @pytest.mark.slow
-def test_exfat_attributes_are_planted(image_of: Callable[[str], Built]) -> None:
+def test_exfat_attributes_and_times_are_planted(image_of: Callable[[str], Built]) -> None:
     files, image = image_of("exfat")
-    short = [plant for plant in files if len(plant.path) <= 15]
-    assert {p.path for p in ATTRIBUTES} <= {p.path for p in short}
-    for plant in short:
-        bits = exfat_attributes(image, plant.path)
-        assert bits & (HIDDEN | READ_ONLY) == plant.attribute_bits(), plant.path
+    entries = exfat_entries(image)
+    for plant in files:
+        matches = entries.get(plant.path.rsplit("/", 1)[-1], [])
+        assert len(matches) == 1, f"{plant.path}: {len(matches)} file entries"
+        bits = matches[0].attributes & (HIDDEN | READ_ONLY | SYSTEM)
+        assert bits == plant.attribute_bits(), plant.path
+        if plant.modified is not None:
+            assert matches[0].modified.timestamp() == EPOCH[plant.modified], plant.path
 
 
 def ntfs_info(image: Path, path: str) -> str:
@@ -334,32 +413,43 @@ def test_ntfs_attributes_are_planted(image_of: Callable[[str], Built]) -> None:
             plant.path,
             flags,
         )
+        assert "SYSTEM" not in flags, (plant.path, flags)
 
 
 @pytest.mark.req("TOOLING")
 @pytest.mark.slow
 def test_ntfs_alternate_data_streams_are_planted(image_of: Callable[[str], Built]) -> None:
-    _, image = image_of("ntfs")
-    assert ntfs_streams(image, "host.txt") == {"Zone.Identifier": ZONE, "bin": b"\0\1\2"}
-    assert ntfs_streams(image, "docs/carrier.txt") == {"payload": b"MZ in a stream"}
-    assert ntfs_streams(image, "readme.txt") == {}
+    files, image = image_of("ntfs")
+    assert {p.path for p in STREAMS} <= {p.path for p in files}
+    for plant in files:
+        assert ntfs_streams(image, plant.path) == plant.streams, plant.path
+
+
+def debugfs(image: Path, request: str) -> str:
+    """Output of one debugfs request; debugfs exits 0 on errors, so anything on stderr but its banner
+    fails."""
+    result = tool("debugfs", "-R", request, str(image))
+    errors = [
+        line for line in result.stderr.decode().splitlines() if not line.startswith("debugfs ")
+    ]
+    assert result.returncode == 0 and errors == [], (request, errors)
+    return result.stdout.decode()
 
 
 def ext_user_xattrs(image: Path, path: str, scratch: Path) -> dict[str, bytes]:
     """The user.* attributes of a file, read with debugfs: no mount, since a kernel ext2 driver built
     without xattr support (the WSL2 kernel's) hides them."""
-    listed = tool("debugfs", "-R", f"ea_list /{path}", str(image))
-    assert listed.returncode == 0, listed.stderr.decode()
+    # Quoted: debugfs drops a trailing space of an unquoted argument.
+    listed = debugfs(image, f'ea_list "/{path}"')
     names = [
-        line.split(" (", 1)[0].strip()
-        for line in listed.stdout.decode().splitlines()
-        if line.startswith("  user.")
+        line.split(" (", 1)[0].strip() for line in listed.splitlines() if line.startswith("  user.")
     ]
+    assert ("Extended attributes:" in listed) == bool(names), (path, listed)
     values = {}
     for name in names:
         out = scratch / "value"
-        got = tool("debugfs", "-R", f"ea_get -f {out} /{path} {name}", str(image))
-        assert got.returncode == 0, got.stderr.decode()
+        out.unlink(missing_ok=True)
+        debugfs(image, f'ea_get -f "{out}" "/{path}" "{name}"')
         values[name] = out.read_bytes()
     return values
 
@@ -373,6 +463,22 @@ def test_ext_extended_attributes_are_planted(
     files, image = image_of(fs)
     for plant in (p for p in files if p.symlink is None):
         assert ext_user_xattrs(image, plant.path, tmp_path) == plant.xattrs, plant.path
+
+
+@pytest.mark.req("TOOLING")
+@pytest.mark.slow
+@pytest.mark.parametrize("fs", ["ext3", "ext4"])
+def test_ext_extended_attributes_are_read_by_the_kernel_driver(
+    image_of: Callable[[str], Built], mounted: list[str], fs: str
+) -> None:
+    files, image = image_of(fs)
+    root = mount_ro(image, mounted)
+    for plant in (p for p in files if p.symlink is None):
+        path = root / plant.path
+        names = sorted(n for n in os.listxattr(path) if n.startswith("user."))
+        assert names == sorted(plant.xattrs), plant.path
+        for name, value in plant.xattrs.items():
+            assert os.getxattr(path, name) == value, (plant.path, name)
 
 
 @pytest.mark.req("TOOLING")
@@ -417,16 +523,26 @@ def test_same_request_is_served_from_the_cache() -> None:
 
 
 @pytest.mark.req("TOOLING")
+@pytest.mark.slow
 def test_different_requests_give_different_images() -> None:
-    images = {
-        Path(build_image("ext4", specs(A))),
-        Path(build_image("ext4", specs(A, Plant("b.txt", b"b")))),
-        Path(build_image("ext4", specs(Plant("a.txt", b"A")))),
-        Path(build_image("ext4", specs(Plant("a.txt", b"a", modified=LATER)))),
-        Path(build_image("ext4", specs(Plant("a.txt", b"a", xattrs={"user.c": b"x"})))),
-        Path(build_image("ext2", specs(A))),
-    }
-    assert len(images) == 6
+    requests = [
+        ("ext4", specs(A)),
+        ("ext4", specs(A, Plant("b.txt", b"b"))),
+        ("ext4", specs(Plant("a.txt", b"A"))),
+        ("ext4", specs(Plant("a.txt", b"a", modified=LATER))),
+        ("ext4", specs(Plant("a.txt", b"a", modified=None))),
+        ("ext4", specs(Plant("a.txt", b"a", xattrs={"user.c": b"x"}))),
+        ("ext4", specs(Plant("l", symlink="x"))),
+        ("ext4", specs(Plant("l", symlink="y"))),
+        ("ext2", specs(A)),
+        ("fat16", specs(A)),
+        ("fat16", specs(Plant("a.txt", b"a", hidden=True))),
+        ("fat16", specs(Plant("a.txt", b"a", read_only=True))),
+        ("ntfs", specs(A)),
+        ("ntfs", specs(Plant("a.txt", b"a", streams={"s": b"x"}))),
+    ]
+    images = {Path(build_image(fs, files)) for fs, files in requests}
+    assert len(images) == len(requests)
 
 
 def with_key(key: str, value: object) -> list[dict[str, Any]]:
@@ -441,8 +557,21 @@ def without_key(key: str) -> list[dict[str, Any]]:
     return [spec]
 
 
+# Every key a file system cannot hold, with every such file system: refused before anything is built.
+UNSUPPORTED: dict[str, tuple[tuple[str, ...], Plant]] = {
+    "hidden": (EXT, Plant("a.txt", b"a", hidden=True)),
+    "read-only": (EXT, Plant("a.txt", b"a", read_only=True)),
+    "stream": ((*FAT, "exfat", *EXT), Plant("a.txt", b"a", streams={"s": b"x"})),
+    "xattr": ((*FAT, "exfat", "ntfs"), Plant("a.txt", b"a", xattrs={"user.c": b"x"})),
+    "symlink": ((*FAT, "exfat", "ntfs"), Plant("l", symlink="a.txt")),
+}
+
 # (id, file system, request): each is refused with ImageRequestError and leaves nothing behind.
 REFUSED: list[tuple[str, str, Any]] = [
+    (f"{key}-on-{fs}", fs, specs(plant))
+    for key, (systems, plant) in UNSUPPORTED.items()
+    for fs in systems
+] + [
     ("unknown-fs", "hfsplus", specs(A)),
     ("files-not-a-list", "ext4", "a.txt"),
     ("file-not-a-dict", "ext4", ["a.txt"]),
@@ -456,6 +585,7 @@ REFUSED: list[tuple[str, str, Any]] = [
     ("streams-list", "ntfs", with_key("streams", [("s", b"x")])),
     ("stream-value-str", "ntfs", with_key("streams", {"s": "x"})),
     ("xattrs-none", "ext4", with_key("xattrs", None)),
+    ("xattr-value-str", "ext4", with_key("xattrs", {"user.c": "x"})),
     ("symlink-bytes", "ext4", with_key("symlink", b"a")),
     ("modified-int", "ext4", with_key("modified", 1_709_288_430)),
     ("absolute-path", "ext4", specs(Plant("/etc/a.txt", b"a"))),
@@ -467,22 +597,17 @@ REFUSED: list[tuple[str, str, Any]] = [
     ("nul-in-path", "ext4", specs(Plant("a\0.txt", b"a"))),
     ("duplicate-path", "ext4", specs(A, Plant("a.txt", b"b"))),
     ("file-under-file", "ext4", specs(Plant("a", b"a"), Plant("a/b", b"b"))),
-    ("hidden-on-ext", "ext4", specs(Plant("a.txt", b"a", hidden=True))),
-    ("read-only-on-ext", "ext3", specs(Plant("a.txt", b"a", read_only=True))),
-    ("stream-on-ext", "ext4", specs(Plant("a.txt", b"a", streams={"s": b"x"}))),
-    ("stream-on-fat", "fat32", specs(Plant("a.txt", b"a", streams={"s": b"x"}))),
-    ("stream-on-exfat", "exfat", specs(Plant("a.txt", b"a", streams={"s": b"x"}))),
+    ("file-under-link", "ext4", specs(Plant("l", symlink="/tmp"), Plant("l/x", b"x"))),
     ("stream-name-colon", "ntfs", specs(Plant("a.txt", b"a", streams={"s:t": b"x"}))),
+    ("stream-name-slash", "ntfs", specs(Plant("a.txt", b"a", streams={"s/t": b"x"}))),
+    ("stream-name-nul", "ntfs", specs(Plant("a.txt", b"a", streams={"s\0": b"x"}))),
     ("stream-name-empty", "ntfs", specs(Plant("a.txt", b"a", streams={"": b"x"}))),
-    ("xattr-on-ntfs", "ntfs", specs(Plant("a.txt", b"a", xattrs={"user.c": b"x"}))),
-    ("xattr-on-fat", "fat16", specs(Plant("a.txt", b"a", xattrs={"user.c": b"x"}))),
     ("xattr-not-user", "ext4", specs(Plant("a.txt", b"a", xattrs={"trusted.c": b"x"}))),
     ("xattr-empty-name", "ext4", specs(Plant("a.txt", b"a", xattrs={"user.": b"x"}))),
-    ("symlink-on-ntfs", "ntfs", specs(Plant("l", symlink="a.txt"))),
-    ("symlink-on-fat", "fat12", specs(Plant("l", symlink="a.txt"))),
     ("symlink-with-content", "ext4", specs(Plant("l", b"x", symlink="a.txt"))),
     ("symlink-with-xattr", "ext4", specs(Plant("l", symlink="a.txt", xattrs={"user.c": b"x"}))),
     ("symlink-empty", "ext4", specs(Plant("l", symlink=""))),
+    ("symlink-nul", "ext4", specs(Plant("l", symlink="a\0b"))),
     ("odd-seconds", "fat16", specs(Plant("a.txt", b"a", modified="2024-03-01T10:20:31Z"))),
     ("offset", "ext4", specs(Plant("a.txt", b"a", modified="2024-03-01T10:20:30+01:00"))),
     ("fraction", "ext4", specs(Plant("a.txt", b"a", modified="2024-03-01T10:20:30.5Z"))),
@@ -492,10 +617,20 @@ REFUSED: list[tuple[str, str, Any]] = [
     ("control-on-fat", "fat16", specs(Plant(f"bell{BEL}.txt", b"a"))),
     ("control-on-exfat", "exfat", specs(Plant(f"bell{BEL}.txt", b"a"))),
     ("reserved-on-fat", "fat32", specs(Plant("what?.txt", b"a"))),
+    ("trailing-dot-fat", "fat16", specs(Plant("trap.pdf.", b"a"))),
+    ("trailing-dot-exfat", "exfat", specs(Plant("trap.pdf.", b"a"))),
+    ("trailing-dots-dir-fat", "fat32", specs(Plant("dir../a.txt", b"a"))),
+    ("trailing-space-fat", "fat12", specs(Plant("trap.txt ", b"a"))),
+    ("trailing-space-exfat", "exfat", specs(Plant("trap.txt ", b"a"))),
     ("case-collision-fat", "fat16", specs(Plant("A.txt", b"a"), A)),
     ("case-collision-exfat", "exfat", specs(Plant("A.txt", b"a"), A)),
     ("case-collision-dir", "fat32", specs(Plant("Docs/a.txt", b"a"), Plant("docs/b.txt", b"b"))),
-    ("name-too-long", "ext4", specs(Plant("n" * 256, b"a"))),
+    ("name-too-long-ext", "ext4", specs(Plant("n" * 256, b"a"))),
+    ("name-too-long-bytes-ext", "ext4", specs(Plant(E_ACUTE * 128, b"a"))),
+    ("name-too-long-fat", "fat32", specs(Plant("n" * 256, b"a"))),
+    ("name-too-long-exfat", "exfat", specs(Plant("n" * 256, b"a"))),
+    ("name-too-long-ntfs", "ntfs", specs(Plant("n" * 256, b"a"))),
+    ("too-big-for-fat12", "fat12", specs(Plant("big.bin", bytes(17 * MIB)))),
 ]
 
 
@@ -504,12 +639,12 @@ REFUSED: list[tuple[str, str, Any]] = [
 def test_request_the_file_system_cannot_honour_is_refused(fs: str, files: object) -> None:
     FIXTURES.mkdir(parents=True, exist_ok=True)
     before = set(FIXTURES.iterdir())
-    mounts_before = set(MOUNT_BASE.iterdir()) if MOUNT_BASE.is_dir() else set()
     with pytest.raises(ImageRequestError):
         build_image(fs, cast("list[dict[str, Any]]", files))
     assert set(FIXTURES.iterdir()) == before
-    mounts_after = set(MOUNT_BASE.iterdir()) if MOUNT_BASE.is_dir() else set()
-    assert mounts_after == mounts_before
+    # Mounts of this process only: other runs may use the helper at the same time.
+    left = list(MOUNT_BASE.glob(f"fixture-{os.getpid()}-*")) if MOUNT_BASE.is_dir() else []
+    assert left == []
 
 
 @pytest.mark.req("TOOLING")
