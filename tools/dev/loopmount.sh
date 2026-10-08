@@ -14,7 +14,12 @@
 # cannot be swapped for a device between the check and the use. The loop device is read-only for `ro`;
 # the file system type is read from the loop device. Mounts get noexec,nosuid,nodev (and ro for `ro`);
 # the effective per-mount options are verified. Runs are serialised per user with a lock. The kernel driver is used when the kernel offers the file system, otherwise the
-# FUSE driver (exfat-fuse, ntfs-3g) runs on the loop device.
+# FUSE driver (exfat-fuse) runs on the loop device; NTFS always goes through ntfs-3g, ext2/3/4 through the
+# ext4 driver (ADR-17).
+#
+# Exit codes: 0 mounted (the last line names the file system as fat12, fat16, fat32, exfat, ntfs, ext2,
+# ext3 or ext4, and the mount point), 1 failure, 2 refused arguments, 3 not root, 4 unsupported or
+# unrecognised file system (nothing mounted).
 #
 # Residual risk, accepted for development use: root parses the caller's image (libblkid, the kernel or
 # FUSE file-system driver). The production mount helper is WP-4.5.
@@ -204,25 +209,39 @@ fail("no free loop device")
 PY
 )"
 
+# The file system is reported in the report's vocabulary (report.md `medium.file_system`): the mount layer
+# never reads the image itself (SEC-05, docs/questions.md Q-46).
 fs="$(blkid -p -o value -s TYPE -- "$loop" || true)"
+variant="$fs"
 case "$fs" in
-    vfat) module=vfat kernel_type=vfat fuse="" ;;
+    vfat)
+        module=vfat kernel_type=vfat fuse=""
+        case "$(blkid -p -o value -s VERSION -- "$loop" || true)" in
+            FAT12) variant=fat12 ;;
+            FAT16) variant=fat16 ;;
+            FAT32) variant=fat32 ;;
+            *) fail "FAT file system of unknown version in $image" ;;
+        esac
+        ;;
     exfat) module=exfat kernel_type=exfat fuse=mount.exfat-fuse ;;
-    ntfs) module=ntfs3 kernel_type=ntfs3 fuse=ntfs-3g ;;
-    ext2 | ext3 | ext4) module="$fs" kernel_type="$fs" fuse="" ;;
-    *) fail "unsupported or unrecognised file system '${fs:-none}' in $image" ;;
+    # ntfs-3g shows alternate data streams as user.* attributes; the kernel ntfs3 driver does not.
+    ntfs) module="" kernel_type="" fuse=ntfs-3g ;;
+    # The ext2 driver may be built without xattr support (WSL2); the ext4 driver reads all three (Q-45).
+    ext2 | ext3 | ext4) module=ext4 kernel_type=ext4 fuse="" ;;
+    *)
+        echo "loopmount: unsupported file system '${fs:-none}' in $image" >&2
+        exit 4
+        ;;
 esac
 
-kernel_has() { grep -qw -- "$1" /proc/filesystems || modprobe -q -- "$1" 2>/dev/null; }
+kernel_has() { [[ -n "$1" ]] && { grep -qw -- "$1" /proc/filesystems || modprobe -q -- "$1" 2>/dev/null; }; }
 
-if [[ "$mode" == rw-image && "$fs" == ntfs ]] && command -v ntfs-3g >/dev/null; then
-    driver=fuse # alternate data streams are planted through ntfs-3g
-elif kernel_has "$module"; then
+if kernel_has "$module"; then
     driver=kernel
 elif [[ -n "$fuse" ]] && command -v "$fuse" >/dev/null; then
     driver=fuse
 else
-    fail "the kernel has no $module module${fuse:+ and $fuse is not installed}: cannot mount $fs" \
+    fail "no driver for $variant (${module:+kernel module $module}${module:+${fuse:+, }}${fuse:+$fuse})" \
         "(see tools/dev/setup-debian.sh --check)"
 fi
 
@@ -247,12 +266,12 @@ if [[ ! -d "$mount_point" ]]; then
 fi
 if [[ "$driver" == kernel ]]; then
     mount --no-canonicalize -t "$kernel_type" -o "$options" -- "$loop" "$mount_point" ||
-        fail "mounting $image ($fs, kernel driver) failed"
+        fail "mounting $image ($variant, kernel driver) failed"
     mounted=1
 else
     # The FUSE driver stays running as a daemon: it must not inherit the lock.
     "$fuse" -o "$options" "$loop" "$mount_point" {lock_fd}>&- ||
-        fail "mounting $image ($fs, fuse driver) failed"
+        fail "mounting $image ($variant, fuse driver) failed"
     mounted=1
     # FUSE drivers do not all apply the generic flags: set them on the mount itself.
     mount --no-canonicalize -o "remount,bind,$required" -- "$mount_point" ||
@@ -263,4 +282,4 @@ for flag in ${required//,/ }; do
     [[ ",$effective," == *",$flag,"* ]] || fail "$mount_point lacks $flag (effective: $effective)"
 done
 done=1
-echo "loopmount: mounted $image ($fs, $driver driver, $options) on $mount_point"
+echo "loopmount: mounted $image ($variant, $driver driver, $options) on $mount_point"
