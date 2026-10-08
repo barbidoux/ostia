@@ -145,9 +145,28 @@ fn rejected_device_blocks_in_every_mode() {
             findings: vec![MediumFinding::DeviceRejected],
             ..state(mode)
         };
+        // D1 aborts the session: UNSCANNABLE and blocked, whatever the objects.
         let medium = verdict_of(&[Clean], &rejected);
-        assert!(medium.blocked, "{mode:?}");
+        assert_eq!(summary(&medium), (Unscannable, true, vec![]), "{mode:?}");
         assert_eq!(medium.findings, [MediumFinding::DeviceRejected]);
+        let empty = verdict_of(&[], &rejected);
+        assert_eq!(summary(&empty), (Unscannable, true, vec![]), "{mode:?}");
+    }
+}
+
+#[req("FR-10")]
+#[test]
+fn refused_input_is_blocked_in_every_mode() {
+    for mode in [Mode::Compliant, Mode::Selective, Mode::ScanOnly] {
+        let refused = SessionState {
+            refused: true,
+            ..state(mode)
+        };
+        assert_eq!(
+            summary(&verdict_of(&[], &refused)),
+            (Unscannable, true, vec![]),
+            "{mode:?}"
+        );
     }
 }
 
@@ -323,6 +342,45 @@ fn scan_only_and_aborted_sessions_transfer_nothing() {
 
 #[req("FR-10")]
 #[test]
+fn rejected_device_or_refused_input_transfers_nothing_even_in_selective_mode() {
+    let m = medium();
+    for state in [
+        SessionState {
+            findings: vec![MediumFinding::DeviceRejected],
+            ..state(Mode::Selective)
+        },
+        SessionState {
+            refused: true,
+            ..state(Mode::Selective)
+        },
+    ] {
+        assert_eq!(
+            transferable_with(&m, &state, &[]),
+            BTreeSet::new(),
+            "{state:?}"
+        );
+    }
+}
+
+#[req("FR-10")]
+#[test]
+fn objects_without_a_verdict_are_not_clean() {
+    let m = medium();
+    let mut verdicts: BTreeMap<ObjectId, Verdict> = m.tree.iter().map(|n| (n.id, Clean)).collect();
+    // Selective mode, so that a missing verdict does not block the medium through medium_verdict.
+    let selective = state(Mode::Selective);
+    verdicts.remove(&m.a);
+    verdicts.remove(&m.inner);
+    let pairs: Vec<(ObjectId, Verdict)> = verdicts.iter().map(|(&id, &v)| (id, v)).collect();
+    let medium = medium_verdict(&pairs, &selective);
+    assert_eq!(
+        transferable(&m.tree, &verdicts, &selective, &medium),
+        BTreeSet::from([m.readme])
+    );
+}
+
+#[req("FR-10")]
+#[test]
 fn expired_selective_scan_transfers_the_clean_files() {
     let m = medium();
     let expired = SessionState {
@@ -349,6 +407,15 @@ fn links_and_unsafe_paths_are_never_transferable() {
             ..file("link")
         })
         .expect("root");
+    let special = tree
+        .insert_file(NewObject {
+            kind: Kind::Special,
+            size: 0,
+            sha256: None,
+            sha1: None,
+            ..file("fifo")
+        })
+        .expect("root");
     let unsafe_paths: Vec<ObjectId> = [
         "../escape.txt",
         "/etc/passwd",
@@ -369,5 +436,6 @@ fn links_and_unsafe_paths_are_never_transferable() {
     let chosen = transferable(&tree, &verdicts, &selective, &medium);
     assert_eq!(chosen, BTreeSet::from([safe]));
     assert!(!chosen.contains(&link));
+    assert!(!chosen.contains(&special));
     assert!(unsafe_paths.iter().all(|id| !chosen.contains(id)));
 }

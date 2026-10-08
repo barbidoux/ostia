@@ -121,7 +121,7 @@ pub struct Policy {
     /// `rules.R1.risky_types`.
     pub risky_types: BTreeSet<String>,
     /// `rules.R2.k`.
-    pub k: u32,
+    pub k: u64,
     /// `rules.R2.critical_severity`.
     pub critical_severity: u32,
     /// The R6 indicators the policy enables (`rules.R6`).
@@ -177,6 +177,8 @@ pub struct SessionState {
     pub expired: bool,
     /// The session stopped (expiry action `abort`, D1).
     pub aborted: bool,
+    /// The input was refused (exit 4): nothing was analysed.
+    pub refused: bool,
     /// Device-level findings.
     pub findings: Vec<MediumFinding>,
 }

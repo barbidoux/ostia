@@ -157,7 +157,7 @@ impl Policy {
             }
         }
         let detections = untrusted_detections(reads);
-        if u32::try_from(detections.len()).is_ok_and(|n| n >= self.k) {
+        if u64::try_from(detections.len()).is_ok_and(|n| n >= self.k) {
             engines.extend(detections);
         }
         (!engines.is_empty()).then(|| {

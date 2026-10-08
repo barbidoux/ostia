@@ -260,7 +260,7 @@ fn validate(file: PolicyFile, sha256: [u8; 32]) -> Result<Policy, PolicyError> {
         sha256,
         engines,
         risky_types,
-        k: r2.k,
+        k: u64::from(r2.k),
         critical_severity: r2.critical_severity,
         r6,
         limits: limits(&file.limits)?,

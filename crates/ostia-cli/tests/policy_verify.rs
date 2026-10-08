@@ -57,10 +57,7 @@ fn signed(dir: &Path, policy: &[u8]) -> Files {
 
 fn verify(args: &[&Path]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ostia"));
-    command.args(["policy", "verify"]);
-    for pair in args.chunks(2) {
-        command.arg(pair[0]).arg(pair[1]);
-    }
+    command.args(["policy", "verify"]).args(args);
     command.output().expect("the ostia binary runs")
 }
 
@@ -152,6 +149,25 @@ fn malformed_signature_or_key_is_refused_on_the_signature() {
 
 #[req("FR-09")]
 #[test]
+fn valid_signature_or_key_with_one_more_byte_is_refused() {
+    // The files are read whole up to one byte past their size: a trailing byte is never cut off.
+    for name in ["signature-plus-one", "key-plus-one"] {
+        let dir = workdir(name);
+        let files = signed(&dir, POLICY.as_bytes());
+        let path = if name == "signature-plus-one" {
+            &files.signature
+        } else {
+            &files.trust
+        };
+        let mut bytes = std::fs::read(path).expect("read");
+        bytes.push(0);
+        std::fs::write(path, bytes).expect("write");
+        assert_refused(&run(&flags(&files)), "policy_signature_invalid");
+    }
+}
+
+#[req("FR-09")]
+#[test]
 fn signed_but_invalid_policy_is_refused_on_its_content() {
     let dir = workdir("invalid");
     let files = signed(&dir, POLICY.replace("\"k\": 2", "\"k\": 1").as_bytes());
@@ -160,12 +176,13 @@ fn signed_but_invalid_policy_is_refused_on_its_content() {
 
 #[req("FR-09")]
 #[test]
-fn policy_larger_than_1_mib_is_refused_on_its_content() {
+fn policy_larger_than_1_mib_is_refused_on_its_signature() {
+    // Its exact bytes are never read in full, so its signature cannot be verified (policy.md).
     let dir = workdir("oversize");
     let mut policy = POLICY.as_bytes().to_vec();
     policy.resize((1 << 20) + 1, b' ');
     let files = signed(&dir, &policy);
-    assert_refused(&run(&flags(&files)), "policy_invalid");
+    assert_refused(&run(&flags(&files)), "policy_signature_invalid");
 }
 
 #[req("FR-09")]
@@ -179,9 +196,54 @@ fn missing_flag_is_a_usage_error_naming_it() {
         let output = run(&args);
         assert_eq!(output.status.code(), Some(2), "{flag}");
         assert_eq!(output.stdout, b"", "{flag}");
+        // The first line is the reason; it names the flag as a whole word (the usage text after it
+        // names every flag).
         let message = stderr(&output);
-        assert!(message.starts_with("ostia: "), "{message:?}");
-        assert!(message.contains(flag), "{flag}: {message:?}");
+        let reason = message.lines().next().unwrap_or_default();
+        assert!(reason.starts_with("ostia: "), "{message:?}");
+        assert!(
+            reason.split_whitespace().any(|word| word == flag),
+            "{flag}: {reason:?}"
+        );
+    }
+}
+
+#[req("FR-09")]
+#[test]
+fn flag_given_twice_or_without_a_value_is_a_usage_error() {
+    let dir = workdir("twice");
+    let files = signed(&dir, POLICY.as_bytes());
+    let mut twice = flags(&files);
+    twice.extend(["--trust".into(), files.trust.clone()]);
+    let mut no_value = flags(&files);
+    no_value.push("--policy".into());
+    for args in [twice, no_value] {
+        let output = run(&args);
+        assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+        assert_eq!(output.stdout, b"");
+        let reason = stderr(&output);
+        let reason = reason.lines().next().unwrap_or_default();
+        assert!(
+            reason
+                .split_whitespace()
+                .any(|w| w == "--trust" || w == "--policy"),
+            "{reason:?}"
+        );
+    }
+}
+
+#[req("FR-09")]
+#[test]
+fn input_that_is_not_a_regular_file_is_a_usage_error() {
+    // A device or a directory is never read: /dev/zero would otherwise give a "key" of zeros.
+    let dir = workdir("not-a-file");
+    let files = signed(&dir, POLICY.as_bytes());
+    for (index, path) in [(5, PathBuf::from("/dev/zero")), (1, dir.clone())] {
+        let mut args = flags(&files);
+        args[index] = path;
+        let output = run(&args);
+        assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+        assert_eq!(output.stdout, b"");
     }
 }
 

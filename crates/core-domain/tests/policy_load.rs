@@ -239,6 +239,13 @@ fn signature_problems_are_refused_before_parsing() {
             [trusted.as_slice(), &[0]].concat(),
         ),
         ("all-zero key", good.to_vec(), vec![0; 32]),
+        // The identity point as key with R = identity and s = 0 verifies every message under a
+        // non-strict check: only verify_strict refuses it.
+        (
+            "identity key with the universal forgery",
+            [[1_u8].as_slice(), &[0; 63]].concat(),
+            [[1_u8].as_slice(), &[0; 31]].concat(),
+        ),
     ];
     for (name, signature, trusted_key) in cases {
         assert_eq!(
@@ -264,13 +271,100 @@ fn signed_document_that_is_not_json_is_invalid() {
 
 #[req("FR-09")]
 #[test]
-fn policy_larger_than_1_mib_is_refused() {
+fn policy_larger_than_1_mib_is_refused_on_its_signature() {
+    // Its exact bytes are never read in full, so its signature cannot be verified (policy.md).
     let mut data = bytes(&document());
     data.resize(MAX_POLICY_BYTES + 1, b' ');
-    assert_eq!(refusal_of(load_signed(&data)), Refusal::Invalid);
+    assert_eq!(refusal_of(load_signed(&data)), Refusal::SignatureInvalid);
+    let unsigned = load(&data, &[0; 64], &key().verifying_key().to_bytes());
+    assert_eq!(refusal_of(unsigned), Refusal::SignatureInvalid);
     let mut at_limit = bytes(&document());
     at_limit.resize(MAX_POLICY_BYTES, b' ');
     assert!(load_signed(&at_limit).is_ok(), "exactly 1 MiB is accepted");
+}
+
+#[req("FR-09")]
+#[test]
+fn null_is_refused_wherever_it_appears() {
+    // No key of the schema accepts null: an explicit null is not an absent key.
+    assert_invalid(vec![
+        (
+            "null trusted_alone on reputation",
+            set(&["engines", "rep", "trusted_alone"], Value::Null),
+        ),
+        (
+            "null thresholds on detector",
+            set(&["engines", "av-a", "thresholds"], Value::Null),
+        ),
+        (
+            "null trusted_alone on scorer",
+            set(&["engines", "ember", "trusted_alone"], Value::Null),
+        ),
+        ("null limit", set(&["limits", "max_depth"], Value::Null)),
+        ("null document", b"null".to_vec()),
+    ]);
+}
+
+#[req("FR-09")]
+#[test]
+fn values_at_the_ends_of_their_ranges_load() {
+    let mut low = document();
+    low["version"] = json!("v");
+    low["rules"]["R2"] = json!({"k": 2, "critical_severity": 1});
+    low["limits"] = json!({
+        "max_depth": 1, "max_ratio": 1, "max_total_bytes": 1, "max_entries": 1,
+        "max_path_length": 1, "engine_timeout_seconds": 1
+    });
+    let policy = load_signed(&bytes(&low)).expect("lowest values");
+    assert_eq!(
+        policy.limits,
+        Limits {
+            max_depth: 1,
+            max_ratio: 1,
+            max_total_bytes: 1,
+            max_entries: 1,
+            max_path_length: 1,
+            engine_timeout_seconds: 1,
+        }
+    );
+    assert_eq!((policy.k, policy.critical_severity), (2, 1));
+    let mut high = document();
+    let long_id = "e".repeat(64);
+    high["version"] = json!("v".repeat(64));
+    high["engines"][long_id.as_str()] = json!({"role": "heuristic"});
+    high["rules"]["R2"] = json!({"k": 5_000_000_000_u64, "critical_severity": 4});
+    high["limits"] = json!({
+        "max_depth": 64, "max_ratio": u64::MAX, "max_total_bytes": u64::MAX, "max_entries": u64::MAX,
+        "max_path_length": 65_535, "engine_timeout_seconds": 3600
+    });
+    let policy = load_signed(&bytes(&high)).expect("highest values");
+    assert_eq!(policy.version.len(), 64);
+    assert!(policy.engines.contains_key(&long_id));
+    assert_eq!(policy.k, 5_000_000_000);
+    assert_eq!(
+        policy.limits,
+        Limits {
+            max_depth: 64,
+            max_ratio: u64::MAX,
+            max_total_bytes: u64::MAX,
+            max_entries: u64::MAX,
+            max_path_length: 65_535,
+            engine_timeout_seconds: 3600,
+        }
+    );
+}
+
+#[req("FR-09")]
+#[test]
+fn refusal_detail_is_one_short_line() {
+    // A detail never carries the policy content verbatim: control characters are escaped, length capped.
+    let long = "a".repeat(10_000);
+    for value in [json!(["a\nb"]), json!([long])] {
+        let error = load_signed(&set(&["rules", "R1", "risky_types"], value)).expect_err("refused");
+        assert_eq!(error.refusal, Refusal::Invalid);
+        assert_eq!(error.detail.lines().count(), 1, "{:?}", error.detail);
+        assert!(error.detail.len() <= 200, "{} bytes", error.detail.len());
+    }
 }
 
 #[req("FR-09")]
