@@ -120,6 +120,20 @@ pub enum TreeError {
     Full,
 }
 
+/// Links and special files are never read (size 0, no hash); a read gives both hashes or, when it
+/// failed, neither.
+fn check_content(object: &NewObject) -> Result<(), TreeError> {
+    if object.kind != Kind::File
+        && (object.size != 0 || object.sha256.is_some() || object.sha1.is_some())
+    {
+        return Err(TreeError::LinkWithContent(object.kind));
+    }
+    if object.sha256.is_some() != object.sha1.is_some() {
+        return Err(TreeError::PartialHashes);
+    }
+    Ok(())
+}
+
 /// The objects of one medium.
 #[derive(Debug, Clone)]
 pub struct ObjectTree {
@@ -145,38 +159,47 @@ impl ObjectTree {
     /// Insert a file of the medium (depth 0).
     ///
     /// # Errors
-    /// [`TreeError::RootNotAFile`], [`TreeError::Full`].
+    /// [`TreeError::RootNotAFile`], [`TreeError::LinkWithContent`], [`TreeError::PartialHashes`],
+    /// [`TreeError::Full`].
     pub fn insert_file(&mut self, object: NewObject) -> Result<ObjectId, TreeError> {
         if object.origin != Origin::File {
             return Err(TreeError::RootNotAFile(object.origin));
         }
+        check_content(&object)?;
         self.push(None, 0, object)
     }
 
     /// Insert an object below `parent` (extracted entry, stream or attribute).
     ///
     /// # Errors
-    /// [`TreeError::UnknownParent`], [`TreeError::FileWithParent`], [`TreeError::TooDeep`],
-    /// [`TreeError::Full`].
+    /// [`TreeError::UnknownParent`], [`TreeError::ParentNotReadable`], [`TreeError::FileWithParent`],
+    /// [`TreeError::StreamWithoutHostFile`], [`TreeError::TooDeep`], [`TreeError::LinkWithContent`],
+    /// [`TreeError::PartialHashes`], [`TreeError::Full`].
     pub fn insert_child(
         &mut self,
         parent: ObjectId,
         object: NewObject,
     ) -> Result<ObjectId, TreeError> {
-        let parent_depth = self
-            .get(parent)
-            .ok_or(TreeError::UnknownParent(parent))?
-            .depth;
+        let host = self.get(parent).ok_or(TreeError::UnknownParent(parent))?;
+        if host.object.kind != Kind::File {
+            return Err(TreeError::ParentNotReadable(host.object.kind));
+        }
         if object.origin == Origin::File {
             return Err(TreeError::FileWithParent);
         }
-        let depth = parent_depth + 1;
+        if matches!(object.origin, Origin::AltStream | Origin::Xattr)
+            && host.object.origin != Origin::File
+        {
+            return Err(TreeError::StreamWithoutHostFile(host.object.origin));
+        }
+        let depth = host.depth + 1;
         if depth > self.max_depth {
             return Err(TreeError::TooDeep {
                 depth,
                 max_depth: self.max_depth,
             });
         }
+        check_content(&object)?;
         self.push(Some(parent), depth, object)
     }
 

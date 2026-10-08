@@ -54,6 +54,17 @@ pub enum Rule {
     R7,
 }
 
+/// The verdict a rule gives (spec §8, `docs/contracts/policy.md`): fixed by the specification, so a
+/// policy result that pairs a rule with another verdict is refused.
+fn verdict_of(rule: Rule) -> Verdict {
+    match rule {
+        Rule::R1 => Verdict::Unscannable,
+        Rule::R2 | Rule::R4 => Verdict::Malicious,
+        Rule::R3 | Rule::R7 => Verdict::Clean,
+        Rule::R5 | Rule::R6 => Verdict::Suspicious,
+    }
+}
+
 /// The limit that made an object UNSCANNABLE.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Limit {
@@ -104,7 +115,7 @@ pub enum VerdictError {
     /// An explanation that is empty or only white space.
     #[error("a verdict needs a non-empty explanation")]
     EmptyExplanation,
-    /// UNSCANNABLE comes only from R1, and R1 gives only UNSCANNABLE.
+    /// A rule paired with another verdict than the one the specification gives it.
     #[error("{verdict:?} cannot come from rule {rule:?}")]
     RuleMismatch {
         /// The verdict given.
@@ -140,7 +151,7 @@ impl ObjectVerdict {
         if explanation.trim().is_empty() {
             return Err(VerdictError::EmptyExplanation);
         }
-        if (verdict == Verdict::Unscannable) != (rule == Rule::R1) {
+        if verdict_of(rule) != verdict {
             return Err(VerdictError::RuleMismatch { verdict, rule });
         }
         Ok(Self {
@@ -169,6 +180,9 @@ impl ObjectVerdict {
         engines: I,
     ) -> Result<Self, VerdictError> {
         let mut engines: Vec<String> = engines.into_iter().map(Into::into).collect();
+        if engines.iter().any(String::is_empty) {
+            return Err(VerdictError::EmptyEngineId);
+        }
         engines.sort();
         engines.dedup();
         self.contributing_engines = engines;
