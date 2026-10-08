@@ -14,10 +14,16 @@ How each file system is populated (no block device is ever touched):
   FAT_IOCTL_SET_ATTRIBUTES, NTFS attributes with the `system.ntfs_attrib_be` attribute of ntfs-3g and NTFS
   alternate data streams as `user.<stream>` attributes of ntfs-3g. No exFAT driver sets attributes, so after
   unmounting the generator sets the bits in the file's directory entry set and recomputes its checksum.
-- Every image is checked with the file system's `fsck` in no-change mode before it is returned.
+- Every name the driver creates is looked up in its directory listing: a name the driver rewrote is a
+  refused request. FAT and exFAT names ending in a dot or a space are refused up front, since drivers
+  differ (vfat and kernel exfat strip trailing dots, fuse-exfat keeps them).
+- Every image is checked before it is returned: `fsck.vfat -n`, `fsck.exfat -n`, `e2fsck -f -n`, and for
+  NTFS `ntfsfix --no-action`, which checks less than an fsck (no full NTFS checker exists on Linux).
 
 Times: `modified` is `YYYY-MM-DDTHH:MM:SSZ` with even seconds (FAT holds two-second steps), from
-1980-01-01T00:00:00Z to 2037-12-31T23:59:58Z on every file system.
+1980-01-01T00:00:00Z to 2037-12-31T23:59:58Z on every file system: one range that every supported file
+system holds, so a request never depends on the file system (ext and NTFS hold more; such requests are
+refused, never approximated). A file without `modified` keeps the time it was written.
 
 Each image has a manifest next to it, `<image>.manifest.json`: the file system, the image name and, per
 planted file, its path, size, SHA-256, SHA-1, attributes, time, streams and extended attributes (size and
@@ -233,6 +239,12 @@ def _validate_path(fs: str, path: str) -> None:
         units = len(part.encode()) if fs in EXT else len(part.encode("utf-16-le")) // 2
         if units > NAME_UNITS:
             raise _refuse(f"{path!r}: a name of {fs} holds at most {NAME_UNITS} units")
+        # The Linux vfat driver strips trailing dots, the kernel exfat driver trailing dots too
+        # (fuse-exfat keeps them): refused on both, whatever the driver of the machine.
+        if fs in CASE_INSENSITIVE and part.endswith((".", " ")):
+            raise _refuse(
+                f"{path!r}: a {fs} name ending in a dot or a space is rewritten by drivers"
+            )
 
 
 def _validate_time(path: str, modified: object) -> str:
@@ -301,7 +313,9 @@ def _validate_tree(fs: str, plants: Sequence[_Plant]) -> None:
     if fs in CASE_INSENSITIVE:
         seen: dict[str, str] = {}
         for name in sorted(set(paths) | directories):
-            other = seen.setdefault(name.upper(), name)
+            # Simple, one-to-one upcasing as in the FAT and exFAT upcase tables ("ß" stays "ß").
+            folded = "".join(c.upper() if len(c.upper()) == 1 else c for c in name)
+            other = seen.setdefault(folded, name)
             if other != name:
                 raise _refuse(f"{other!r} and {name!r} are the same name on {fs}")
 
@@ -363,6 +377,12 @@ def _stage(root: Path, plant: _Plant) -> None:
             os.setxattr(target, name, value)
     if plant.epoch is not None:
         os.utime(target, (plant.epoch, plant.epoch), follow_symlinks=False)
+    # mkfs -d copies every attribute of the staged file: none may come from the host (SELinux labels,
+    # inherited ACLs).
+    if plant.symlink is None and set(os.listxattr(target)) != set(plant.xattrs):
+        raise RuntimeError(
+            f"the staging directory adds attributes to {plant.path!r}: {os.listxattr(target)}"
+        )
 
 
 # --- FAT, exFAT, NTFS: written through the driver on a rw-image mount -------------------------------
@@ -391,10 +411,27 @@ def _helper(*args: str) -> None:
 def _rw_mount(image: Path) -> Iterator[Path]:
     name = f"fixture-{os.getpid()}-{next(_mount_names)}"
     _helper("rw-image", str(image), name)
+    root = MOUNT_BASE / str(os.getuid()) / name
     try:
-        yield MOUNT_BASE / str(os.getuid()) / name
-    finally:
-        _helper("umount", name)
+        if not os.path.ismount(root):
+            raise RuntimeError(f"the helper reported a mount, but {root} is not a mount point")
+        yield root
+    except BaseException as error:
+        try:
+            _helper("umount", name)
+        except RuntimeError as unmount:
+            error.add_note(f"and the image could not be unmounted: {unmount}")
+        raise
+    _helper("umount", name)
+
+
+def _file_system_type(mount_point: Path) -> str:
+    """The type of the file system mounted on `mount_point` (the field after `-` in mountinfo)."""
+    for line in Path("/proc/self/mountinfo").read_text().splitlines():
+        fields = line.split()
+        if fields[4] == str(mount_point):
+            return fields[fields.index("-") + 1]
+    raise RuntimeError(f"{mount_point} is not in /proc/self/mountinfo")
 
 
 def _build_mounted(fs: str, plants: Sequence[_Plant], image: Path) -> None:
@@ -408,6 +445,10 @@ def _build_mounted(fs: str, plants: Sequence[_Plant], image: Path) -> None:
     if created.returncode != 0:
         raise RuntimeError(f"mkimage {fs} failed: {created.stderr.strip()}")
     with _rw_mount(image) as root:
+        # Streams and attributes are written through ntfs-3g's interfaces; the kernel ntfs3 driver would
+        # take `user.*` as NTFS extended attributes instead of streams.
+        if fs == "ntfs" and _file_system_type(root) != "fuseblk":
+            raise RuntimeError(f"NTFS is mounted with {_file_system_type(root)}, not ntfs-3g")
         for plant in plants:
             _write(fs, root, plant)
     if fs == "exfat":
@@ -433,8 +474,10 @@ def _write(fs: str, root: Path, plant: _Plant) -> None:
             directory = root.joinpath(*parts[:depth])
             if not directory.is_dir():
                 directory.mkdir()
+                _check_stored(fs, plant.path, directory)
         descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o644)
     with os.fdopen(descriptor, "wb") as out:
+        _check_stored(fs, plant.path, target)
         out.write(plant.content)
     for name, data in plant.streams.items():
         os.setxattr(target, f"user.{name}", data)
@@ -447,6 +490,13 @@ def _write(fs: str, root: Path, plant: _Plant) -> None:
         os.setxattr(target, NTFS_ATTRIBUTES, (current | plant.attribute_bits).to_bytes(4, "big"))
     if plant.epoch is not None and os.stat(target).st_mtime != plant.epoch:
         raise RuntimeError(f"{fs}: the time of {plant.path!r} did not hold")
+
+
+def _check_stored(fs: str, path: str, created: Path) -> None:
+    """The driver stored the name as given: any rewrite (stripped dots, changed case, substituted
+    characters) is a refused request."""
+    if created.name not in os.listdir(created.parent):
+        raise _refuse(f"{fs} stored {path!r} under another name")
 
 
 def _fat_add_attributes(path: Path, bits: int) -> None:
