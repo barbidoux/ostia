@@ -103,6 +103,18 @@ pub enum TreeError {
     /// A file of the medium is never below another object.
     #[error("an object of origin File cannot have a parent")]
     FileWithParent,
+    /// A symbolic link or special file is never read, so nothing hangs below it.
+    #[error("a {0:?} object is never read and cannot have children")]
+    ParentNotReadable(Kind),
+    /// An alternate data stream or extended attribute hangs on a file of the medium only.
+    #[error("a stream or attribute needs a file of the medium as its host, not {0:?}")]
+    StreamWithoutHostFile(Origin),
+    /// A symbolic link or special file is never read: size 0 and no hash.
+    #[error("a {0:?} object carries no content (size 0, no hash)")]
+    LinkWithContent(Kind),
+    /// SHA-256 and SHA-1 are computed together from the same read.
+    #[error("an object has both hashes or neither")]
+    PartialHashes,
     /// More objects than identifiers (2^32); the policy's entry limits stop extraction long before.
     #[error("the object tree is full")]
     Full,

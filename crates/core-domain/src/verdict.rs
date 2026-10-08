@@ -112,6 +112,9 @@ pub enum VerdictError {
         /// The rule given.
         rule: Rule,
     },
+    /// An engine id that is empty.
+    #[error("an engine id cannot be empty")]
+    EmptyEngineId,
     /// A limit is reported only on an UNSCANNABLE object.
     #[error("a limit is reported only on an UNSCANNABLE verdict, not {0:?}")]
     LimitWithoutUnscannable(Verdict),
@@ -158,13 +161,18 @@ impl ObjectVerdict {
     }
 
     /// The same verdict with the engines whose results made the rule match (sorted, without duplicates).
-    #[must_use]
-    pub fn with_engines<I: IntoIterator<Item = S>, S: Into<String>>(mut self, engines: I) -> Self {
+    ///
+    /// # Errors
+    /// [`VerdictError::EmptyEngineId`].
+    pub fn with_engines<I: IntoIterator<Item = S>, S: Into<String>>(
+        mut self,
+        engines: I,
+    ) -> Result<Self, VerdictError> {
         let mut engines: Vec<String> = engines.into_iter().map(Into::into).collect();
         engines.sort();
         engines.dedup();
         self.contributing_engines = engines;
-        self
+        Ok(self)
     }
 
     /// The same verdict with the limit that was reached.
