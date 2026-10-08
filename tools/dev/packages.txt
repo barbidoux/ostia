@@ -14,6 +14,8 @@ e2fsprogs
 fuse3
 mount
 util-linux
+# mkfs.minix (a file system outside FR-03 for the refusal tests); Debian ships it apart from util-linux
+util-linux-extra
 kmod
 # sandbox (P2), ClamAV engine (P3), deep analysis (P5)
 bubblewrap
