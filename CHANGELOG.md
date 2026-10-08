@@ -61,3 +61,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     (`docs/contracts/policy.md`, `schemas/policy.schema.json`);
   - `tests/acceptance/p1` (416 black-box tests) and the shared helpers of `tests/acceptance/common`;
   - CI builds the acceptance binary with the `ostia-cli/dev` feature, which release builds refuse.
+- Domain model (WP-1.1, `crates/core-domain`): verdicts with the worst-of order CLEAN < SUSPICIOUS <
+  UNSCANNABLE < MALICIOUS (ADR-16); object verdicts that pair each rule with the verdict of spec §8 and carry
+  score, contributing engines, explanation and limit; the object tree (files of the medium as roots, streams on
+  their host file, links never read, depth within the policy's limit); session, medium, device placeholder and
+  engine results.
