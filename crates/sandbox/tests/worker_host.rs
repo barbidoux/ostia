@@ -6,11 +6,13 @@
 //! Workers are small `/bin/sh` scripts written to a directory per test. Response frames are prepared with the
 //! contract encoder of `ostia-contracts` (WP-0.5) and written by the script with `cat`.
 
+use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
+use nix::fcntl::{FcntlArg, FdFlag, fcntl};
 use ostia_contracts::v1::{
     AnalyzeRequest, AnalyzeResponse, ContractVersion, Finding, Hint, Limits, Origin, Status,
 };
@@ -546,6 +548,27 @@ fn short_standard_error_is_kept_whole() {
     assert_synthesised(&done, Status::Error, &Failure::Exited(3), elapsed);
     assert_eq!(done.stderr, b"diag\n");
     assert!(!done.stderr_truncated);
+}
+
+#[req("CTR-01")]
+#[test]
+fn inheritable_descriptor_of_the_host_stops_the_launch() {
+    // nextest runs each test in a process of its own: the stray descriptor reaches no other test.
+    let scratch = Scratch::new();
+    let stray = std::fs::File::open(scratch.object()).expect("stray descriptor");
+    fcntl(&stray, FcntlArg::F_SETFD(FdFlag::empty())).expect("inheritable");
+    let worker = scratch.worker(r#"touch "$D/started""#);
+    let (done, elapsed) = run(&scratch, &worker, GENEROUS);
+    let named = format!("descriptor {}", stray.as_raw_fd());
+    drop(stray);
+    assert!(
+        matches!(&done.failure, Some(Failure::Spawn(reason)) if reason.contains(&named)),
+        "{:?}",
+        done.failure
+    );
+    let failure = done.failure.clone().expect("failure");
+    assert_synthesised(&done, Status::Error, &failure, elapsed);
+    assert!(!scratch.exists("started"), "the worker ran");
 }
 
 #[req("NFR-05")]
