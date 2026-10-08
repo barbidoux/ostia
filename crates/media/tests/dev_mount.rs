@@ -355,7 +355,10 @@ fn helper_killed_by_a_signal_is_a_helper_error() {
     assert!(error.to_string().contains("signal: 9"), "{error}");
 }
 
-const MOUNTED: &str = r#"[[ $1 == ro ]] && echo "loopmount: mounted $2 (ext4, kernel driver, ro,noexec) on /run/m/$3""#;
+// `if`, not `&&`: an `umount` call must end with status 0.
+const MOUNTED: &str = r#"if [[ $1 == ro ]]; then
+    echo "loopmount: mounted $2 (ext4, kernel driver, ro,noexec) on /run/m/$3"
+fi"#;
 
 #[req("FR-03")]
 #[test]
@@ -379,7 +382,7 @@ fn readable_answer_gives_a_mount_unmounted_once() {
 #[test]
 fn failed_unmount_is_reported_and_retried_when_dropped() {
     let fake = Fake::new(&format!(
-        "{MOUNTED}\n[[ $1 == umount ]] && {{ echo 'loopmount: target is busy' >&2; exit 1; }}"
+        "{MOUNTED}\nif [[ $1 == umount ]]; then echo 'loopmount: target is busy' >&2; exit 1; fi"
     ));
     let mounted = fake
         .layer
