@@ -73,6 +73,16 @@ Blocking: no.
 
 ## Answered
 
+### Q-41 · P0 gate · NFR-14 · which code the coverage thresholds apply to
+Context: at the P0 gate the Rust workspace total was 84.7 % against 90 %: the `ostia-cli` stub had no test and
+the `ostia-traceability` crate (the `#[req]` attribute, a dev-dependency never shipped) is at 78.5 %, its
+uncovered lines being compile-error paths that run inside rustc during `tests/tooling/test_req_attribute.py`,
+where cargo-llvm-cov cannot see them. `just coverage` measured `tools/ci`, run as subprocesses (always 0 %).
+Answer (owner, 2026-10-08, "solve all the remaining issues", applied by the agent): NFR-14 applies to the shipped
+code: the crates of `crates/` except `ostia-traceability`, and the hand-written code of `workers-py/` (protoc
+output excluded). `ostia-cli` gained usage tests (100 %); `just coverage` prints the Rust summary and measures
+`ostia_common`. Thresholds are enforced from WP-3.12 (NFR-14).
+
 ### Q-40 · WP-0.12 · — · the `dev` feature in lint and unit tests
 Context: `just lint` and `just test-rust` build without `ostia-cli/dev`, so code behind `cfg(feature = "dev")`
 (the `--dev-engine` path of WP-1.10) is neither linted nor unit-tested; the release guard keys on
