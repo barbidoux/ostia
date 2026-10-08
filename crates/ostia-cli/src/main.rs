@@ -33,6 +33,10 @@ fn main() -> ExitCode {
         eprintln!("ostia: not implemented: {name}");
         ExitCode::from(NOT_IMPLEMENTED)
     } else {
+        match args.first() {
+            Some(unknown) => eprintln!("ostia: unknown subcommand: {unknown}"),
+            None => eprintln!("ostia: missing subcommand"),
+        }
         eprintln!("{USAGE}");
         ExitCode::from(USAGE_ERROR)
     }
