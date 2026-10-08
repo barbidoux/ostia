@@ -1,8 +1,9 @@
 # ADR-14: Acceptance tests drive the product only through its public surfaces
 
-- Status: proposed (from the owner's rails: CLAUDE.md, .claude/rules/tests.md; awaiting the owner's acceptance)
+- Status: accepted (2026-10-08, P0 gate: the owner asked to settle every open gate item; the P1 acceptance tests
+  of WP-0.12 follow it)
 - Date: 2026-10-02
-- Deciders: Matthias Vaytet (owner), to accept
+- Deciders: Matthias Vaytet (owner)
 - Source: spec §18; CLAUDE.md "Acceptance tests are black-box"; `.claude/rules/tests.md`;
   `.claude/rules/contracts.md`; prompts/P0.md (WP-0.10, WP-0.12)
 

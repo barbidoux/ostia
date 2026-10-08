@@ -1,4 +1,4 @@
-# rails manifest, updated 2026-10-05T10:16:54+00:00
+# rails manifest, updated 2026-10-08T09:46:04+00:00
 # by barbidou
 155b0634b158f60cc9d541a217e48865d434b0ccab86b3ab150c401406817297  .claude/agents/reviewer.md
 faac6d29be3deaed7e5d41778a8f9b2cd842df128c78de02a85249cdf9b9bae4  .claude/agents/test-auditor.md
@@ -22,6 +22,7 @@ a50737d2ace2a742fc1eaebc8c4ee0248e69a191497ae90fcd7a71db651fed04  .github/workfl
 e6658bda6ecb5e23f8e278eb1967cb0e6d2d06ecd3befaa54d7ed54f56cf9aa2  AGENTS.md
 0cade00b70fa0e8ba236f54aa95657b0ef81eb3fb54248261ddb4aeac34dffdc  CLAUDE.md
 607123a0b91add487c852ce276ca42ab941fe2f60020d09a152cac863cf2b8a5  GUIDE-FR.md
+cd97782ac426f955856ba06eeeea568f457bf35ab249613e5c87cfc8cf40b6cc  deny.toml
 b1ad237bbce4422061990b5d73b220c1f0e0e2ce6eab872bff4f942fad807048  docs/plan.md
 b05e04d38c7bae98742c54ebb40b3b129131d4d27e54e778e15f20a5631db464  docs/spec.md
 ee26367978fe8a3cd9cb4f91fb8a5c829b764c063565ca144ec7b4dfcecab898  docs/unsafe-allowlist.md
