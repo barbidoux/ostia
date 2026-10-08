@@ -106,6 +106,7 @@ Blocking: no.
 Answer (owner, 2026-10-08, the recommendation): (a) at the lock: the owner adds `schemas/report.schema.json` and
 `schemas/policy.schema.json` to the rails manifest and the guard (owner-managed files), then (b) in a later tooling
 package.
+Status (P0 gate, 2026-10-08): not applied yet; `RAILS_FILES` and `PROTECTED_EXACT` do not list the schemas.
 
 ### Q-38 · WP-0.12 · NFR-17, FR-09 · where the EMBER thresholds come from
 Context: spec §8 says the EMBER high and low thresholds ship with the model in its signed bundle; the P1 policy
