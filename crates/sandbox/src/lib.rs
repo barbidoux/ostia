@@ -8,6 +8,10 @@
 //! status `ERROR` or `TIMEOUT` (docs/contracts/cli.md, "Synthesised engine results").
 //!
 //! P1 launches workers without isolation ([`Unconfined`]); P2's sandbox replaces it behind [`Launcher`].
+//!
+//! Invariant for the process embedding the host: nothing else reaps its children (no `SIGCHLD` set to
+//! ignore, no `waitpid(-1)` reaper). The host kills a worker's process group by the leader's id while the
+//! leader is an unreaped zombie, which keeps that id from being reused by another process.
 
 mod host;
 
@@ -156,7 +160,8 @@ pub struct WorkerRun {
     pub response: AnalyzeResponse,
     /// Why the response was synthesised, if it was.
     pub failure: Option<Failure>,
-    /// The start of the worker's standard error, at most the cap.
+    /// The start of the worker's standard error, at most the cap. It may hold anything the worker wrote, file
+    /// content included: log its length or hash, never the bytes.
     pub stderr: Vec<u8>,
     /// The worker wrote more standard error than the cap.
     pub stderr_truncated: bool,

@@ -14,7 +14,7 @@ use nix::errno::Errno;
 use nix::fcntl::{FcntlArg, OFlag, fcntl};
 use nix::sys::signal::{Signal, killpg};
 use nix::sys::wait::{Id, WaitPidFlag, waitid};
-use nix::unistd::Pid;
+use nix::unistd::{Pid, getpgid};
 use ostia_contracts::v1::{AnalyzeResponse, Hint, Status};
 use ostia_contracts::{ContractError, current_version, decode_response, read_frame};
 
@@ -31,7 +31,8 @@ pub(crate) fn check_no_inheritable_descriptor() -> Result<(), Failure> {
     let unreadable = |error: std::io::Error| {
         Failure::Spawn(format!("cannot list the host's descriptors: {error}"))
     };
-    let close_on_exec = u32::try_from(OFlag::O_CLOEXEC.bits()).unwrap_or(u32::MAX);
+    let close_on_exec = u32::try_from(OFlag::O_CLOEXEC.bits())
+        .map_err(|_| Failure::Spawn("cannot represent the close-on-exec flag".into()))?;
     let mut inheritable = Vec::new();
     for entry in std::fs::read_dir("/proc/self/fdinfo").map_err(unreadable)? {
         let entry = entry.map_err(unreadable)?;
@@ -57,16 +58,14 @@ pub(crate) fn check_no_inheritable_descriptor() -> Result<(), Failure> {
             .and_then(|value| u32::from_str_radix(value.trim(), 8).ok())
             .ok_or_else(|| Failure::Spawn(format!("cannot read the flags of descriptor {fd}")))?;
         if flags & close_on_exec == 0 {
-            inheritable.push(format!("descriptor {fd}"));
+            inheritable.push(fd);
         }
     }
     if inheritable.is_empty() {
         Ok(())
     } else {
-        Err(Failure::Spawn(format!(
-            "the worker would inherit the host's {}",
-            inheritable.join(", ")
-        )))
+        inheritable.sort_unstable();
+        Err(Failure::InheritedDescriptors(inheritable))
     }
 }
 
@@ -157,26 +156,24 @@ pub(crate) fn exchange(
         child.stderr.take(),
         i32::try_from(child.id()),
     ) else {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Outcome {
-            answer: Err(Failure::Spawn(
-                "the launcher did not pipe the standard streams".into(),
-            )),
-            stderr: Vec::new(),
-            stderr_truncated: false,
-        };
+        return refused(child, "the launcher did not pipe the standard streams");
     };
     let group = Pid::from_raw(raw_pid);
-    let (events, received) = mpsc::channel();
+    // Without a group of its own, killpg could not stop the worker's processes, nor the worker itself.
+    if getpgid(Some(group)) != Ok(group) {
+        return refused(child, "the worker does not lead its own process group");
+    }
+    // At most one answer and one exit are sent; a stderr reader sends one end.
+    let (events, received) = mpsc::sync_channel(2);
     write_request(stdin, frame);
     read_answer(stdout, limits.max_frame, events.clone());
     let (capture, stderr_done) = capture_stderr(stderr, limits.stderr_cap);
     watch_exit(group, events);
 
-    let deadline = started + limits.timeout;
-    let exchange = await_end(&received, group, deadline);
-    stop(group);
+    // A limit too far to represent is no limit.
+    let deadline = started.checked_add(limits.timeout);
+    let exchange = await_end(&received, group, &mut child, deadline);
+    stop(group, &mut child);
     let status = child.wait();
     let _ = stderr_done.recv_timeout(STDERR_GRACE);
     let capture = std::mem::take(&mut *capture.lock().unwrap_or_else(PoisonError::into_inner));
@@ -187,9 +184,25 @@ pub(crate) fn exchange(
     }
 }
 
+/// A launch the host does not run: the worker is killed and reaped, no answer is read.
+fn refused(mut child: Child, reason: &str) -> Outcome {
+    let _ = child.kill();
+    let _ = child.wait();
+    Outcome {
+        answer: Err(Failure::Spawn(reason.into())),
+        stderr: Vec::new(),
+        stderr_truncated: false,
+    }
+}
+
 /// Waits for both the answer and the worker's exit, or the deadline. The worker's group is killed as soon as
 /// the worker exits (a background process must not hold the output open) or its output is refused early.
-fn await_end(received: &mpsc::Receiver<Event>, group: Pid, deadline: Instant) -> Exchange {
+fn await_end(
+    received: &mpsc::Receiver<Event>,
+    group: Pid,
+    child: &mut Child,
+    deadline: Option<Instant>,
+) -> Exchange {
     let mut exchange = Exchange {
         answer: None,
         timed_out: false,
@@ -197,20 +210,27 @@ fn await_end(received: &mpsc::Receiver<Event>, group: Pid, deadline: Instant) ->
     };
     let mut exited = false;
     while !(exited && exchange.answer.is_some()) {
-        match received.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+        let event = match deadline {
+            Some(deadline) => {
+                received.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            }
+            None => received.recv().map_err(|_| RecvTimeoutError::Disconnected),
+        };
+        match event {
             Ok(Event::Exited) => {
                 exited = true;
-                stop(group);
+                stop(group, child);
             }
             Ok(Event::Answer(answer)) => {
                 if matches!(
                     answer,
-                    Err(ContractError::Oversized { .. }
+                    Err(ContractError::Empty
+                        | ContractError::Oversized { .. }
                         | ContractError::TrailingBytes
                         | ContractError::Io(_))
                 ) {
                     exchange.cut_short = true;
-                    stop(group);
+                    stop(group, child);
                 }
                 exchange.answer = Some(answer);
             }
@@ -258,10 +278,12 @@ fn classify(
     Ok(response)
 }
 
-/// Kills every process of the worker's group. The leader is never reaped before this, so its id still
-/// names this group; a group already gone is not an error.
-fn stop(group: Pid) {
+/// Kills every process of the worker's group, and the worker itself should the group signal fail (a worker
+/// under another user, say). The leader is never reaped before this, so its id still names this group; a
+/// group already gone is not an error.
+fn stop(group: Pid, child: &mut Child) {
     let _ = killpg(group, Signal::SIGKILL);
+    let _ = child.kill();
 }
 
 /// Writes the request frame and closes the worker's standard input. A worker that does not read it makes the
@@ -274,7 +296,7 @@ fn write_request(mut stdin: std::process::ChildStdin, frame: Vec<u8>) {
 
 /// Reads one frame's message from the worker's standard output, then expects the end of the output: the cap
 /// is checked before the message is read, and any byte after it is refused.
-fn read_answer(mut stdout: std::process::ChildStdout, cap: usize, events: mpsc::Sender<Event>) {
+fn read_answer(mut stdout: std::process::ChildStdout, cap: usize, events: mpsc::SyncSender<Event>) {
     std::thread::spawn(move || {
         let answer = read_frame(&mut stdout, cap).and_then(|body| {
             let mut extra = [0_u8; 1];
@@ -297,7 +319,7 @@ fn capture_stderr(
     cap: usize,
 ) -> (Arc<Mutex<Capture>>, mpsc::Receiver<()>) {
     let capture = Arc::new(Mutex::new(Capture::default()));
-    let (done, finished) = mpsc::channel();
+    let (done, finished) = mpsc::sync_channel(1);
     let shared = Arc::clone(&capture);
     std::thread::spawn(move || {
         let mut chunk = [0_u8; 8192];
@@ -323,7 +345,7 @@ fn capture_stderr(
 }
 
 /// Reports the leader's exit without reaping it (`WNOWAIT`), so the group can still be killed by its id.
-fn watch_exit(group: Pid, events: mpsc::Sender<Event>) {
+fn watch_exit(group: Pid, events: mpsc::SyncSender<Event>) {
     std::thread::spawn(move || {
         while let Err(Errno::EINTR) =
             waitid(Id::Pid(group), WaitPidFlag::WEXITED | WaitPidFlag::WNOWAIT)
