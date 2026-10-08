@@ -78,3 +78,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   attributes and symbolic links, checks them with fsck, caches them by request with a manifest, and refuses
   any request a file system cannot hold exactly. The development mount helper mounts FAT with `utf8` names
   and UTC times (Q-44).
+- Development mount layer (WP-1.4, `crates/media`): the `MediaAccess` trait and `DevLoopMount` mount a disk
+  image read-only through the development helper and report its file system (`fat12` … `ext4`); an image with
+  no file system or one outside FR-03 is refused as `unsupported_file_system`, a damaged one is a mount
+  failure. The helper reports the FAT version, exits 4 for an unsupported file system, mounts NTFS with
+  ntfs-3g and ext2/3/4 with the ext4 driver (Q-46, ADR-17 proposed).
