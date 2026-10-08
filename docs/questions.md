@@ -73,6 +73,16 @@ Blocking: no.
 
 ## Answered
 
+### Q-44 · WP-1.3 · FR-03, FR-04 · FAT names and times through the development mount helper
+Context: `tools/dev/loopmount.sh` mounted vfat with the kernel defaults: `iocharset=ascii` (Debian and Ubuntu
+kernels; utf8 off) and times in `sys_tz`. Through it, any FAT name outside ASCII (accents, the bidi override
+U+202E of a trapped name) was refused with EINVAL, both when the generator plants it (`rw-image`) and when
+WP-1.4 reads a medium (`ro`); FAT times followed the kernel's time zone instead of UTC (report.md reads FAT
+times as UTC). exFAT, NTFS and ext take UTF-8 names already.
+Options: (a) add `utf8,tz=UTC` to the vfat options of both modes in `loopmount.sh`; the owner re-installs the
+root-owned copy (b) add `mtools` and plant FAT without mounting (c) refuse non-ASCII FAT names until WP-1.4.
+Answer (owner, 2026-10-08): (a); the owner re-installs with `sudo tools/dev/setup-debian.sh --install`.
+
 ### Q-43 · WP-1.2 · FR-09, ADR-09 · dependencies of the policy loader
 Context: the loader verifies an Ed25519 signature over the exact policy bytes, parses strict JSON, and reports
 the policy's SHA-256 (`docs/contracts/policy.md`, `cli.md`).
