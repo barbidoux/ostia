@@ -12,7 +12,9 @@ message saying what to install; nothing is skipped. Mount points live under the 
 import errno
 import filecmp
 import hashlib
+import importlib
 import os
+import struct
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
@@ -105,7 +107,7 @@ def test_image_mounts_read_only_refuses_writes_and_unmounts(
     mounts.append(rw_name)
     mounted = loopmount("rw-image", str(disk), rw_name)
     assert mounted.returncode == 0, mounted.stdout + mounted.stderr
-    assert f"({blkid_type}, " in mounted.stdout
+    assert f"({fs_type}, " in mounted.stdout
     (MOUNT_BASE / rw_name / "marker.txt").write_text(marker)
     unmounted = loopmount("umount", rw_name)
     assert unmounted.returncode == 0, unmounted.stdout + unmounted.stderr
@@ -188,6 +190,194 @@ def test_fat_name_outside_ascii_is_written_and_read_back(tmp_path: Path, mounts:
     assert os.listdir(MOUNT_BASE / reader) == [planted]
     assert (MOUNT_BASE / reader / planted).read_bytes() == b"trapped name"
     assert loopmount("umount", reader).returncode == 0
+
+
+VARIANTS = ["fat12", "fat16", "fat32", "exfat", "ntfs", "ext2", "ext3", "ext4"]
+SIZES = {"fat32": 64}
+
+
+@pytest.mark.req("FR-03")
+@pytest.mark.parametrize("variant", VARIANTS)
+def test_mount_reports_the_file_system_in_the_report_vocabulary(
+    tmp_path: Path, mounts: list[str], variant: str
+) -> None:
+    # The mount layer reports what the helper's blkid found (SEC-05: it never reads the image itself);
+    # FAT12, FAT16 and FAT32 are told apart (report.md `medium.file_system`).
+    disk = tmp_path / "target" / f"{variant}.img"
+    mkimage(variant, SIZES.get(variant, 16), disk)
+    name = f"variant-{variant}-{os.getpid()}"
+    mounts.append(name)
+    mounted = loopmount("ro", str(disk), name)
+    assert mounted.returncode == 0, mounted.stdout + mounted.stderr
+    assert f" ({variant}, " in mounted.stdout, mounted.stdout
+    assert mounted.stdout.rstrip().endswith(f") on {MOUNT_BASE / name}"), mounted.stdout
+
+
+def blank(path: Path, size_mib: int = 4) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as image:
+        image.truncate(size_mib * 1024 * 1024)
+    return path
+
+
+@pytest.mark.req("FR-03")
+@pytest.mark.parametrize("kind", ["blank", "minix"])
+def test_unsupported_file_system_exits_4_and_mounts_nothing(
+    tmp_path: Path, mounts: list[str], kind: str
+) -> None:
+    disk = blank(tmp_path / "target" / f"{kind}.img")
+    if kind == "minix":
+        made = run(["mkfs.minix", "-3", str(disk)], cwd=REPO)
+        assert made.returncode == 0, made.stdout + made.stderr
+    name = f"unsupported-{kind}-{os.getpid()}"
+    mounts.append(name)
+    refused = loopmount("ro", str(disk), name)
+    assert refused.returncode == 4, refused.stdout + refused.stderr
+    expected = "none" if kind == "blank" else "minix"
+    assert f"loopmount: unsupported file system '{expected}'" in refused.stderr
+    assert not (MOUNT_BASE / name).exists()
+    assert attached_loops(disk) == ""
+
+
+GENERATOR = importlib.import_module("tests.fixtures.images")
+
+
+def file_system_type(mount_point: Path) -> str:
+    for line in Path("/proc/self/mountinfo").read_text().splitlines():
+        fields = line.split()
+        if fields[4] == str(mount_point):
+            return fields[fields.index("-") + 1]
+    raise AssertionError(f"{mount_point} is not in /proc/self/mountinfo")
+
+
+@pytest.mark.req("FR-03")
+@pytest.mark.parametrize("variant", ["ext2", "ext3"])
+def test_ext2_and_ext3_are_read_with_the_ext4_driver_and_their_attributes(
+    mounts: list[str], variant: str
+) -> None:
+    # The ext2 driver may be built without xattr support (WSL2): the ext4 driver reads all three
+    # (docs/questions.md Q-45, Q-46).
+    planted = {
+        "path": "tagged.txt",
+        "content": b"tagged",
+        "hidden": False,
+        "read_only": False,
+        "modified": None,
+        "streams": {},
+        "xattrs": {"user.comment": b"planted"},
+        "symlink": None,
+    }
+    image = Path(GENERATOR.build_image(variant, [planted]))
+    name = f"extdriver-{variant}-{os.getpid()}"
+    mounts.append(name)
+    mounted = loopmount("ro", str(image), name)
+    assert mounted.returncode == 0, mounted.stdout + mounted.stderr
+    assert f" ({variant}, " in mounted.stdout, mounted.stdout
+    assert file_system_type(MOUNT_BASE / name) == "ext4"
+    assert os.getxattr(MOUNT_BASE / name / "tagged.txt", "user.comment") == b"planted"
+
+
+@pytest.mark.req("FR-03")
+def test_ntfs_is_read_with_ntfs_3g_and_its_streams(mounts: list[str]) -> None:
+    # The kernel ntfs3 driver does not show alternate data streams; ntfs-3g shows them as user.* attributes.
+    planted = {
+        "path": "host.txt",
+        "content": b"host",
+        "hidden": False,
+        "read_only": False,
+        "modified": None,
+        "streams": {"Zone.Identifier": b"[ZoneTransfer]\r\nZoneId=3\r\n"},
+        "xattrs": {},
+        "symlink": None,
+    }
+    image = Path(GENERATOR.build_image("ntfs", [planted]))
+    name = f"ntfsdriver-{os.getpid()}"
+    mounts.append(name)
+    mounted = loopmount("ro", str(image), name)
+    assert mounted.returncode == 0, mounted.stdout + mounted.stderr
+    assert file_system_type(MOUNT_BASE / name) == "fuseblk"
+    # Explicit, so the stream interface does not depend on how ntfs-3g was built.
+    assert ",streams_interface=xattr" in mounted.stdout, mounted.stdout
+    host = MOUNT_BASE / name / "host.txt"
+    assert os.getxattr(host, "user.Zone.Identifier") == b"[ZoneTransfer]\r\nZoneId=3\r\n"
+    with pytest.raises(OSError) as refused:
+        host.write_bytes(b"must not be written")
+    assert refused.value.errno == errno.EROFS
+
+
+def build(variant: str, content: bytes) -> bytes:
+    """The bytes of a generated image of `variant` holding probe.txt."""
+    planted = {
+        "path": "probe.txt",
+        "content": content,
+        "hidden": False,
+        "read_only": False,
+        "modified": None,
+        "streams": {},
+        "xattrs": {},
+        "symlink": None,
+    }
+    return Path(GENERATOR.build_image(variant, [planted])).read_bytes()
+
+
+def damaged(variant: str) -> bytes:
+    data = bytearray(build(variant, b"behind broken metadata"))
+    if variant == "ext4":
+        # The superblock (1024-2047) stays; the 512 KiB after it, group descriptors included, are zeroed.
+        data[2048 : 2048 + 512 * 1024] = bytes(512 * 1024)
+    else:
+        # The boot sector and the MFT stay (blkid still finds NTFS); the first 4 KiB of the MFT mirror are
+        # zeroed, which ntfs-3g refuses ("Record 0 has no FILE magic"). Mirror cluster at boot offset 0x38.
+        cluster = struct.unpack_from("<H", data, 0x0B)[0] * data[0x0D]
+        mirror = struct.unpack_from("<Q", data, 0x38)[0] * cluster
+        data[mirror : mirror + 4096] = bytes(4096)
+    return bytes(data)
+
+
+@pytest.mark.req("FR-03")
+@pytest.mark.parametrize("variant", ["ext4", "ntfs"])
+def test_damaged_file_system_exits_5_and_leaves_nothing_mounted(
+    tmp_path: Path, mounts: list[str], variant: str
+) -> None:
+    # A recognised file system the driver refuses (kernel driver for ext4, FUSE for NTFS) is a mount
+    # failure, told apart from the helper's own failures (exit 1) and from an unsupported file system.
+    disk = tmp_path / "target" / f"damaged-{variant}.img"
+    disk.parent.mkdir(parents=True)
+    disk.write_bytes(damaged(variant))
+    name = f"damaged-{variant}-{os.getpid()}"
+    mounts.append(name)
+    failed = loopmount("ro", str(disk), name)
+    assert failed.returncode == 5, failed.stdout + failed.stderr
+    assert f"loopmount: mounting {disk} ({variant}, " in failed.stderr, failed.stderr
+    assert not (MOUNT_BASE / name).exists()
+    assert attached_loops(disk) == ""
+
+
+def with_partition_table(data: bytes) -> bytes:
+    """`data` with a DOS partition table in its first sector: one Linux partition from sector 2048."""
+    table = bytearray(data)
+    table[446:462] = bytes([0x00, 0, 0, 0, 0x83, 0, 0, 0]) + struct.pack("<II", 2048, 4096)
+    table[510:512] = b"\x55\xaa"
+    return bytes(table)
+
+
+@pytest.mark.req("FR-03")
+@pytest.mark.parametrize("kind", ["table-only", "table-over-ext4"])
+def test_partition_table_is_refused_with_exit_4(
+    tmp_path: Path, mounts: list[str], kind: str
+) -> None:
+    # cli.md: a partition table is refused in P1, even over a file system blkid also finds.
+    base = bytes(4 * 1024 * 1024) if kind == "table-only" else build("ext4", b"under a table")
+    disk = tmp_path / "target" / f"{kind}.img"
+    disk.parent.mkdir(parents=True)
+    disk.write_bytes(with_partition_table(base))
+    name = f"table-{kind}-{os.getpid()}"
+    mounts.append(name)
+    refused = loopmount("ro", str(disk), name)
+    assert refused.returncode == 4, refused.stdout + refused.stderr
+    assert "loopmount: unsupported file system: partition table 'dos'" in refused.stderr
+    assert not (MOUNT_BASE / name).exists()
+    assert attached_loops(disk) == ""
 
 
 @pytest.mark.req("TOOLING")

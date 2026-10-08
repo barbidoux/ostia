@@ -129,10 +129,13 @@ update whose licence metadata is not plain SPDX fails until its line in `python-
 
 ## WSL notes
 
-- The stock WSL kernel has no exFAT or NTFS module. The helper then mounts those images with the FUSE
-  drivers `exfat-fuse` and `ntfs-3g` (installed by step 1). Which driver was used is printed by the
-  helper (`kernel driver` or `fuse driver`); in CI it depends on the modules of the runner's kernel. The
-  production kernel path is checked on the Debian bench (phases 4 and 5).
+- The stock WSL kernel has no exFAT module: the helper then mounts exFAT images with the FUSE driver
+  `exfat-fuse` (installed by step 1); in CI it depends on the modules of the runner's kernel. NTFS always
+  goes through `ntfs-3g` and ext2/3/4 through the ext4 driver, on every machine (ADR-17). Which driver was
+  used is printed by the helper (`kernel driver` or `fuse driver`). The production kernel path is checked
+  on the Debian bench (phases 4 and 5).
+- The helper's exit codes (`tools/dev/loopmount.sh` header): 0 mounted, 1 helper failure, 2 refused
+  arguments, 3 not root, 4 unsupported file system or partition table, 5 the driver refused a damaged one.
 - systemd should be PID 1: `[boot] systemd=true` in `/etc/wsl.conf`.
 - USB devices are not used before phase 4; they need the dedicated Debian machine (spec §19).
 

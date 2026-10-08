@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/contracts", "crates/core-domain", "crates/ostia-cli", "crates/traceability", "tests/fakes/clock"]
+members = ["crates/contracts", "crates/core-domain", "crates/media", "crates/ostia-cli", "crates/traceability", "tests/fakes/clock"]
 resolver = "3"
 
 [workspace.package]

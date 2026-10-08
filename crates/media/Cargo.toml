@@ -1,0 +1,19 @@
+[package]
+name = "ostia-media"
+description = "Ostia media access: read-only mounts of the analysed medium (development loop mounts in P1)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+ostia-core-domain = { path = "../core-domain" }
+thiserror = "=2.0.21"
+
+[dev-dependencies]
+ostia-traceability = { path = "../traceability" }
+
+[lints]
+workspace = true
