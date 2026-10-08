@@ -22,6 +22,6 @@ impl EngineResult {
     /// The engine id (CTR-03).
     #[must_use]
     pub fn engine_id(&self) -> &str {
-        todo!("WP-1.1: engine result")
+        &self.0.engine_id
     }
 }

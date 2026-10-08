@@ -7,7 +7,12 @@
 
 use thiserror::Error;
 
-/// Identifier of an object, unique in its tree.
+/// Largest `max_depth` a policy may set (`schemas/policy.schema.json`).
+const MAX_DEPTH_LIMIT: u32 = 64;
+
+/// Identifier of an object, unique in its tree. It is the insertion index: an identifier from another tree
+/// is refused only when it is out of range, so identifiers of different trees are never mixed (one tree
+/// per session).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ObjectId(u32);
 
@@ -98,6 +103,9 @@ pub enum TreeError {
     /// A file of the medium is never below another object.
     #[error("an object of origin File cannot have a parent")]
     FileWithParent,
+    /// More objects than identifiers (2^32); the policy's entry limits stop extraction long before.
+    #[error("the object tree is full")]
+    Full,
 }
 
 /// The objects of one medium.
@@ -112,39 +120,81 @@ impl ObjectTree {
     ///
     /// # Errors
     /// [`TreeError::InvalidMaxDepth`].
-    pub fn new(_max_depth: u32) -> Result<Self, TreeError> {
-        todo!("WP-1.1: object tree")
+    pub fn new(max_depth: u32) -> Result<Self, TreeError> {
+        if !(1..=MAX_DEPTH_LIMIT).contains(&max_depth) {
+            return Err(TreeError::InvalidMaxDepth(max_depth));
+        }
+        Ok(Self {
+            max_depth,
+            nodes: Vec::new(),
+        })
     }
 
     /// Insert a file of the medium (depth 0).
     ///
     /// # Errors
-    /// [`TreeError::RootNotAFile`].
-    pub fn insert_file(&mut self, _object: NewObject) -> Result<ObjectId, TreeError> {
-        todo!("WP-1.1: object tree")
+    /// [`TreeError::RootNotAFile`], [`TreeError::Full`].
+    pub fn insert_file(&mut self, object: NewObject) -> Result<ObjectId, TreeError> {
+        if object.origin != Origin::File {
+            return Err(TreeError::RootNotAFile(object.origin));
+        }
+        self.push(None, 0, object)
     }
 
     /// Insert an object below `parent` (extracted entry, stream or attribute).
     ///
     /// # Errors
-    /// [`TreeError::UnknownParent`], [`TreeError::FileWithParent`], [`TreeError::TooDeep`].
+    /// [`TreeError::UnknownParent`], [`TreeError::FileWithParent`], [`TreeError::TooDeep`],
+    /// [`TreeError::Full`].
     pub fn insert_child(
         &mut self,
-        _parent: ObjectId,
-        _object: NewObject,
+        parent: ObjectId,
+        object: NewObject,
     ) -> Result<ObjectId, TreeError> {
-        todo!("WP-1.1: object tree")
+        let parent_depth = self
+            .get(parent)
+            .ok_or(TreeError::UnknownParent(parent))?
+            .depth;
+        if object.origin == Origin::File {
+            return Err(TreeError::FileWithParent);
+        }
+        let depth = parent_depth + 1;
+        if depth > self.max_depth {
+            return Err(TreeError::TooDeep {
+                depth,
+                max_depth: self.max_depth,
+            });
+        }
+        self.push(Some(parent), depth, object)
     }
 
     /// The object with this identifier.
     #[must_use]
-    pub fn get(&self, _id: ObjectId) -> Option<&ObjectNode> {
-        todo!("WP-1.1: object tree")
+    pub fn get(&self, id: ObjectId) -> Option<&ObjectNode> {
+        usize::try_from(id.0)
+            .ok()
+            .and_then(|index| self.nodes.get(index))
     }
 
     /// Every object, in insertion order.
     pub fn iter(&self) -> impl Iterator<Item = &ObjectNode> {
         self.nodes.iter()
+    }
+
+    fn push(
+        &mut self,
+        parent: Option<ObjectId>,
+        depth: u32,
+        object: NewObject,
+    ) -> Result<ObjectId, TreeError> {
+        let id = ObjectId(u32::try_from(self.nodes.len()).map_err(|_| TreeError::Full)?);
+        self.nodes.push(ObjectNode {
+            id,
+            parent,
+            depth,
+            object,
+        });
+        Ok(id)
     }
 
     /// The tree's maximum depth.

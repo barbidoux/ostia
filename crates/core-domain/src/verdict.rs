@@ -7,8 +7,9 @@ use thiserror::Error;
 
 use crate::object::ObjectId;
 
-/// The verdict of an object or of a medium (FR-09).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// The verdict of an object or of a medium (FR-09). The order of the variants is the worst-of order of
+/// ADR-16: `Clean < Suspicious < Unscannable < Malicious`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Verdict {
     /// Nothing found.
     Clean,
@@ -23,15 +24,15 @@ pub enum Verdict {
 impl Verdict {
     /// The worse of two verdicts: `Clean < Suspicious < Unscannable < Malicious` (ADR-16).
     #[must_use]
-    pub fn worst(self, _other: Self) -> Self {
-        todo!("WP-1.1: worst-of ordering")
+    pub fn worst(self, other: Self) -> Self {
+        self.max(other)
     }
 }
 
 /// The worst verdict of a collection, or `None` when it is empty (the caller decides what an empty medium
 /// means).
-pub fn worst_of<I: IntoIterator<Item = Verdict>>(_verdicts: I) -> Option<Verdict> {
-    todo!("WP-1.1: worst-of ordering")
+pub fn worst_of<I: IntoIterator<Item = Verdict>>(verdicts: I) -> Option<Verdict> {
+    verdicts.into_iter().max()
 }
 
 /// The policy rule that decided an object verdict (spec §8).
@@ -79,8 +80,12 @@ impl Score {
     ///
     /// # Errors
     /// [`VerdictError::ScoreOutOfRange`].
-    pub fn new(_value: f64) -> Result<Self, VerdictError> {
-        todo!("WP-1.1: score validation")
+    pub fn new(value: f64) -> Result<Self, VerdictError> {
+        if (0.0..=1.0).contains(&value) {
+            Ok(Self(value))
+        } else {
+            Err(VerdictError::ScoreOutOfRange(value))
+        }
     }
 
     /// The value.
@@ -128,28 +133,50 @@ impl ObjectVerdict {
     ///
     /// # Errors
     /// [`VerdictError::EmptyExplanation`], [`VerdictError::RuleMismatch`].
-    pub fn new(_verdict: Verdict, _rule: Rule, _explanation: &str) -> Result<Self, VerdictError> {
-        todo!("WP-1.1: object verdict")
+    pub fn new(verdict: Verdict, rule: Rule, explanation: &str) -> Result<Self, VerdictError> {
+        if explanation.trim().is_empty() {
+            return Err(VerdictError::EmptyExplanation);
+        }
+        if (verdict == Verdict::Unscannable) != (rule == Rule::R1) {
+            return Err(VerdictError::RuleMismatch { verdict, rule });
+        }
+        Ok(Self {
+            verdict,
+            rule,
+            score: None,
+            contributing_engines: Vec::new(),
+            explanation: explanation.to_owned(),
+            limit: None,
+        })
     }
 
     /// The same verdict with a score.
     #[must_use]
-    pub fn with_score(self, _score: Score) -> Self {
-        todo!("WP-1.1: object verdict")
+    pub fn with_score(mut self, score: Score) -> Self {
+        self.score = Some(score);
+        self
     }
 
     /// The same verdict with the engines whose results made the rule match (sorted, without duplicates).
     #[must_use]
-    pub fn with_engines<I: IntoIterator<Item = S>, S: Into<String>>(self, _engines: I) -> Self {
-        todo!("WP-1.1: object verdict")
+    pub fn with_engines<I: IntoIterator<Item = S>, S: Into<String>>(mut self, engines: I) -> Self {
+        let mut engines: Vec<String> = engines.into_iter().map(Into::into).collect();
+        engines.sort();
+        engines.dedup();
+        self.contributing_engines = engines;
+        self
     }
 
     /// The same verdict with the limit that was reached.
     ///
     /// # Errors
     /// [`VerdictError::LimitWithoutUnscannable`].
-    pub fn with_limit(self, _limit: Limit) -> Result<Self, VerdictError> {
-        todo!("WP-1.1: object verdict")
+    pub fn with_limit(mut self, limit: Limit) -> Result<Self, VerdictError> {
+        if self.verdict != Verdict::Unscannable {
+            return Err(VerdictError::LimitWithoutUnscannable(self.verdict));
+        }
+        self.limit = Some(limit);
+        Ok(self)
     }
 
     /// The verdict.
