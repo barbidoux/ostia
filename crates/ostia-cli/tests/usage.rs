@@ -42,8 +42,18 @@ fn usage_error_reason_is_one_line_prefixed_with_ostia() {
 #[req("TOOLING")]
 #[test]
 fn every_contract_subcommand_is_recognised() {
-    // Not a usage error, whatever the subcommand does once it is built.
-    for args in [&["scan"][..], &["policy", "verify"][..], &["version"][..]] {
+    // Subcommands not built yet are not usage errors.
+    for args in [&["scan"][..], &["version"][..]] {
         assert_ne!(ostia(args).status.code(), Some(2), "ostia {args:?}");
     }
+    // `policy verify` is built: without its flags it is a usage error about its first flag, not about
+    // the subcommand.
+    let output = ostia(&["policy", "verify"]);
+    assert_eq!(output.status.code(), Some(2));
+    let message = stderr(&output);
+    let reason = message.lines().next().unwrap_or_default();
+    assert!(
+        reason.split_whitespace().any(|word| word == "--policy"),
+        "{reason:?}"
+    );
 }

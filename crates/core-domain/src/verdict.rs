@@ -22,6 +22,17 @@ pub enum Verdict {
 }
 
 impl Verdict {
+    /// The name in the report contract: `CLEAN`, `SUSPICIOUS`, `UNSCANNABLE` or `MALICIOUS`.
+    #[must_use]
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Clean => "CLEAN",
+            Self::Suspicious => "SUSPICIOUS",
+            Self::Unscannable => "UNSCANNABLE",
+            Self::Malicious => "MALICIOUS",
+        }
+    }
+
     /// The worse of two verdicts: `Clean < Suspicious < Unscannable < Malicious` (ADR-16).
     #[must_use]
     pub fn worst(self, other: Self) -> Self {
@@ -56,7 +67,7 @@ pub enum Rule {
 
 /// The verdict a rule gives (spec §8, `docs/contracts/policy.md`): fixed by the specification, so a
 /// policy result that pairs a rule with another verdict is refused.
-fn verdict_of(rule: Rule) -> Verdict {
+pub(crate) fn verdict_of(rule: Rule) -> Verdict {
     match rule {
         Rule::R1 => Verdict::Unscannable,
         Rule::R2 | Rule::R4 => Verdict::Malicious,
@@ -80,6 +91,22 @@ pub enum Limit {
     PathLength,
     /// Maximum scan time (FR-14).
     ScanTime,
+}
+
+impl Limit {
+    /// The name in the report contract: `depth`, `ratio`, `total_size`, `entry_count`, `path_length` or
+    /// `scan_time`.
+    #[must_use]
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Depth => "depth",
+            Self::Ratio => "ratio",
+            Self::TotalSize => "total_size",
+            Self::EntryCount => "entry_count",
+            Self::PathLength => "path_length",
+            Self::ScanTime => "scan_time",
+        }
+    }
 }
 
 /// A score in `[0, 1]` (finite).
@@ -247,4 +274,6 @@ pub struct MediumVerdict {
     pub blocked: bool,
     /// The MALICIOUS and UNSCANNABLE objects.
     pub blocking_objects: Vec<ObjectId>,
+    /// Device-level findings (D1, D2).
+    pub findings: Vec<crate::policy::MediumFinding>,
 }

@@ -10,8 +10,10 @@ default (enrichment off, so E1 inactive; D2 alert only); a change that a v1 docu
 ## File and signature
 
 - A UTF-8 JSON document of at most 1 MiB. Every object refuses unknown keys; every key of v1.0 is required (no
-  hidden default: what decides a verdict is written in the file). A duplicate key anywhere, or an integer written
-  with a fraction or an exponent (`2.0`), is `policy_invalid`.
+  hidden default: what decides a verdict is written in the file). A duplicate key anywhere, a `null` anywhere (no key
+  accepts it: an explicit null is not an absent key), or an integer written with a fraction or an exponent
+  (`2.0`), is `policy_invalid`. A file larger than 1 MiB is `policy_signature_invalid`: its exact bytes are
+  never read in full, so its signature cannot be verified.
 - Signed with Ed25519 over the **exact file bytes** (no canonicalisation): the signature file holds the 64 raw
   signature bytes, the trusted key file the 32 raw public key bytes; any other size is
   `policy_signature_invalid` (files are read with a cap, never whole when larger).
@@ -40,7 +42,7 @@ The order is fixed by the spec (§8); the first rule that matches decides. Param
 
 | Rule | Matches when | Verdict | `contributing_engines` |
 |---|---|---|---|
-| R1 | Any engine result has status `ERROR` or `TIMEOUT`, or a scorer answered `OK` without a score; or the object is a `symlink` or `special` ([report.md](report.md#objects)); or a limit was reached on the object (`limits`, scan time); or the object could not be read, typed or extracted (malformed archive, an encrypted entry, sizes that do not match the declared ones, an entry path that is absolute or has a `..` component); or `detected_type` is in `rules.R1.risky_types` and no engine answered `OK` | UNSCANNABLE | The engines with `ERROR` or `TIMEOUT`, or the scorer without a score |
+| R1 | Any engine result has status `ERROR`, `TIMEOUT` or an unknown value, or is inconsistent (a scorer answering `OK` without a score in [0, 1]; `UNSUPPORTED` with a hint, a score or findings; an engine without an id, without a role in the policy, or with several results for the object); or the object is a `symlink` or `special` ([report.md](report.md#objects)); or a limit was reached on the object (`limits`, scan time); or the object could not be read, typed or extracted (malformed archive, an encrypted entry, sizes that do not match the declared ones, an entry path that is absolute or has a `..` component); or `detected_type` is in `rules.R1.risky_types` and no engine answered `OK` | UNSCANNABLE | The engines with a failed or inconsistent result (an engine without an id is not named) |
 | R2 | A reputation engine says MALICIOUS; or a `trusted_alone` detector says MALICIOUS; or at least `rules.R2.k` other detectors say MALICIOUS; or a critical finding | MALICIOUS | The engines that matched |
 | R3 | A reputation engine says CLEAN | CLEAN | The reputation engine |
 | R4 | A scorer's score `>= thresholds.high` | MALICIOUS | The scorer |
