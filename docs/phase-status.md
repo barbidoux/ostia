@@ -3,7 +3,7 @@
 Updated by the agent in each work package's merge request (tick the WP).
 `Current phase` and the gate boxes are changed by the owner only.
 
-Current phase: P0 · Foundations
+Current phase: P1 · Pipeline
 
 Legend: `- [x] WP-x.y scope — branch` once merged. Gate: ticked by the owner after `/phase-gate` evidence.
 
@@ -20,13 +20,13 @@ Legend: `- [x] WP-x.y scope — branch` once merged. Gate: ticked by the owner a
 - [x] WP-0.9 Test locking: hash manifest per tests/acceptance/pN/, CI check, CODEOWNERS rule; agent instructions file (s... (after: 0.4) — wp/0.9-test-locking
 - [x] WP-0.10 Decision records ADR-01 to ADR-13 in docs/adr/ (after: —) — wp/0.10-decision-records
 - [x] WP-0.11 Spike: usbsas evaluation as media layer (licence review, process interface, performance on reference images... (after: 0.2) — wp/0.11-usbsas-spike
-- [ ] WP-0.12 Lock: write P1 acceptance tests, review, lock (after: 0.4, 0.9)
+- [x] WP-0.12 Lock: write P1 acceptance tests, review, lock (after: 0.4, 0.9) — wp/0.12-lock-p1
 
-Gate P0 (owner): [ ] evidence in `docs/gates/P0.md` reviewed; `tests/acceptance/p1` locked and tagged `lock-p1`; retrospective written
+Gate P0 (owner): [x] evidence in `docs/gates/P0.md` reviewed; `tests/acceptance/p1` locked and tagged `lock-p1`; retrospective written
 
 ## P1 · Pipeline
 
-- [ ] WP-1.1 Domain model: Session, Medium, ObjectNode, verdicts, worst-of ordering (after: P0)
+- [x] WP-1.1 Domain model: Session, Medium, ObjectNode, verdicts, worst-of ordering (after: P0) — wp/1.1-domain-model
 - [ ] WP-1.2 Verdict policy engine: declarative policy format, loader with signature check, rules R1–R7, hooks for D1 an... (after: 1.1)
 - [ ] WP-1.3 Disk-image fixture generator: FAT, exFAT, NTFS, ext4 with planted files, hidden files, alternate data strea... (after: P0)
 - [ ] WP-1.4 Development mount layer: loop device, read-only, file-system detection, clean refusal of unsupported systems (after: 1.3)
