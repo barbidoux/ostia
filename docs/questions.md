@@ -73,6 +73,13 @@ Blocking: no.
 
 ## Answered
 
+### Q-43 · WP-1.2 · FR-09, ADR-09 · dependencies of the policy loader
+Context: the loader verifies an Ed25519 signature over the exact policy bytes, parses strict JSON, and reports
+the policy's SHA-256 (`docs/contracts/policy.md`, `cli.md`).
+Answer (owner, 2026-10-08): ed25519-dalek =3.0.0 (BSD-3-Clause, `verify_strict`); serde =1.0.229 with derive
+and serde_json =1.0.151 (MIT OR Apache-2.0); sha2 declared directly at the version ed25519-dalek resolves
+(MIT OR Apache-2.0). The verdict policy lives in `crates/core-domain` (spec §19).
+
 ### Q-42 · WP-1.1 · FR-09, FR-10 · worst-of ordering of MALICIOUS and UNSCANNABLE
 Context: the spec says both block the medium but does not rank them; the medium verdict is the worst object
 verdict (ADR-16).

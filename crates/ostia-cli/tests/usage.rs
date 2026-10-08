@@ -42,8 +42,13 @@ fn usage_error_reason_is_one_line_prefixed_with_ostia() {
 #[req("TOOLING")]
 #[test]
 fn every_contract_subcommand_is_recognised() {
-    // Not a usage error, whatever the subcommand does once it is built.
+    // Whatever the subcommand does once it is built (a missing flag is a usage error too), it is never
+    // reported as unknown.
     for args in [&["scan"][..], &["policy", "verify"][..], &["version"][..]] {
-        assert_ne!(ostia(args).status.code(), Some(2), "ostia {args:?}");
+        let message = stderr(&ostia(args));
+        assert!(
+            !message.contains("unknown subcommand"),
+            "ostia {args:?}: {message:?}"
+        );
     }
 }

@@ -247,4 +247,6 @@ pub struct MediumVerdict {
     pub blocked: bool,
     /// The MALICIOUS and UNSCANNABLE objects.
     pub blocking_objects: Vec<ObjectId>,
+    /// Device-level findings (D1, D2).
+    pub findings: Vec<crate::policy::MediumFinding>,
 }
