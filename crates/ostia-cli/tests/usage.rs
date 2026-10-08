@@ -20,7 +20,7 @@ fn stderr(output: &Output) -> String {
 fn no_subcommand_is_a_usage_error() {
     let output = ostia(&[]);
     assert_eq!(output.status.code(), Some(2));
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout, b"");
 }
 
 #[req("TOOLING")]
@@ -28,7 +28,7 @@ fn no_subcommand_is_a_usage_error() {
 fn unknown_subcommand_is_a_usage_error() {
     let output = ostia(&["unpack"]);
     assert_eq!(output.status.code(), Some(2));
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout, b"");
 }
 
 #[req("TOOLING")]
