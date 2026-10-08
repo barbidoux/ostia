@@ -195,6 +195,7 @@ impl<L: Launcher> WorkerHost<L> {
         let outcome = encode_frame(request, self.limits.max_frame)
             .map_err(Failure::Request)
             .and_then(|frame| Ok((frame, host::open_object(object)?)))
+            .and_then(|prepared| host::check_no_inheritable_descriptor().map(|()| prepared))
             .and_then(|(frame, object)| {
                 self.launcher
                     .launch(command, object.into())

@@ -23,6 +23,53 @@ use crate::{EngineIdentity, Failure, HostLimits};
 /// How long the host waits for the standard error reader once the worker's process group is gone.
 const STDERR_GRACE: Duration = Duration::from_secs(1);
 
+/// Refuses a launch while this process holds a descriptor beyond the standard streams without the
+/// close-on-exec flag: the worker would inherit it. Ostia opens every descriptor close-on-exec; one the
+/// orchestrator inherited is caught here (closing it in the child would need unsafe code). Reads the
+/// kernel's `/proc/self/fdinfo`, never medium data.
+pub(crate) fn check_no_inheritable_descriptor() -> Result<(), Failure> {
+    let unreadable = |error: std::io::Error| {
+        Failure::Spawn(format!("cannot list the host's descriptors: {error}"))
+    };
+    let close_on_exec = u32::try_from(OFlag::O_CLOEXEC.bits()).unwrap_or(u32::MAX);
+    let mut inheritable = Vec::new();
+    for entry in std::fs::read_dir("/proc/self/fdinfo").map_err(unreadable)? {
+        let entry = entry.map_err(unreadable)?;
+        let Some(fd) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if fd < 3 {
+            continue;
+        }
+        let info = match std::fs::read_to_string(entry.path()) {
+            Ok(info) => info,
+            // Closed since the listing (the listing's own descriptor among them).
+            Err(error) if error.kind() == ErrorKind::NotFound => continue,
+            Err(error) => return Err(unreadable(error)),
+        };
+        let flags = info
+            .lines()
+            .find_map(|line| line.strip_prefix("flags:"))
+            .and_then(|value| u32::from_str_radix(value.trim(), 8).ok())
+            .ok_or_else(|| Failure::Spawn(format!("cannot read the flags of descriptor {fd}")))?;
+        if flags & close_on_exec == 0 {
+            inheritable.push(format!("descriptor {fd}"));
+        }
+    }
+    if inheritable.is_empty() {
+        Ok(())
+    } else {
+        Err(Failure::Spawn(format!(
+            "the worker would inherit the host's {}",
+            inheritable.join(", ")
+        )))
+    }
+}
+
 /// Opens the object for the worker: read-only, never through a symbolic link, a regular file only (a FIFO
 /// or a device could block the host or the worker).
 pub(crate) fn open_object(path: &Path) -> Result<File, Failure> {
