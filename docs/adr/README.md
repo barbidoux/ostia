@@ -21,6 +21,7 @@ ADR-01 to ADR-13 come from spec §21; they were decided by the owner in the spec
 | [ADR-13](0013-deep-analysis-sleuth-kit.md) | Deep analysis with The Sleuth Kit in the sandbox, time-budgeted mode | accepted |
 | [ADR-14](0014-black-box-acceptance-tests.md) | Acceptance tests drive the product only through its public surfaces | accepted |
 | [ADR-15](0015-offline-protobuf-codegen.md) | Offline Protobuf code generation with protox/prost (Rust) and grpcio-tools (Python) | accepted |
+| [ADR-16](0016-worst-of-verdict-ordering.md) | Worst-of ordering of verdicts: CLEAN < SUSPICIOUS < UNSCANNABLE < MALICIOUS | accepted |
 
 ## Template for a new record
 

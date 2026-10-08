@@ -73,6 +73,12 @@ Blocking: no.
 
 ## Answered
 
+### Q-42 · WP-1.1 · FR-09, FR-10 · worst-of ordering of MALICIOUS and UNSCANNABLE
+Context: the spec says both block the medium but does not rank them; the medium verdict is the worst object
+verdict (ADR-16).
+Options: (a) CLEAN < SUSPICIOUS < UNSCANNABLE < MALICIOUS (b) CLEAN < SUSPICIOUS < MALICIOUS < UNSCANNABLE.
+Answer (owner, 2026-10-08): (a), recorded in ADR-16 (accepted).
+
 ### Q-41 · P0 gate · NFR-14 · which code the coverage thresholds apply to
 Context: at the P0 gate the Rust workspace total was 84.7 % against 90 %: the `ostia-cli` stub had no test and
 the `ostia-traceability` crate (the `#[req]` attribute, a dev-dependency never shipped) is at 78.5 %, its
