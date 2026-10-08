@@ -71,6 +71,43 @@ Recommendation: (a). Every one of them needs a deliberate weakening to slip thro
 reads each diff.
 Blocking: no.
 
+## Answered
+
+### Q-40 · WP-0.12 · — · the `dev` feature in lint and unit tests
+Context: `just lint` and `just test-rust` build without `ostia-cli/dev`, so code behind `cfg(feature = "dev")`
+(the `--dev-engine` path of WP-1.10) is neither linted nor unit-tested; the release guard keys on
+`debug_assertions` only.
+Options: (a) WP-1.10 adds `--features ostia-cli/dev` to the clippy and nextest runs (a lint configuration
+change, owner approval), and the release pipeline (P9) checks that the binary has no `--dev-` flag (b) leave.
+Recommendation: (a).
+Blocking: no.
+Answer (owner, 2026-10-08, the recommendation): (a). WP-1.10 adds `--features ostia-cli/dev` to the clippy and
+nextest runs (lint configuration change approved here); P9 checks that release binaries have no `--dev-` flag.
+
+### Q-39 · WP-0.12 · CTR-04 · the v1 JSON schemas are not locked
+Context: the locked P1 tests validate every report against `schemas/report.schema.json`, which is in no
+`LOCK.sha256` and not in the rails manifest. Loosening it later (dropping a required field, widening an enum)
+would make the locked tests check less while still passing.
+Options: (a) the owner adds `schemas/report.schema.json` and `schemas/policy.schema.json` to the rails manifest
+(`just rails-update`, guard) (b) a tooling compatibility test like `proto/ostia/engine/v1/compat.json`: required
+fields stay required, enums only grow, closed objects stay closed (c) leave it to review.
+Recommendation: (a) at the lock, then (b) in a later tooling package.
+Blocking: no.
+Answer (owner, 2026-10-08, the recommendation): (a) at the lock: the owner adds `schemas/report.schema.json` and
+`schemas/policy.schema.json` to the rails manifest and the guard (owner-managed files), then (b) in a later tooling
+package.
+
+### Q-38 · WP-0.12 · NFR-17, FR-09 · where the EMBER thresholds come from
+Context: spec §8 says the EMBER high and low thresholds ship with the model in its signed bundle; the P1 policy
+contract (ADR-09 follow-up) needs thresholds for a scorer now, so `policy.md` gives each scorer `thresholds`
+and says that, when a model bundle also carries thresholds (P2), the stricter of each pair applies.
+Options: (a) as written: the policy's thresholds, hardened by the bundle's (b) the bundle's thresholds replace
+the policy's in P2 (the P1 tests still pass: they run without a bundle) (c) thresholds only in the policy.
+Recommendation: (a): neither source can soften the other.
+Blocking: no for the lock (P1 tests run without a bundle); decide before WP-2.x.
+Answer (owner, 2026-10-08, the recommendation): (a). The policy's thresholds apply; a model bundle's can only
+harden them (the stricter of each pair). WP-2.x implements it.
+
 ### Q-37 · WP-0.12 · FR-03..FR-14 · decisions in the P1 contracts to confirm before the lock
 Context: the P1 tests freeze the contracts of `docs/contracts/` (cli, report, policy). The agent decided these
 points under the owner's delegation, several after the lock review (reviewer and test-auditor):
@@ -90,36 +127,8 @@ Options: (a) confirm (b) change some of them before `just lock p1` (the tests fo
 Recommendation: (a). Each choice fails closed; the first one is the strictest reading of "no transfer when an
 analysis fails" and could be relaxed later only by a relock.
 Blocking: yes, for the lock.
-
-### Q-38 · WP-0.12 · NFR-17, FR-09 · where the EMBER thresholds come from
-Context: spec §8 says the EMBER high and low thresholds ship with the model in its signed bundle; the P1 policy
-contract (ADR-09 follow-up) needs thresholds for a scorer now, so `policy.md` gives each scorer `thresholds`
-and says that, when a model bundle also carries thresholds (P2), the stricter of each pair applies.
-Options: (a) as written: the policy's thresholds, hardened by the bundle's (b) the bundle's thresholds replace
-the policy's in P2 (the P1 tests still pass: they run without a bundle) (c) thresholds only in the policy.
-Recommendation: (a): neither source can soften the other.
-Blocking: no for the lock (P1 tests run without a bundle); decide before WP-2.x.
-
-### Q-39 · WP-0.12 · CTR-04 · the v1 JSON schemas are not locked
-Context: the locked P1 tests validate every report against `schemas/report.schema.json`, which is in no
-`LOCK.sha256` and not in the rails manifest. Loosening it later (dropping a required field, widening an enum)
-would make the locked tests check less while still passing.
-Options: (a) the owner adds `schemas/report.schema.json` and `schemas/policy.schema.json` to the rails manifest
-(`just rails-update`, guard) (b) a tooling compatibility test like `proto/ostia/engine/v1/compat.json`: required
-fields stay required, enums only grow, closed objects stay closed (c) leave it to review.
-Recommendation: (a) at the lock, then (b) in a later tooling package.
-Blocking: no.
-
-### Q-40 · WP-0.12 · — · the `dev` feature in lint and unit tests
-Context: `just lint` and `just test-rust` build without `ostia-cli/dev`, so code behind `cfg(feature = "dev")`
-(the `--dev-engine` path of WP-1.10) is neither linted nor unit-tested; the release guard keys on
-`debug_assertions` only.
-Options: (a) WP-1.10 adds `--features ostia-cli/dev` to the clippy and nextest runs (a lint configuration
-change, owner approval), and the release pipeline (P9) checks that the binary has no `--dev-` flag (b) leave.
-Recommendation: (a).
-Blocking: no.
-
-## Answered
+Answer (owner, 2026-10-08, "answer the questions": the recommendation): (a), every decision confirmed as
+written in docs/contracts/.
 
 ### Q-36 · WP-0.12 · FR-09, FR-10, SEC-10, FR-06 · contracts the P1 lock freezes
 Context: the P1 tests write signed policies, observe transfers, check signatures and build archives, before the

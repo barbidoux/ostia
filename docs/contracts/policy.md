@@ -28,7 +28,7 @@ missing from the policy, or a policy engine missing from the session, stops the 
 | Role | What its result means |
 |---|---|
 | `detector` | Hint MALICIOUS is a detection. `trusted_alone: true`: one detection is enough (R2). Hint SUSPICIOUS is a risky heuristic (R6). |
-| `scorer` | Its `score`, in a result with status `OK`, is compared with `thresholds` (`low < high`, both in (0, 1]); its hint is ignored. An answer with status `OK` and no score is a failure (R1). The EMBER engine of P2 is a scorer: when its signed model bundle carries thresholds too, the stricter of each pair applies (the lower `high`, the lower `low`), so the bundle can only harden the policy (open point Q-38 in `docs/questions.md`). |
+| `scorer` | Its `score`, in a result with status `OK`, is compared with `thresholds` (`low < high`, both in (0, 1]); its hint is ignored. An answer with status `OK` and no score is a failure (R1). The EMBER engine of P2 is a scorer: when its signed model bundle carries thresholds too, the stricter of each pair applies (the lower `high`, the lower `low`), so the bundle can only harden the policy (owner decision Q-38 in `docs/questions.md`). |
 | `reputation` | Hint MALICIOUS: known-bad hash (R2). Hint CLEAN: exact known-good hash (R3). |
 | `heuristic` | Hint SUSPICIOUS or MALICIOUS: risky heuristic (R6). |
 
