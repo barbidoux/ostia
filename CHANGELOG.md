@@ -83,3 +83,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   no file system or one outside FR-03 is refused as `unsupported_file_system`, a damaged one is a mount
   failure. The helper reports the FAT version, exits 4 for an unsupported file system, mounts NTFS with
   ntfs-3g and ext2/3/4 with the ext4 driver (Q-46, ADR-17 proposed).
+- Worker host v0 (WP-1.6, `crates/sandbox`): `WorkerHost::run` starts one worker per analysis through the
+  `Launcher` trait (unconfined in P1), with the object read-only on descriptor 3 and no other inherited
+  descriptor, one framed request on stdin and one framed response on stdout (16 MiB cap, trailing bytes
+  refused), standard error capped at 64 KiB, and a deadline. The worker's process group is killed at the end
+  of every run. A crash, signal, garbage, malformed frame, answer from another engine or missed deadline gives
+  the synthesised `ERROR` or `TIMEOUT` result of `docs/contracts/cli.md`, and the host keeps serving.
+  New dependencies (Q-47): `command-fds` 0.3.3 (Apache-2.0), `nix` 0.31.3 (MIT).
