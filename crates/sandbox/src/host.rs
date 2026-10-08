@@ -1,0 +1,286 @@
+//! One run of one worker: object, spawn, framed exchange, deadline, process group, classification.
+
+use std::fs::{File, OpenOptions};
+use std::io::{ErrorKind, Read, Write};
+use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::process::ExitStatusExt;
+use std::path::Path;
+use std::process::{Child, ExitStatus};
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
+
+use nix::errno::Errno;
+use nix::fcntl::{FcntlArg, OFlag, fcntl};
+use nix::sys::signal::{Signal, killpg};
+use nix::sys::wait::{Id, WaitPidFlag, waitid};
+use nix::unistd::Pid;
+use ostia_contracts::v1::{AnalyzeResponse, Hint, Status};
+use ostia_contracts::{ContractError, current_version, decode_response, read_frame};
+
+use crate::{EngineIdentity, Failure, HostLimits};
+
+/// How long the host waits for the standard error reader once the worker's process group is gone.
+const STDERR_GRACE: Duration = Duration::from_secs(1);
+
+/// Opens the object for the worker: read-only, never through a symbolic link, a regular file only (a FIFO
+/// or a device could block the host or the worker).
+pub(crate) fn open_object(path: &Path) -> Result<File, Failure> {
+    let object = OpenOptions::new()
+        .read(true)
+        .custom_flags((OFlag::O_NOFOLLOW | OFlag::O_NONBLOCK).bits())
+        .open(path)
+        .map_err(|error| Failure::Object(format!("cannot open the object: {error}")))?;
+    let metadata = object
+        .metadata()
+        .map_err(|error| Failure::Object(format!("cannot inspect the object: {error}")))?;
+    if !metadata.is_file() {
+        return Err(Failure::Object("the object is not a regular file".into()));
+    }
+    fcntl(&object, FcntlArg::F_SETFL(OFlag::empty()))
+        .map_err(|error| Failure::Object(format!("cannot prepare the object: {error}")))?;
+    Ok(object)
+}
+
+/// The response a failed run gets (docs/contracts/cli.md, "Synthesised engine results").
+pub(crate) fn synthesised(
+    identity: &EngineIdentity,
+    failure: &Failure,
+    spent: Duration,
+) -> AnalyzeResponse {
+    let status = if *failure == Failure::Timeout {
+        Status::Timeout
+    } else {
+        Status::Error
+    };
+    AnalyzeResponse {
+        engine_id: identity.id.clone(),
+        engine_version: identity.version.clone(),
+        content_version: identity.content_version.clone(),
+        status: status.into(),
+        hint: Hint::None.into(),
+        score: None,
+        findings: Vec::new(),
+        duration_ms: u32::try_from(spent.as_millis()).unwrap_or(u32::MAX),
+        version: Some(current_version()),
+    }
+}
+
+/// What the worker's threads report to the run.
+enum Event {
+    /// The worker's standard output ended (or was refused early): one frame's message, or why not.
+    Answer(Result<Vec<u8>, ContractError>),
+    /// The worker (the process group leader) exited; it is not reaped yet.
+    Exited,
+}
+
+/// Standard error kept up to its cap.
+#[derive(Default)]
+struct Capture {
+    bytes: Vec<u8>,
+    truncated: bool,
+}
+
+/// How the exchange ended, before the worker's exit status is read.
+struct Exchange {
+    answer: Option<Result<Vec<u8>, ContractError>>,
+    timed_out: bool,
+    cut_short: bool,
+}
+
+/// The output of a run: the worker's answer or why there is none, and its standard error.
+pub(crate) struct Outcome {
+    pub(crate) answer: Result<AnalyzeResponse, Failure>,
+    pub(crate) stderr: Vec<u8>,
+    pub(crate) stderr_truncated: bool,
+}
+
+/// Runs a started worker to its end: writes `frame`, reads the answer, enforces the deadline, stops the
+/// worker's process group and reaps it. Never leaves a process of the group behind.
+pub(crate) fn exchange(
+    mut child: Child,
+    frame: Vec<u8>,
+    identity: &EngineIdentity,
+    limits: HostLimits,
+    started: Instant,
+) -> Outcome {
+    let (Some(stdin), Some(stdout), Some(stderr), Ok(raw_pid)) = (
+        child.stdin.take(),
+        child.stdout.take(),
+        child.stderr.take(),
+        i32::try_from(child.id()),
+    ) else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Outcome {
+            answer: Err(Failure::Spawn(
+                "the launcher did not pipe the standard streams".into(),
+            )),
+            stderr: Vec::new(),
+            stderr_truncated: false,
+        };
+    };
+    let group = Pid::from_raw(raw_pid);
+    let (events, received) = mpsc::channel();
+    write_request(stdin, frame);
+    read_answer(stdout, limits.max_frame, events.clone());
+    let (capture, stderr_done) = capture_stderr(stderr, limits.stderr_cap);
+    watch_exit(group, events);
+
+    let deadline = started + limits.timeout;
+    let exchange = await_end(&received, group, deadline);
+    stop(group);
+    let status = child.wait();
+    let _ = stderr_done.recv_timeout(STDERR_GRACE);
+    let capture = std::mem::take(&mut *capture.lock().unwrap_or_else(PoisonError::into_inner));
+    Outcome {
+        answer: classify(exchange, status, identity),
+        stderr: capture.bytes,
+        stderr_truncated: capture.truncated,
+    }
+}
+
+/// Waits for both the answer and the worker's exit, or the deadline. The worker's group is killed as soon as
+/// the worker exits (a background process must not hold the output open) or its output is refused early.
+fn await_end(received: &mpsc::Receiver<Event>, group: Pid, deadline: Instant) -> Exchange {
+    let mut exchange = Exchange {
+        answer: None,
+        timed_out: false,
+        cut_short: false,
+    };
+    let mut exited = false;
+    while !(exited && exchange.answer.is_some()) {
+        match received.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok(Event::Exited) => {
+                exited = true;
+                stop(group);
+            }
+            Ok(Event::Answer(answer)) => {
+                if matches!(
+                    answer,
+                    Err(ContractError::Oversized { .. }
+                        | ContractError::TrailingBytes
+                        | ContractError::Io(_))
+                ) {
+                    exchange.cut_short = true;
+                    stop(group);
+                }
+                exchange.answer = Some(answer);
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                exchange.timed_out = true;
+                break;
+            }
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    exchange
+}
+
+/// The worker's answer, or the failure that replaces it.
+fn classify(
+    exchange: Exchange,
+    status: std::io::Result<ExitStatus>,
+    identity: &EngineIdentity,
+) -> Result<AnalyzeResponse, Failure> {
+    if exchange.timed_out {
+        return Err(Failure::Timeout);
+    }
+    if exchange.cut_short
+        && let Some(Err(error)) = exchange.answer
+    {
+        return Err(Failure::Protocol(error));
+    }
+    let status = status.map_err(|error| Failure::Protocol(ContractError::Io(error.kind())))?;
+    if let Some(signal) = status.signal() {
+        return Err(Failure::Signalled(signal));
+    }
+    match status.code() {
+        Some(0) => {}
+        Some(code) => return Err(Failure::Exited(code)),
+        None => return Err(Failure::Protocol(ContractError::Io(ErrorKind::Other))),
+    }
+    let body = exchange
+        .answer
+        .unwrap_or(Err(ContractError::Io(ErrorKind::BrokenPipe)))
+        .map_err(Failure::Protocol)?;
+    let response = decode_response(&body).map_err(Failure::Protocol)?;
+    if response.engine_id != identity.id {
+        return Err(Failure::OtherEngine(response.engine_id));
+    }
+    Ok(response)
+}
+
+/// Kills every process of the worker's group. The leader is never reaped before this, so its id still
+/// names this group; a group already gone is not an error.
+fn stop(group: Pid) {
+    let _ = killpg(group, Signal::SIGKILL);
+}
+
+/// Writes the request frame and closes the worker's standard input. A worker that does not read it makes the
+/// write fail; its answer decides the run.
+fn write_request(mut stdin: std::process::ChildStdin, frame: Vec<u8>) {
+    std::thread::spawn(move || {
+        let _ = stdin.write_all(&frame);
+    });
+}
+
+/// Reads one frame's message from the worker's standard output, then expects the end of the output: the cap
+/// is checked before the message is read, and any byte after it is refused.
+fn read_answer(mut stdout: std::process::ChildStdout, cap: usize, events: mpsc::Sender<Event>) {
+    std::thread::spawn(move || {
+        let answer = read_frame(&mut stdout, cap).and_then(|body| {
+            let mut extra = [0_u8; 1];
+            loop {
+                match stdout.read(&mut extra) {
+                    Ok(0) => return Ok(body),
+                    Ok(_) => return Err(ContractError::TrailingBytes),
+                    Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                    Err(error) => return Err(ContractError::Io(error.kind())),
+                }
+            }
+        });
+        let _ = events.send(Event::Answer(answer));
+    });
+}
+
+/// Keeps the first `cap` bytes of the worker's standard error and drains the rest.
+fn capture_stderr(
+    mut stderr: std::process::ChildStderr,
+    cap: usize,
+) -> (Arc<Mutex<Capture>>, mpsc::Receiver<()>) {
+    let capture = Arc::new(Mutex::new(Capture::default()));
+    let (done, finished) = mpsc::channel();
+    let shared = Arc::clone(&capture);
+    std::thread::spawn(move || {
+        let mut chunk = [0_u8; 8192];
+        loop {
+            let read = match stderr.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(read) => read,
+                Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+                Err(_) => break,
+            };
+            let mut kept = shared.lock().unwrap_or_else(PoisonError::into_inner);
+            let room = cap.saturating_sub(kept.bytes.len());
+            let bytes = chunk.get(..read).unwrap_or_default();
+            kept.bytes
+                .extend_from_slice(bytes.get(..room.min(read)).unwrap_or_default());
+            if read > room {
+                kept.truncated = true;
+            }
+        }
+        let _ = done.send(());
+    });
+    (capture, finished)
+}
+
+/// Reports the leader's exit without reaping it (`WNOWAIT`), so the group can still be killed by its id.
+fn watch_exit(group: Pid, events: mpsc::Sender<Event>) {
+    std::thread::spawn(move || {
+        while let Err(Errno::EINTR) =
+            waitid(Id::Pid(group), WaitPidFlag::WEXITED | WaitPidFlag::WNOWAIT)
+        {}
+        let _ = events.send(Event::Exited);
+    });
+}

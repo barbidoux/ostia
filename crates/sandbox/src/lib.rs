@@ -9,14 +9,21 @@
 //!
 //! P1 launches workers without isolation ([`Unconfined`]); P2's sandbox replaces it behind [`Launcher`].
 
+mod host;
+
 use std::ffi::OsString;
 use std::os::fd::OwnedFd;
+use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::process::Child;
-use std::time::Duration;
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
 
-use ostia_contracts::ContractError;
+use command_fds::{CommandFdExt, FdMapping};
 use ostia_contracts::v1::{AnalyzeRequest, AnalyzeResponse};
+use ostia_contracts::{ContractError, encode_frame};
+
+/// The worker's descriptor holding the object (ADR-03).
+const OBJECT_FD: i32 = 3;
 
 /// Default cap on the captured standard error of one run: 64 KiB.
 pub const DEFAULT_STDERR_CAP: usize = 64 * 1024;
@@ -80,8 +87,19 @@ pub struct Unconfined;
 
 impl Launcher for Unconfined {
     fn launch(&self, command: &WorkerCommand, object: OwnedFd) -> std::io::Result<Child> {
-        drop((command, object));
-        todo!("WP-1.6")
+        let mut process = Command::new(command.program());
+        process
+            .args(command.args())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .process_group(0)
+            .fd_mappings(vec![FdMapping {
+                parent_fd: object,
+                child_fd: OBJECT_FD,
+            }])
+            .map_err(std::io::Error::other)?;
+        process.spawn()
     }
 }
 
@@ -173,14 +191,34 @@ impl<L: Launcher> WorkerHost<L> {
         request: &AnalyzeRequest,
         object: &Path,
     ) -> WorkerRun {
-        let _ = (
-            command,
-            identity,
-            request,
-            object,
-            &self.launcher,
-            self.limits,
-        );
-        todo!("WP-1.6")
+        let started = Instant::now();
+        let outcome = encode_frame(request, self.limits.max_frame)
+            .map_err(Failure::Request)
+            .and_then(|frame| Ok((frame, host::open_object(object)?)))
+            .and_then(|(frame, object)| {
+                self.launcher
+                    .launch(command, object.into())
+                    .map(|child| (frame, child))
+                    .map_err(|error| Failure::Spawn(error.to_string()))
+            })
+            .map(|(frame, child)| host::exchange(child, frame, identity, self.limits, started));
+        let (answer, stderr, stderr_truncated) = match outcome {
+            Ok(done) => (done.answer, done.stderr, done.stderr_truncated),
+            Err(failure) => (Err(failure), Vec::new(), false),
+        };
+        match answer {
+            Ok(response) => WorkerRun {
+                response,
+                failure: None,
+                stderr,
+                stderr_truncated,
+            },
+            Err(failure) => WorkerRun {
+                response: host::synthesised(identity, &failure, started.elapsed()),
+                failure: Some(failure),
+                stderr,
+                stderr_truncated,
+            },
+        }
     }
 }

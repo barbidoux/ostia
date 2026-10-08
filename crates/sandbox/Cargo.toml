@@ -10,6 +10,10 @@ publish.workspace = true
 
 [dependencies]
 ostia-contracts = { path = "../contracts" }
+# Q-47: the object on the worker's descriptor 3 (command-fds), the worker's process group killed and its exit
+# observed before it is reaped (nix), with no unsafe code in Ostia.
+command-fds = "=0.3.3"
+nix = { version = "=0.31.3", features = ["fs", "process", "signal"] }
 
 [dev-dependencies]
 ostia-traceability = { path = "../traceability" }
