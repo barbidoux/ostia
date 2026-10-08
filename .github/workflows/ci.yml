@@ -74,8 +74,9 @@ jobs:
           python3 tools/ci/acceptance_plan.py --status docs/phase-status.md --acceptance tests/acceptance \
             > target/acceptance-plan.json
           cat target/acceptance-plan.json
-          # Acceptance tests run target/debug/ostia: build it from this commit, never from the cache.
-          cargo build --workspace --locked
+          # Acceptance tests run target/debug/ostia: build it from this commit, never from the cache,
+          # with the development flags they drive (--dev-engine, docs/contracts/cli.md).
+          cargo build --workspace --locked --features ostia-cli/dev
           for dir in $(python3 -c 'import json; print(" ".join(json.load(open("target/acceptance-plan.json"))["gate"]))'); do
             python3 tools/lock/ostia_lock.py gate "$dir"
           done
@@ -186,7 +187,7 @@ jobs:
           mkdir -p target
           python3 tools/ci/acceptance_plan.py --status docs/phase-status.md --acceptance tests/acceptance \
             > target/acceptance-plan.json
-          cargo build --workspace --locked
+          cargo build --workspace --locked --features ostia-cli/dev
           for dir in $(python3 -c 'import json; print(" ".join(json.load(open("target/acceptance-plan.json"))["informational"]))'); do
             just test-acceptance "$dir" -- "--junitxml=target/acceptance-$dir.xml"
             python3 - "$dir" <<'EOF' >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,20 @@
+[package]
+name = "ostia-cli"
+description = "The `ostia` command line (docs/contracts/cli.md)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "ostia"
+path = "src/main.rs"
+
+[features]
+# Development flags (`--dev-*`, docs/contracts/cli.md): debug builds only, never in a release build.
+dev = []
+
+[lints]
+workspace = true

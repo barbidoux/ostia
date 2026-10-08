@@ -1,7 +1,7 @@
 # ADR-05: Read-only kernel mount in a dedicated namespace for 1.0
 
-- Status: accepted for 1.0. The usbsas evaluation (WP-0.11, below) recommends keeping it; that
-  recommendation is proposed, for the owner to decide.
+- Status: accepted for 1.0. The usbsas evaluation (WP-0.11, below) recommends keeping it; the owner
+  accepted that recommendation on 2026-10-07 (docs/questions.md Q-35, option b).
 - Date: 2026-10-02 (evaluation added 2026-10-07)
 - Deciders: Matthias Vaytet (owner)
 - Source: spec §21, §3, §13
@@ -43,9 +43,10 @@ run as a separate process.
   bench covers that (WP-0.2).
 - Follow-ups: WP-0.11 (time-boxed usbsas spike: licence, process interface, file systems, performance on
   the reference images; no code copied) updates this ADR with a recommendation and evidence, status
-  "proposed", for the owner to decide. WP-1.4 (development mount layer), WP-4.5 (production helper).
+  "proposed"; the owner accepted it on 2026-10-07 (Q-35, option b). WP-1.4 (development mount layer),
+  WP-4.5 (production helper).
 
-## usbsas evaluation (WP-0.11, proposed)
+## usbsas evaluation (WP-0.11)
 
 ### What was evaluated
 
@@ -96,7 +97,7 @@ Limits of these numbers:
 Even at the worst ratio (FAT32, about 8 s for 230 MiB), the media layer would not decide the 10-minute
 budget of NFR-01. The functional gaps decide the choice.
 
-### Recommendation (proposed)
+### Recommendation (accepted by the owner, 2026-10-07)
 
 **Keep option 1, the read-only kernel mount, for 1.0. Do not reuse usbsas as the media layer.**
 - The main blockers are its model:

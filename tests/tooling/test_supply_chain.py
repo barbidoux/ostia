@@ -878,6 +878,7 @@ def test_rust_sbom_per_shipped_crate(generated: tuple[Path, str]) -> None:
     rust = produced(generated) / "rust"
     # Shipped crates live under crates/; test doubles (tests/fakes) are not part of a release.
     assert {path.name for path in rust.iterdir()} == {
+        "ostia-cli.cdx.json",
         "ostia-contracts.cdx.json",
         "ostia-core-domain.cdx.json",
         "ostia-traceability.cdx.json",

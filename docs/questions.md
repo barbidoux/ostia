@@ -17,7 +17,7 @@ Blocking: yes/no
 The specification lists open questions (name trademark search, default business formats, EMBER false-positive
 ceiling, reference medium, E1 default N, deep mode default and size threshold, HIDDEN_PAYLOAD default, first
 commercial engine packs, FS15 network airlock, kiosk user authentication, usbsas reuse, regulated profile as
-default). Each phase brief says when an answer is needed.
+default). usbsas reuse: answered in Q-35 (2026-10-07). Each phase brief says when an answer is needed.
 Blocking: no (each becomes blocking in the phase that needs it)
 
 ### Q-10 · WP-0.3 · NFR-07, NFR-19 · requirements with no phase
@@ -56,24 +56,6 @@ Blocking: no.
 Also for the owner (WP-0.8): add `deny.toml` (and, if wanted, `tools/supply/python-licences.toml`) to the
 rails manifest and the guard, as prompts/P0.md plans ("after this package deny.toml is owner-gated").
 
-### Q-35 · WP-0.11 · FR-02, FR-03, SEC-08 · usbsas as the media layer (ADR-05)
-Context: the WP-0.11 spike evaluated usbsas v0.3.3 (ADR-05, section "usbsas evaluation"). Every file read
-back correctly through usbsas on the FAT32, exFAT, NTFS and ext4 images, 1.5 to 11 times slower than a
-kernel mount. Its model does not fit Ostia:
-- access to files only, with areas outside files reachable only through a second full read;
-- per-file errors instead of fail-closed;
-- CLEAN/DIRTY per file;
-- no SHA-1, and a plaintext tar;
-- ext2 and ext3 refused;
-- an unversioned protocol with no length cap, and GPL `.proto` files;
-- one integration test, and no fuzzing.
-Options: (a) keep the kernel mount for 1.0 and do not reuse usbsas (b) keep the kernel mount for 1.0, and
-open an ADR later (P4/P5) for a hybrid that uses only the usbsas user-space USB reader, streaming the raw
-device into Ostia's own workers and The Sleuth Kit (c) reuse usbsas as the media layer now.
-Recommendation: (b): (a) for 1.0, with the hybrid kept as a measured candidate on the bench.
-Blocking: no for P1 (the kernel mount is already the accepted decision).
-This also answers the usbsas item of Q-1 (spec §21) once the owner decides.
-
 ### Q-34 · WP-0.9 · — · red-first limits left open
 Context: `tools/ci/red_first.py` (WP-0.9) traces changed Python helpers, fixtures (conftest included) and
 constants to the tests that use them. It does not trace these:
@@ -90,6 +72,94 @@ reads each diff.
 Blocking: no.
 
 ## Answered
+
+### Q-40 · WP-0.12 · — · the `dev` feature in lint and unit tests
+Context: `just lint` and `just test-rust` build without `ostia-cli/dev`, so code behind `cfg(feature = "dev")`
+(the `--dev-engine` path of WP-1.10) is neither linted nor unit-tested; the release guard keys on
+`debug_assertions` only.
+Options: (a) WP-1.10 adds `--features ostia-cli/dev` to the clippy and nextest runs (a lint configuration
+change, owner approval), and the release pipeline (P9) checks that the binary has no `--dev-` flag (b) leave.
+Recommendation: (a).
+Blocking: no.
+Answer (owner, 2026-10-08, the recommendation): (a). WP-1.10 adds `--features ostia-cli/dev` to the clippy and
+nextest runs (lint configuration change approved here); P9 checks that release binaries have no `--dev-` flag.
+
+### Q-39 · WP-0.12 · CTR-04 · the v1 JSON schemas are not locked
+Context: the locked P1 tests validate every report against `schemas/report.schema.json`, which is in no
+`LOCK.sha256` and not in the rails manifest. Loosening it later (dropping a required field, widening an enum)
+would make the locked tests check less while still passing.
+Options: (a) the owner adds `schemas/report.schema.json` and `schemas/policy.schema.json` to the rails manifest
+(`just rails-update`, guard) (b) a tooling compatibility test like `proto/ostia/engine/v1/compat.json`: required
+fields stay required, enums only grow, closed objects stay closed (c) leave it to review.
+Recommendation: (a) at the lock, then (b) in a later tooling package.
+Blocking: no.
+Answer (owner, 2026-10-08, the recommendation): (a) at the lock: the owner adds `schemas/report.schema.json` and
+`schemas/policy.schema.json` to the rails manifest and the guard (owner-managed files), then (b) in a later tooling
+package.
+
+### Q-38 · WP-0.12 · NFR-17, FR-09 · where the EMBER thresholds come from
+Context: spec §8 says the EMBER high and low thresholds ship with the model in its signed bundle; the P1 policy
+contract (ADR-09 follow-up) needs thresholds for a scorer now, so `policy.md` gives each scorer `thresholds`
+and says that, when a model bundle also carries thresholds (P2), the stricter of each pair applies.
+Options: (a) as written: the policy's thresholds, hardened by the bundle's (b) the bundle's thresholds replace
+the policy's in P2 (the P1 tests still pass: they run without a bundle) (c) thresholds only in the policy.
+Recommendation: (a): neither source can soften the other.
+Blocking: no for the lock (P1 tests run without a bundle); decide before WP-2.x.
+Answer (owner, 2026-10-08, the recommendation): (a). The policy's thresholds apply; a model bundle's can only
+harden them (the stricter of each pair). WP-2.x implements it.
+
+### Q-37 · WP-0.12 · FR-03..FR-14 · decisions in the P1 contracts to confirm before the lock
+Context: the P1 tests freeze the contracts of `docs/contracts/` (cli, report, policy). The agent decided these
+points under the owner's delegation, several after the lock review (reviewer and test-auditor):
+- symbolic links, reparse points and special files are listed, never followed or read, and UNSCANNABLE (R1):
+  a medium holding one is blocked in compliant mode;
+- a scan runs with exactly the policy's engines and at least one (exit 2 otherwise): no default role;
+- R1 also covers a scorer answering OK without a score, an encrypted archive entry, sizes that do not match the
+  declared ones, and an entry path that is absolute or has a `..` component;
+- a heuristic engine's MALICIOUS hint is a risky heuristic (R6), never a detection; reputation is an engine role
+  (known bad: R2, known good: R3); the scorer's hint is ignored;
+- `--on-expiry block` blocks the medium in compliant mode (part of it may never have been listed);
+- selective and scan-only modes are locked now (FR-21 is P7);
+- names that are not UTF-8 are written with `\xNN` escapes; XATTR objects go to engines as ALT_STREAM;
+- zip-based documents (docx, xlsx, odt, jar, apk, epub...) count as consistent with `zip`;
+- `policy verify` prints exactly two keys; exit codes 0/2/3/4/5 as in cli.md.
+Options: (a) confirm (b) change some of them before `just lock p1` (the tests follow the contracts).
+Recommendation: (a). Each choice fails closed; the first one is the strictest reading of "no transfer when an
+analysis fails" and could be relaxed later only by a relock.
+Blocking: yes, for the lock.
+Answer (owner, 2026-10-08, "answer the questions": the recommendation): (a), every decision confirmed as
+written in docs/contracts/.
+
+### Q-36 · WP-0.12 · FR-09, FR-10, SEC-10, FR-06 · contracts the P1 lock freezes
+Context: the P1 tests write signed policies, observe transfers, check signatures and build archives, before the
+packages that build them exist.
+Answer (owner, 2026-10-07):
+- policy format: a JSON contract `ostia.policy.v1` now (`docs/contracts/policy.md`, `schemas/policy.schema.json`),
+  fixed rule order R1–R7, parameters as data; WP-1.2 implements it;
+- transfers: a regular `ostia scan --output <dir>` flag and a `transferable` field per object;
+- signature files: 64 raw bytes, trusted key 32 raw bytes;
+- archives: one extraction test per format (7z, rar, cab, iso, msi) through a fixture builder written in WP-1.9;
+  zip, tar, gzip and the limits with the standard library. The rar test expects extraction, not listing.
+
+### Q-35 · WP-0.11 · FR-02, FR-03, SEC-08 · usbsas as the media layer (ADR-05)
+Context: the WP-0.11 spike evaluated usbsas v0.3.3 (ADR-05, section "usbsas evaluation"). Every file read
+back correctly through usbsas on the FAT32, exFAT, NTFS and ext4 images, 1.5 to 11 times slower than a
+kernel mount. Its model does not fit Ostia:
+- access to files only, with areas outside files reachable only through a second full read;
+- per-file errors instead of fail-closed;
+- CLEAN/DIRTY per file;
+- no SHA-1, and a plaintext tar;
+- ext2 and ext3 refused;
+- an unversioned protocol with no length cap, and GPL `.proto` files;
+- one integration test, and no fuzzing.
+Options: (a) keep the kernel mount for 1.0 and do not reuse usbsas (b) keep the kernel mount for 1.0, and
+open an ADR later (P4/P5) for a hybrid that uses only the usbsas user-space USB reader, streaming the raw
+device into Ostia's own workers and The Sleuth Kit (c) reuse usbsas as the media layer now.
+Recommendation: (b): (a) for 1.0, with the hybrid kept as a measured candidate on the bench.
+Blocking: no for P1 (the kernel mount is already the accepted decision).
+This also answers the usbsas item of Q-1 (spec §21).
+Answer (owner, 2026-10-07): (b). The kernel mount stays for 1.0 (ADR-05); the hybrid that reuses only the
+usbsas user-space USB reader is a candidate for a later ADR (P4/P5), after a bench measurement.
 
 ### Q-33 · WP-0.9 · — · bench tests in the red-first check
 Context: bench tests (the `bench` marker, Rust targets that require the `bench` feature) cannot run in the

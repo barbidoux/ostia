@@ -1,0 +1,23 @@
+{
+  "schema": "ostia.policy.v1",
+  "version": "2026.10.0",
+  "engines": {
+    "clamav": {"role": "detector", "trusted_alone": true},
+    "ember": {"role": "scorer", "thresholds": {"low": 0.6, "high": 0.9}},
+    "hash-reputation": {"role": "reputation"},
+    "pdf-heuristics": {"role": "heuristic"}
+  },
+  "rules": {
+    "R1": {"risky_types": ["pe", "elf"]},
+    "R2": {"k": 2, "critical_severity": 4},
+    "R6": {"double_extension": true, "extension_mismatch": true, "single_detection": true, "suspicious_hint": true}
+  },
+  "limits": {
+    "max_depth": 8,
+    "max_ratio": 200,
+    "max_total_bytes": 4294967296,
+    "max_entries": 100000,
+    "max_path_length": 4096,
+    "engine_timeout_seconds": 60
+  }
+}
