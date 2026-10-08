@@ -52,8 +52,9 @@ declare -A PIN_OF=([uv]=UV_VERSION [just]=JUST_VERSION [cargo-nextest]=NEXTEST_V
     [cargo-deny]=CARGO_DENY_VERSION [cargo-audit]=CARGO_AUDIT_VERSION [cargo-cyclonedx]=CARGO_CYCLONEDX_VERSION [rustc]=RUST)
 
 is_root() { [[ "$(id -u)" == 0 ]]; }
-# file system:kernel module:FUSE helper
-FILE_SYSTEMS=("vfat:vfat:" "exfat:exfat:mount.exfat-fuse" "ntfs:ntfs3:ntfs-3g" "ext4:ext4:")
+# file system:kernel module:FUSE helper, as tools/dev/loopmount.sh mounts them (ADR-17: NTFS only through
+# ntfs-3g, no kernel module)
+FILE_SYSTEMS=("vfat:vfat:" "exfat:exfat:mount.exfat-fuse" "ntfs::ntfs-3g" "ext4:ext4:")
 
 missing=0
 report_missing() {
@@ -106,6 +107,7 @@ check_tool() {
 }
 
 kernel_has() {
+    [[ -n "$1" ]] || return 1
     grep -qw -- "$1" "$proc_filesystems" 2>/dev/null && return 0
     command -v modinfo >/dev/null 2>&1 && modinfo -- "$1" >/dev/null 2>&1
 }
@@ -129,6 +131,8 @@ check() {
             echo "ok: fs $fs: kernel"
         elif [[ -n "$fuse" ]] && command -v "$fuse" >/dev/null 2>&1; then
             echo "ok: fs $fs: fuse ($fuse)"
+        elif [[ -n "$fuse" && -z "$module" ]]; then
+            report_missing "fs $fs: $fuse not installed"
         elif [[ -n "$fuse" ]]; then
             report_missing "fs $fs: no kernel module $module and $fuse not installed"
         else
