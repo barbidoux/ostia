@@ -307,7 +307,10 @@ dependencies = [
 name = "ostia-core-domain"
 version = "0.0.0"
 dependencies = [
+ "ostia-contracts",
  "ostia-traceability",
+ "proptest",
+ "thiserror",
 ]
 
 [[package]]

@@ -1,0 +1,201 @@
+//! Verdicts of objects and of the medium, and their worst-of ordering (ADR-16).
+//!
+//! Which verdict an object gets is decided by the signed policy (ADR-09, WP-1.2); this module holds the
+//! values, the order and the invariants of the report contract (`docs/contracts/report.md`).
+
+use thiserror::Error;
+
+use crate::object::ObjectId;
+
+/// The verdict of an object or of a medium (FR-09).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Verdict {
+    /// Nothing found.
+    Clean,
+    /// A risk indicator; blocks the object concerned in compliant mode.
+    Suspicious,
+    /// The object could not be analysed; blocks the medium in compliant mode.
+    Unscannable,
+    /// A detection; blocks the medium in compliant mode.
+    Malicious,
+}
+
+impl Verdict {
+    /// The worse of two verdicts: `Clean < Suspicious < Unscannable < Malicious` (ADR-16).
+    #[must_use]
+    pub fn worst(self, _other: Self) -> Self {
+        todo!("WP-1.1: worst-of ordering")
+    }
+}
+
+/// The worst verdict of a collection, or `None` when it is empty (the caller decides what an empty medium
+/// means).
+pub fn worst_of<I: IntoIterator<Item = Verdict>>(_verdicts: I) -> Option<Verdict> {
+    todo!("WP-1.1: worst-of ordering")
+}
+
+/// The policy rule that decided an object verdict (spec §8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Rule {
+    /// Failure, timeout, limit, unsupported risky type: UNSCANNABLE.
+    R1,
+    /// Known-bad hash, trusted detection, K-of-N, critical finding: MALICIOUS.
+    R2,
+    /// Exact known-good hash: CLEAN.
+    R3,
+    /// Score at or above the high threshold: MALICIOUS.
+    R4,
+    /// Score at or above the low threshold: SUSPICIOUS.
+    R5,
+    /// Risky heuristic: SUSPICIOUS.
+    R6,
+    /// None of the above: CLEAN.
+    R7,
+}
+
+/// The limit that made an object UNSCANNABLE.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Limit {
+    /// Nesting depth of extracted objects.
+    Depth,
+    /// Compression ratio.
+    Ratio,
+    /// Bytes extracted from one file's tree.
+    TotalSize,
+    /// Entries extracted from one file's tree.
+    EntryCount,
+    /// Length of an entry path.
+    PathLength,
+    /// Maximum scan time (FR-14).
+    ScanTime,
+}
+
+/// A score in `[0, 1]` (finite).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Score(f64);
+
+impl Score {
+    /// A score, refused when it is not a finite number in `[0, 1]`.
+    ///
+    /// # Errors
+    /// [`VerdictError::ScoreOutOfRange`].
+    pub fn new(_value: f64) -> Result<Self, VerdictError> {
+        todo!("WP-1.1: score validation")
+    }
+
+    /// The value.
+    #[must_use]
+    pub fn value(self) -> f64 {
+        self.0
+    }
+}
+
+/// A value the report contract refuses.
+#[derive(Debug, Clone, PartialEq, Error)]
+pub enum VerdictError {
+    /// A score that is not a finite number in `[0, 1]`.
+    #[error("score {0} is not a finite number in [0, 1]")]
+    ScoreOutOfRange(f64),
+    /// An explanation that is empty or only white space.
+    #[error("a verdict needs a non-empty explanation")]
+    EmptyExplanation,
+    /// UNSCANNABLE comes only from R1, and R1 gives only UNSCANNABLE.
+    #[error("{verdict:?} cannot come from rule {rule:?}")]
+    RuleMismatch {
+        /// The verdict given.
+        verdict: Verdict,
+        /// The rule given.
+        rule: Rule,
+    },
+    /// A limit is reported only on an UNSCANNABLE object.
+    #[error("a limit is reported only on an UNSCANNABLE verdict, not {0:?}")]
+    LimitWithoutUnscannable(Verdict),
+}
+
+/// The decision for one object (FR-09): verdict, rule, score, contributing engines, explanation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObjectVerdict {
+    verdict: Verdict,
+    rule: Rule,
+    score: Option<Score>,
+    contributing_engines: Vec<String>,
+    explanation: String,
+    limit: Option<Limit>,
+}
+
+impl ObjectVerdict {
+    /// A verdict with its rule and explanation.
+    ///
+    /// # Errors
+    /// [`VerdictError::EmptyExplanation`], [`VerdictError::RuleMismatch`].
+    pub fn new(_verdict: Verdict, _rule: Rule, _explanation: &str) -> Result<Self, VerdictError> {
+        todo!("WP-1.1: object verdict")
+    }
+
+    /// The same verdict with a score.
+    #[must_use]
+    pub fn with_score(self, _score: Score) -> Self {
+        todo!("WP-1.1: object verdict")
+    }
+
+    /// The same verdict with the engines whose results made the rule match (sorted, without duplicates).
+    #[must_use]
+    pub fn with_engines<I: IntoIterator<Item = S>, S: Into<String>>(self, _engines: I) -> Self {
+        todo!("WP-1.1: object verdict")
+    }
+
+    /// The same verdict with the limit that was reached.
+    ///
+    /// # Errors
+    /// [`VerdictError::LimitWithoutUnscannable`].
+    pub fn with_limit(self, _limit: Limit) -> Result<Self, VerdictError> {
+        todo!("WP-1.1: object verdict")
+    }
+
+    /// The verdict.
+    #[must_use]
+    pub fn verdict(&self) -> Verdict {
+        self.verdict
+    }
+
+    /// The rule that decided it.
+    #[must_use]
+    pub fn rule(&self) -> Rule {
+        self.rule
+    }
+
+    /// The score, if a scorer gave one.
+    #[must_use]
+    pub fn score(&self) -> Option<Score> {
+        self.score
+    }
+
+    /// The contributing engines.
+    #[must_use]
+    pub fn contributing_engines(&self) -> &[String] {
+        &self.contributing_engines
+    }
+
+    /// The explanation.
+    #[must_use]
+    pub fn explanation(&self) -> &str {
+        &self.explanation
+    }
+
+    /// The limit reached, if any.
+    #[must_use]
+    pub fn limit(&self) -> Option<Limit> {
+        self.limit
+    }
+}
+
+/// The decision for the medium.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MediumVerdict {
+    /// The worst verdict (ADR-16).
+    pub verdict: Verdict,
+    /// Whether the whole medium is blocked (decided by the policy and the mode).
+    pub blocked: bool,
+    /// The MALICIOUS and UNSCANNABLE objects.
+    pub blocking_objects: Vec<ObjectId>,
+}
