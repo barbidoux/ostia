@@ -72,3 +72,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   score and an explanation; inconsistent or failed engine results give UNSCANNABLE; the medium verdict and
   the transferable objects for the compliant, selective and scan-only modes, with hooks for D1 and D2.
   `ostia policy verify` is built (exit 0 with the policy's version and SHA-256, 4 when refused).
+- Disk-image fixture generator (WP-1.3, `tests/fixtures/images.py`): `build_image(fs, files)` builds bare
+  FAT12/16/32, exFAT, NTFS and ext2/3/4 images under `target/fixtures/` with planted names (trapped names
+  included), bytes, times, hidden and read-only attributes, NTFS alternate data streams, ext `user.*`
+  attributes and symbolic links, checks them with fsck, caches them by request with a manifest, and refuses
+  any request a file system cannot hold exactly. The development mount helper mounts FAT with `utf8` names
+  and UTC times (Q-44).
