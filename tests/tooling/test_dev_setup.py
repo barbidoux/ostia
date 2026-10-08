@@ -178,8 +178,19 @@ def test_check_prefers_kernel_drivers_and_names_missing_modules(tmp_path: Path) 
     code, lines = check(env)
     assert code == 1
     assert "ok: fs exfat: kernel" in lines
-    assert "ok: fs ntfs: kernel" in lines
+    # NTFS always goes through ntfs-3g, as in the mount helper (ADR-17).
+    assert "ok: fs ntfs: fuse (ntfs-3g)" in lines
     assert "missing: fs vfat: no kernel module vfat" in lines
+
+
+@pytest.mark.req("NFR-15")
+def test_check_needs_ntfs_3g_even_where_the_kernel_has_ntfs3(tmp_path: Path) -> None:
+    env = fake_environment(tmp_path, omit=("ntfs-3g",))
+    Path(env["OSTIA_PROC_FILESYSTEMS"]).write_text("\tvfat\n\texfat\n\tntfs3\n\text4\n")
+    code, lines = check(env)
+    assert code == 1
+    assert "missing: fs ntfs: ntfs-3g not installed" in lines
+    assert not any(line.startswith("ok: fs ntfs") for line in lines), lines
 
 
 @pytest.mark.req("NFR-15")
@@ -193,7 +204,7 @@ def test_check_prefers_kernel_drivers_and_names_missing_modules(tmp_path: Path) 
             ("mount.exfat-fuse",),
             "missing: fs exfat: no kernel module exfat and mount.exfat-fuse not installed",
         ),
-        (("ntfs-3g",), "missing: fs ntfs: no kernel module ntfs3 and ntfs-3g not installed"),
+        (("ntfs-3g",), "missing: fs ntfs: ntfs-3g not installed"),
     ],
     ids=["apt tool", "sleuth kit", "user tool", "exfat support", "ntfs support"],
 )
