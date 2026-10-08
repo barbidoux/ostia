@@ -66,3 +66,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   score, contributing engines, explanation and limit; the object tree (files of the medium as roots, streams on
   their host file, links never read, depth within the policy's limit); session, medium, device placeholder and
   engine results.
+- Verdict policy engine (WP-1.2, `core-domain::policy`): the signed policy `ostia.policy.v1` is verified
+  with Ed25519 over its exact bytes before anything is parsed, then parsed strictly (unknown keys, duplicates,
+  null and non-integer numbers refused); rules R1 to R7 in the order of spec §8, with contributing engines,
+  score and an explanation; inconsistent or failed engine results give UNSCANNABLE; the medium verdict and
+  the transferable objects for the compliant, selective and scan-only modes, with hooks for D1 and D2.
+  `ostia policy verify` is built (exit 0 with the policy's version and SHA-256, 4 when refused).
