@@ -471,20 +471,24 @@ fn endless_output_after_the_answer_is_cut_short() {
 #[test]
 fn answer_over_the_frame_cap_yields_error() {
     let scratch = Scratch::new();
-    scratch.answer(&answer());
+    // The cap holds in both directions: the request (under 200 bytes) passes, the answer (over 300) does not.
+    let mut long = answer();
+    long.findings[0].evidence = "e".repeat(300);
+    scratch.answer(&long);
     let limits = HostLimits {
-        max_frame: 8,
+        max_frame: 200,
         ..HostLimits::new(GENEROUS)
     };
     let started = Instant::now();
-    let worker = scratch.worker(r#"cat "$ANSWER""#);
+    let worker = scratch.worker(r#"cat > "$D/request.bin"; cat "$ANSWER""#);
     let done =
         WorkerHost::unconfined(limits).run(&worker, &identity(), &request(), &scratch.object());
     let elapsed = started.elapsed();
+    assert!(scratch.exists("request.bin"), "the request was not sent");
     assert!(
         matches!(
             done.failure,
-            Some(Failure::Protocol(ContractError::Oversized { cap: 8, .. }))
+            Some(Failure::Protocol(ContractError::Oversized { cap: 200, .. }))
         ),
         "{:?}",
         done.failure
