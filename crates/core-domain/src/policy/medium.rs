@@ -12,8 +12,9 @@ use crate::verdict::{MediumVerdict, Verdict, worst_of};
 /// the scan expired or the session was aborted; blocked as the mode says.
 #[must_use]
 pub fn medium_verdict(objects: &[(ObjectId, Verdict)], state: &SessionState) -> MediumVerdict {
+    let stopped = stopped(state);
     let mut verdict = worst_of(objects.iter().map(|&(_, v)| v));
-    if state.expired || state.aborted {
+    if state.expired || stopped {
         verdict = Some(verdict.map_or(Verdict::Unscannable, |v| v.worst(Verdict::Unscannable)));
     }
     let blocking_objects: Vec<ObjectId> = objects
@@ -21,14 +22,13 @@ pub fn medium_verdict(objects: &[(ObjectId, Verdict)], state: &SessionState) -> 
         .filter(|(_, v)| matches!(v, Verdict::Malicious | Verdict::Unscannable))
         .map(|&(id, _)| id)
         .collect();
-    let device_rejected = state.findings.contains(&MediumFinding::DeviceRejected);
     let blocked_by_objects = match state.mode {
         Mode::Compliant | Mode::ScanOnly => !blocking_objects.is_empty() || state.expired,
         Mode::Selective => false,
     };
     MediumVerdict {
         verdict: verdict.unwrap_or(Verdict::Clean),
-        blocked: state.aborted || device_rejected || blocked_by_objects,
+        blocked: stopped || blocked_by_objects,
         blocking_objects,
         findings: state.findings.clone(),
     }
@@ -43,7 +43,8 @@ pub fn transferable(
     state: &SessionState,
     medium: &MediumVerdict,
 ) -> BTreeSet<ObjectId> {
-    if state.mode == Mode::ScanOnly || state.aborted || medium.blocked {
+    let blocked = state.mode == Mode::Compliant && medium.blocked;
+    if state.mode == Mode::ScanOnly || stopped(state) || blocked {
         return BTreeSet::new();
     }
     let clean = |id: ObjectId| verdicts.get(&id) == Some(&Verdict::Clean);
@@ -64,6 +65,12 @@ pub fn transferable(
         })
         .map(|node| node.id)
         .collect()
+}
+
+/// Nothing of the medium may be transferred: the input was refused, the session aborted, or the device
+/// rejected (D1 aborts the session).
+fn stopped(state: &SessionState) -> bool {
+    state.refused || state.aborted || state.findings.contains(&MediumFinding::DeviceRejected)
 }
 
 /// The file of the medium an object belongs to.

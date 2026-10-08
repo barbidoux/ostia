@@ -19,18 +19,45 @@ const SCHEMA: &str = "ostia.policy.v1";
 const MAX_VERSION_CHARS: usize = 64;
 const MAX_ENGINE_ID_CHARS: usize = 64;
 
-fn signature_invalid(detail: impl Into<String>) -> PolicyError {
+/// Longest refusal detail, in characters: a detail describes the problem, it never carries the policy.
+const MAX_DETAIL_CHARS: usize = 160;
+
+fn signature_invalid(detail: impl AsRef<str>) -> PolicyError {
     PolicyError {
         refusal: Refusal::SignatureInvalid,
-        detail: detail.into(),
+        detail: short(detail.as_ref()),
     }
 }
 
-fn invalid(detail: impl Into<String>) -> PolicyError {
+fn invalid(detail: impl AsRef<str>) -> PolicyError {
     PolicyError {
         refusal: Refusal::Invalid,
-        detail: detail.into(),
+        detail: short(detail.as_ref()),
     }
+}
+
+/// One line of at most `MAX_DETAIL_CHARS` characters.
+fn short(detail: &str) -> String {
+    let line: String = detail
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    if line.chars().count() <= MAX_DETAIL_CHARS {
+        line
+    } else {
+        let mut cut: String = line.chars().take(MAX_DETAIL_CHARS - 1).collect();
+        cut.push('…');
+        cut
+    }
+}
+
+/// A string from the policy, quoted with its control characters escaped and cut to 32 characters.
+fn quoted(value: &str) -> String {
+    let mut shown: String = value.chars().take(32).collect();
+    if value.chars().count() > 32 {
+        shown.push('…');
+    }
+    format!("{shown:?}")
 }
 
 /// Load a policy: check the size, verify the signature over the exact bytes, then parse and validate.
@@ -39,18 +66,15 @@ fn invalid(detail: impl Into<String>) -> PolicyError {
 /// [`PolicyError`] with [`Refusal::SignatureInvalid`] or [`Refusal::Invalid`].
 pub fn load(policy: &[u8], signature: &[u8], trusted_key: &[u8]) -> Result<Policy, PolicyError> {
     if policy.len() > MAX_POLICY_BYTES {
-        return Err(invalid(format!(
+        // Its exact bytes are never read in full, so its signature cannot be verified.
+        return Err(signature_invalid(format!(
             "the policy is larger than {MAX_POLICY_BYTES} bytes"
         )));
     }
     verify(policy, signature, trusted_key)?;
-    let Strict(value) = serde_json::from_slice(policy).map_err(|e| invalid(one_line(&e)))?;
-    let file: PolicyFile = serde_json::from_value(value).map_err(|e| invalid(one_line(&e)))?;
+    let Strict(value) = serde_json::from_slice(policy).map_err(|e| invalid(e.to_string()))?;
+    let file: PolicyFile = serde_json::from_value(value).map_err(|e| invalid(e.to_string()))?;
     validate(file, Sha256::digest(policy).into())
-}
-
-fn one_line(error: &impl fmt::Display) -> String {
-    error.to_string().replace(['\n', '\r'], " ")
 }
 
 fn verify(policy: &[u8], signature: &[u8], trusted_key: &[u8]) -> Result<(), PolicyError> {
@@ -114,7 +138,8 @@ impl<'de> Visitor<'de> for StrictVisitor {
     }
 
     fn visit_unit<E: de::Error>(self) -> Result<Value, E> {
-        Ok(Value::Null)
+        // No key of the schema accepts null: an explicit null is never read as an absent key.
+        Err(E::custom("null is not allowed"))
     }
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
@@ -129,7 +154,7 @@ impl<'de> Visitor<'de> for StrictVisitor {
         let mut object = Map::new();
         while let Some(key) = map.next_key::<String>()? {
             if object.contains_key(&key) {
-                return Err(de::Error::custom(format!("duplicate key \"{key}\"")));
+                return Err(de::Error::custom(format!("duplicate key {}", quoted(&key))));
             }
             let Strict(value) = map.next_value()?;
             object.insert(key, value);
@@ -183,7 +208,7 @@ struct R1File {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct R2File {
-    k: u32,
+    k: u64,
     critical_severity: u32,
 }
 
@@ -231,11 +256,15 @@ fn validate(file: PolicyFile, sha256: [u8; 32]) -> Result<Policy, PolicyError> {
     for risky in file.rules.r1.risky_types {
         if !is_type_name(&risky) {
             return Err(invalid(format!(
-                "risky type \"{risky}\" is not a type name"
+                "risky type {} is not a type name",
+                quoted(&risky)
             )));
         }
         if !risky_types.insert(risky.clone()) {
-            return Err(invalid(format!("risky type \"{risky}\" is listed twice")));
+            return Err(invalid(format!(
+                "risky type {} is listed twice",
+                quoted(&risky)
+            )));
         }
     }
     let r2 = file.rules.r2;
@@ -260,7 +289,7 @@ fn validate(file: PolicyFile, sha256: [u8; 32]) -> Result<Policy, PolicyError> {
         sha256,
         engines,
         risky_types,
-        k: u64::from(r2.k),
+        k: r2.k,
         critical_severity: r2.critical_severity,
         r6,
         limits: limits(&file.limits)?,
@@ -269,7 +298,7 @@ fn validate(file: PolicyFile, sha256: [u8; 32]) -> Result<Policy, PolicyError> {
 
 fn engine_role(id: &str, entry: EngineEntry) -> Result<EngineRole, PolicyError> {
     if !is_engine_id(id) {
-        return Err(invalid(format!("engine id \"{id}\" is not valid")));
+        return Err(invalid(format!("engine id {} is not valid", quoted(id))));
     }
     match (entry.role.as_str(), entry.trusted_alone, entry.thresholds) {
         ("detector", Some(trusted_alone), None) => Ok(EngineRole::Detector { trusted_alone }),
@@ -278,14 +307,17 @@ fn engine_role(id: &str, entry: EngineEntry) -> Result<EngineRole, PolicyError> 
                 Ok(EngineRole::Scorer { low, high })
             } else {
                 Err(invalid(format!(
-                    "engine \"{id}\": thresholds need 0 < low < high <= 1"
+                    "engine {}: thresholds need 0 < low < high <= 1",
+                    quoted(id)
                 )))
             }
         }
         ("reputation", None, None) => Ok(EngineRole::Reputation),
         ("heuristic", None, None) => Ok(EngineRole::Heuristic),
         (role, _, _) => Err(invalid(format!(
-            "engine \"{id}\": role \"{role}\" with keys the contract does not allow"
+            "engine {}: role {} with keys the contract does not allow",
+            quoted(id),
+            quoted(role)
         ))),
     }
 }

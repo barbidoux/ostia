@@ -46,13 +46,18 @@ impl Flags {
     }
 }
 
-/// At most `cap + 1` bytes of a file: enough for the caller to see that it is too large, never more.
+/// At most `cap + 1` bytes of a regular file: enough for the caller to see that it is too large, never
+/// more. A device, FIFO or directory is never read.
 ///
 /// # Errors
-/// The I/O error of opening or reading the file.
+/// The I/O error of opening or reading the file, or `not a regular file`.
 pub fn read_capped(path: &Path, cap: usize) -> io::Result<Vec<u8>> {
+    let file = File::open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::other("not a regular file"));
+    }
     let limit = u64::try_from(cap).unwrap_or(u64::MAX).saturating_add(1);
     let mut bytes = Vec::new();
-    File::open(path)?.take(limit).read_to_end(&mut bytes)?;
+    file.take(limit).read_to_end(&mut bytes)?;
     Ok(bytes)
 }

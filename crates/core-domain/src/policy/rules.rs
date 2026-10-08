@@ -18,6 +18,8 @@ struct Read<'a> {
     hint: Hint,
     score: Option<f64>,
     max_severity: Option<u32>,
+    /// Another result of the same engine exists for this object.
+    duplicate: bool,
 }
 
 impl<'a> Read<'a> {
@@ -30,21 +32,36 @@ impl<'a> Read<'a> {
             hint: Hint::try_from(response.hint).unwrap_or(Hint::Unspecified),
             score: response.score,
             max_severity: response.findings.iter().map(|f| f.severity).max(),
+            duplicate: false,
         }
+    }
+
+    /// A score a scorer may give: finite, in [0, 1].
+    fn valid_score(&self) -> Option<f64> {
+        self.score.filter(|s| (0.0..=1.0).contains(s))
     }
 
     fn ok(&self) -> bool {
         self.status == Some(Status::Ok)
     }
 
-    /// A failure of this run (R1): status ERROR, TIMEOUT or unknown, a scorer answering OK without a
-    /// score, or an engine the policy gives no role.
+    /// A failure of this run (R1): status ERROR, TIMEOUT or unknown; an engine without an id, without a
+    /// role in the policy or with several results; a scorer answering OK without a valid score; an
+    /// UNSUPPORTED answer that still carries a hint, a score or findings (inconsistent).
     fn failed(&self) -> bool {
+        if self.id.is_empty() || self.duplicate {
+            return true;
+        }
         match (self.role, self.status) {
             (None, _) | (_, None | Some(Status::Error | Status::Timeout | Status::Unspecified)) => {
                 true
             }
-            (Some(EngineRole::Scorer { .. }), Some(Status::Ok)) => self.score.is_none(),
+            (Some(EngineRole::Scorer { .. }), Some(Status::Ok)) => self.valid_score().is_none(),
+            (_, Some(Status::Unsupported)) => {
+                !matches!(self.hint, Hint::None | Hint::Unspecified)
+                    || self.score.is_some()
+                    || self.max_severity.is_some()
+            }
             _ => false,
         }
     }
@@ -86,16 +103,40 @@ impl Policy {
     /// # Errors
     /// [`VerdictError`] only if the policy built an inconsistent verdict (a bug, never a guess).
     pub fn evaluate(&self, facts: &ObjectFacts<'_>) -> Result<ObjectVerdict, VerdictError> {
-        let reads: Vec<Read<'_>> = facts.results.iter().map(|r| Read::new(self, r)).collect();
+        let mut reads: Vec<Read<'_>> = facts.results.iter().map(|r| Read::new(self, r)).collect();
+        let ids: Vec<&str> = reads.iter().map(|r| r.id).collect();
+        for read in &mut reads {
+            read.duplicate = ids.iter().filter(|&&id| id == read.id).count() > 1;
+        }
+        // Whatever the input, the policy decides: a verdict it cannot build is R1, never an error.
+        self.decide(facts, &reads).or_else(|_| {
+            ObjectVerdict::new(
+                verdict_of(Rule::R1),
+                Rule::R1,
+                "R1: UNSCANNABLE — the engine results could not be decided",
+            )
+        })
+    }
+
+    fn decide(
+        &self,
+        facts: &ObjectFacts<'_>,
+        reads: &[Read<'_>],
+    ) -> Result<ObjectVerdict, VerdictError> {
         let decision = self
-            .r1(facts, &reads)
-            .or_else(|| self.r2(&reads))
-            .or_else(|| r3(&reads))
-            .or_else(|| r4_r5(&reads))
-            .or_else(|| self.r6(facts, &reads))
+            .r1(facts, reads)
+            .or_else(|| self.r2(reads))
+            .or_else(|| r3(reads))
+            .or_else(|| r4_r5(reads))
+            .or_else(|| self.r6(facts, reads))
             .unwrap_or_else(|| Decision::new(Rule::R7, "no rule matched", BTreeSet::new()));
         let verdict = verdict_of(decision.rule);
-        let mut explanation = format!("{:?}: {verdict:?} — {}", decision.rule, decision.reason);
+        let mut explanation = format!(
+            "{:?}: {} — {}",
+            decision.rule,
+            verdict.code(),
+            decision.reason
+        );
         if !decision.engines.is_empty() {
             let engines: Vec<&str> = decision.engines.iter().copied().collect();
             explanation.push_str(" (engines: ");
@@ -104,7 +145,7 @@ impl Policy {
         }
         let mut decided = ObjectVerdict::new(verdict, decision.rule, &explanation)?
             .with_engines(decision.engines)?;
-        if let Some(score) = best_score(&reads) {
+        if let Some(score) = best_score(reads) {
             decided = decided.with_score(Score::new(score)?);
         }
         if let Some(limit) = decision.limit {
@@ -115,13 +156,19 @@ impl Policy {
 
     /// R1: failure, timeout, limit, unreadable or malformed object, link, unsupported risky type.
     fn r1<'a>(&self, facts: &ObjectFacts<'_>, reads: &[Read<'a>]) -> Option<Decision<'a>> {
-        let failed: BTreeSet<&str> = reads.iter().filter(|r| r.failed()).map(|r| r.id).collect();
+        let any_failed = reads.iter().any(Read::failed);
+        // An engine without an id cannot be named among the contributing engines.
+        let failed: BTreeSet<&str> = reads
+            .iter()
+            .filter(|r| r.failed() && !r.id.is_empty())
+            .map(|r| r.id)
+            .collect();
         let reason = match (facts.kind, facts.failure) {
             (Kind::Symlink, _) => "a symbolic link is never followed or read".to_owned(),
             (Kind::Special, _) => "a special file is never opened".to_owned(),
             (Kind::File, Some(Failure::Limit(limit))) => {
                 let mut decision =
-                    Decision::new(Rule::R1, format!("limit {limit:?} reached"), failed);
+                    Decision::new(Rule::R1, format!("limit {} reached", limit.code()), failed);
                 decision.limit = Some(limit);
                 return Some(decision);
             }
@@ -129,8 +176,9 @@ impl Policy {
             (Kind::File, Some(Failure::Malformed)) => {
                 "the object could not be typed or extracted".to_owned()
             }
-            (Kind::File, None) if !failed.is_empty() => {
-                "an engine failed, timed out or has no role in the policy".to_owned()
+            (Kind::File, None) if any_failed => {
+                "an engine failed, timed out, answered inconsistently or has no role in the policy"
+                    .to_owned()
             }
             (Kind::File, None) => {
                 let risky = facts
@@ -157,7 +205,8 @@ impl Policy {
             }
         }
         let detections = untrusted_detections(reads);
-        if u64::try_from(detections.len()).is_ok_and(|n| n >= self.k) {
+        // A count beyond u64 is above any K: fail towards the detection.
+        if u64::try_from(detections.len()).map_or(true, |n| n >= self.k) {
             engines.extend(detections);
         }
         (!engines.is_empty()).then(|| {
@@ -213,35 +262,44 @@ fn r3<'a>(reads: &[Read<'a>]) -> Option<Decision<'a>> {
     (!engines.is_empty()).then(|| Decision::new(Rule::R3, "known-good hash", engines))
 }
 
-/// R4 then R5: a scorer's score at or above its high, then its low threshold.
+/// R4 then R5: a scorer's score at or above its high, then its low threshold. The reason gives each
+/// matching scorer's score and threshold.
 fn r4_r5<'a>(reads: &[Read<'a>]) -> Option<Decision<'a>> {
-    let scored = |above: fn(f64, f64, f64) -> bool| -> BTreeSet<&'a str> {
-        reads
-            .iter()
-            .filter_map(|r| match (r.role, r.ok(), r.score) {
-                (Some(EngineRole::Scorer { low, high }), true, Some(score))
-                    if above(score, low, high) =>
-                {
-                    Some(r.id)
+    let matching = |high_threshold: bool| -> Option<Decision<'a>> {
+        let mut engines = BTreeSet::new();
+        let mut scores = Vec::new();
+        for read in reads.iter().filter(|r| r.ok()) {
+            if let (Some(EngineRole::Scorer { low, high }), Some(score)) =
+                (read.role, read.valid_score())
+            {
+                let threshold = if high_threshold { high } else { low };
+                if score >= threshold {
+                    engines.insert(read.id);
+                    scores.push(format!("{} scored {score} >= {threshold}", read.id));
                 }
-                _ => None,
-            })
-            .collect()
+            }
+        }
+        let (rule, name) = if high_threshold {
+            (Rule::R4, "high")
+        } else {
+            (Rule::R5, "low")
+        };
+        (!engines.is_empty()).then(|| {
+            Decision::new(
+                rule,
+                format!(
+                    "score at or above the {name} threshold: {}",
+                    scores.join(", ")
+                ),
+                engines,
+            )
+        })
     };
-    let high = scored(|score, _, high| score >= high);
-    if !high.is_empty() {
-        return Some(Decision::new(
-            Rule::R4,
-            "score at or above the high threshold",
-            high,
-        ));
-    }
-    let low = scored(|score, low, _| score >= low);
-    (!low.is_empty()).then(|| Decision::new(Rule::R5, "score at or above the low threshold", low))
+    matching(true).or_else(|| matching(false))
 }
 
 /// Detectors that are not trusted alone and say MALICIOUS.
-fn untrusted_detections<'a>(reads: &[Read<'a>]) -> Vec<&'a str> {
+fn untrusted_detections<'a>(reads: &[Read<'a>]) -> BTreeSet<&'a str> {
     reads
         .iter()
         .filter(|r| r.detector(false) && r.says(Hint::Malicious))
@@ -249,11 +307,11 @@ fn untrusted_detections<'a>(reads: &[Read<'a>]) -> Vec<&'a str> {
         .collect()
 }
 
-/// The highest score among the scorers' results with status OK.
+/// The highest valid score among the scorers' results with status OK.
 fn best_score(reads: &[Read<'_>]) -> Option<f64> {
     reads
         .iter()
         .filter(|r| matches!(r.role, Some(EngineRole::Scorer { .. })) && r.ok())
-        .filter_map(|r| r.score)
+        .filter_map(Read::valid_score)
         .reduce(f64::max)
 }
