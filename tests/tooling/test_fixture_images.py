@@ -345,21 +345,34 @@ def test_ntfs_alternate_data_streams_are_planted(image_of: Callable[[str], Built
     assert ntfs_streams(image, "readme.txt") == {}
 
 
+def ext_user_xattrs(image: Path, path: str, scratch: Path) -> dict[str, bytes]:
+    """The user.* attributes of a file, read with debugfs: no mount, since a kernel ext2 driver built
+    without xattr support (the WSL2 kernel's) hides them."""
+    listed = tool("debugfs", "-R", f"ea_list /{path}", str(image))
+    assert listed.returncode == 0, listed.stderr.decode()
+    names = [
+        line.split(" (", 1)[0].strip()
+        for line in listed.stdout.decode().splitlines()
+        if line.startswith("  user.")
+    ]
+    values = {}
+    for name in names:
+        out = scratch / "value"
+        got = tool("debugfs", "-R", f"ea_get -f {out} /{path} {name}", str(image))
+        assert got.returncode == 0, got.stderr.decode()
+        values[name] = out.read_bytes()
+    return values
+
+
 @pytest.mark.req("TOOLING")
 @pytest.mark.slow
 @pytest.mark.parametrize("fs", EXT)
 def test_ext_extended_attributes_are_planted(
-    image_of: Callable[[str], Built], mounted: list[str], fs: str
+    image_of: Callable[[str], Built], tmp_path: Path, fs: str
 ) -> None:
     files, image = image_of(fs)
-    root = mount_ro(image, mounted)
     for plant in (p for p in files if p.symlink is None):
-        path = root / plant.path
-        assert sorted(n for n in os.listxattr(path) if n.startswith("user.")) == sorted(
-            plant.xattrs
-        )
-        for name, value in plant.xattrs.items():
-            assert os.getxattr(path, name) == value, (plant.path, name)
+        assert ext_user_xattrs(image, plant.path, tmp_path) == plant.xattrs, plant.path
 
 
 @pytest.mark.req("TOOLING")
