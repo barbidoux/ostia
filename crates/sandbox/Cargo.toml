@@ -1,0 +1,18 @@
+[package]
+name = "ostia-sandbox"
+description = "Ostia worker launch and limits: the worker host (framed exchange, object as descriptor 3, timeout)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+ostia-contracts = { path = "../contracts" }
+
+[dev-dependencies]
+ostia-traceability = { path = "../traceability" }
+
+[lints]
+workspace = true

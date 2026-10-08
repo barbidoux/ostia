@@ -453,6 +453,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ostia-sandbox"
+version = "0.0.0"
+dependencies = [
+ "ostia-contracts",
+ "ostia-traceability",
+]
+
+[[package]]
 name = "ostia-traceability"
 version = "0.0.0"
 
