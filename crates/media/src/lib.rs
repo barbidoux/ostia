@@ -140,6 +140,14 @@ impl DevLoopMount {
         }
     }
 
+    /// A layer that runs `command` (program and leading arguments) as its helper, with the helper's
+    /// arguments appended: for another helper location, and for tests with a fake helper.
+    #[must_use]
+    pub fn with_helper(command: Vec<std::ffi::OsString>) -> Self {
+        drop(command);
+        todo!("WP-1.4: helper command")
+    }
+
     fn helper(&self, args: &[&OsStr]) -> Result<Output, MediaError> {
         let script = self.repository.join(HELPER_SCRIPT);
         let mut command = if running_as_root() {
