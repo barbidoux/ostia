@@ -10,9 +10,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
 use crate::engine::EngineResult;
-use crate::object::{Kind, ObjectId, ObjectTree};
+use crate::object::Kind;
 use crate::session::Mode;
-use crate::verdict::{Limit, MediumVerdict, ObjectVerdict, Verdict, VerdictError};
+use crate::verdict::Limit;
+
+mod load;
+mod medium;
+mod rules;
+
+pub use load::load;
+pub use medium::{medium_verdict, transferable};
 
 /// Largest policy file accepted, in bytes.
 pub const MAX_POLICY_BYTES: usize = 1 << 20;
@@ -123,14 +130,6 @@ pub struct Policy {
     pub limits: Limits,
 }
 
-/// Load a policy: check the sizes, verify the signature over the exact bytes, then parse and validate.
-///
-/// # Errors
-/// [`PolicyError`] with [`Refusal::SignatureInvalid`] or [`Refusal::Invalid`].
-pub fn load(_policy: &[u8], _signature: &[u8], _trusted_key: &[u8]) -> Result<Policy, PolicyError> {
-    todo!("WP-1.2: policy loader")
-}
-
 /// Why an object could not be analysed before any rule looks at engines (R1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Failure {
@@ -160,16 +159,6 @@ pub struct ObjectFacts<'a> {
     pub results: &'a [EngineResult],
 }
 
-impl Policy {
-    /// The verdict of one object: the first rule of R1 to R7 that matches.
-    ///
-    /// # Errors
-    /// [`VerdictError`] only if the policy built an inconsistent verdict (a bug, never a guess).
-    pub fn evaluate(&self, _facts: &ObjectFacts<'_>) -> Result<ObjectVerdict, VerdictError> {
-        todo!("WP-1.2: rules R1 to R7")
-    }
-}
-
 /// A device-level finding (D1 in P4, D2 in P5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MediumFinding {
@@ -190,21 +179,4 @@ pub struct SessionState {
     pub aborted: bool,
     /// Device-level findings.
     pub findings: Vec<MediumFinding>,
-}
-
-/// The medium verdict (`docs/contracts/report.md`, "Medium verdict").
-#[must_use]
-pub fn medium_verdict(_objects: &[(ObjectId, Verdict)], _state: &SessionState) -> MediumVerdict {
-    todo!("WP-1.2: medium verdict")
-}
-
-/// The objects that may be transferred (`docs/contracts/report.md`, "Transferable").
-#[must_use]
-pub fn transferable(
-    _tree: &ObjectTree,
-    _verdicts: &BTreeMap<ObjectId, Verdict>,
-    _state: &SessionState,
-    _medium: &MediumVerdict,
-) -> BTreeSet<ObjectId> {
-    todo!("WP-1.2: transferable objects")
 }

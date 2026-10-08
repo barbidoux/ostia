@@ -56,7 +56,7 @@ pub enum Rule {
 
 /// The verdict a rule gives (spec §8, `docs/contracts/policy.md`): fixed by the specification, so a
 /// policy result that pairs a rule with another verdict is refused.
-fn verdict_of(rule: Rule) -> Verdict {
+pub(crate) fn verdict_of(rule: Rule) -> Verdict {
     match rule {
         Rule::R1 => Verdict::Unscannable,
         Rule::R2 | Rule::R4 => Verdict::Malicious,

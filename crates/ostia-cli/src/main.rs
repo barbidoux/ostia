@@ -1,8 +1,12 @@
 //! The `ostia` command line. Shape and exit codes: `docs/contracts/cli.md`.
 //!
-//! WP-0.12 lands the contract only: every subcommand exits with code 3 ("not implemented") until the
-//! work package that builds it (policy verify: WP-1.2; scan and version: WP-1.10).
+//! Built so far: `policy verify` (WP-1.2). `scan` and `version` exit with code 3 ("not implemented") until
+//! WP-1.10.
 
+mod flags;
+mod policy_verify;
+
+use std::ffi::OsString;
 use std::process::ExitCode;
 
 #[cfg(all(feature = "dev", not(debug_assertions)))]
@@ -12,32 +16,36 @@ compile_error!("the `dev` feature adds development flags and is refused in relea
 const USAGE_ERROR: u8 = 2;
 /// Exit code 3: the subcommand exists in the contract but is not built yet.
 const NOT_IMPLEMENTED: u8 = 3;
+/// Exit code 4: an input was refused.
+const INPUT_REFUSED: u8 = 4;
 
 const USAGE: &str = "usage: ostia scan --image <path> --report <out.json> --policy <file> --policy-sig <file> --trust <key> [options]
        ostia policy verify --policy <file> --policy-sig <file> --trust <key>
        ostia version";
 
-/// The subcommand named by the arguments, if the contract has it.
-fn subcommand(args: &[String]) -> Option<&'static str> {
-    match args {
-        [first, ..] if first == "scan" => Some("scan"),
-        [first, second, ..] if first == "policy" && second == "verify" => Some("policy verify"),
-        [first, ..] if first == "version" => Some("version"),
-        _ => None,
-    }
+/// Print a one-line reason, then the usage text, and exit 2.
+fn usage_error(reason: &str) -> ExitCode {
+    eprintln!("ostia: {reason}");
+    eprintln!("{USAGE}");
+    ExitCode::from(USAGE_ERROR)
 }
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if let Some(name) = subcommand(&args) {
-        eprintln!("ostia: not implemented: {name}");
-        ExitCode::from(NOT_IMPLEMENTED)
-    } else {
-        match args.first() {
-            Some(unknown) => eprintln!("ostia: unknown subcommand: {unknown}"),
-            None => eprintln!("ostia: missing subcommand"),
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    let words: Vec<&str> = args.iter().map(|a| a.to_str().unwrap_or("")).collect();
+    match words.as_slice() {
+        ["policy", "verify", ..] => policy_verify::run(args.get(2..).unwrap_or_default()),
+        [name @ ("scan" | "version"), ..] => {
+            eprintln!("ostia: not implemented: {name}");
+            ExitCode::from(NOT_IMPLEMENTED)
         }
-        eprintln!("{USAGE}");
-        ExitCode::from(USAGE_ERROR)
+        [] => usage_error("missing subcommand"),
+        [..] => {
+            let unknown = args
+                .first()
+                .map(|a| a.to_string_lossy())
+                .unwrap_or_default();
+            usage_error(&format!("unknown subcommand: {unknown}"))
+        }
     }
 }
