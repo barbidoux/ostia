@@ -98,10 +98,12 @@ test-bench:
     cargo nextest run --workspace --locked --profile ci --all-features --no-tests=pass
     uv run python tools/ci/run_pytest.py {{py_test_dirs}} --
 
-# Coverage reports for Rust (cargo-llvm-cov) and Python (pytest-cov); thresholds come with the owner
+# Coverage reports (NFR-14): Rust with cargo-llvm-cov (HTML and a summary per file), Python on the worker
+# library the tests import (pytest-cov); thresholds are enforced from WP-3.12
 coverage:
     cargo llvm-cov nextest --workspace --locked --no-tests=pass --html
-    uv run python tools/ci/run_pytest.py {{py_test_dirs}} -- -m "not bench" --cov=tools/ci --cov-report=term --cov-report=html:target/coverage/python
+    cargo llvm-cov report --summary-only
+    uv run python tools/ci/run_pytest.py {{py_test_dirs}} -- -m "not bench" --cov=ostia_common --cov-report=term --cov-report=html:target/coverage/python
 
 # Traceability matrix from the reports of `just test` (target/traceability.{json,md});
 # `just trace --gate P1` also fails on a MUST of that phase without a passing test
