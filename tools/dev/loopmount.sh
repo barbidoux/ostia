@@ -235,6 +235,11 @@ else
         vfat | exfat | ntfs) options="$options,uid=$uid,gid=$gid" ;;
     esac
 fi
+# FAT keeps names in UTF-16 and times without a zone: names as UTF-8 (the kernel default is ASCII) and times
+# as UTC, whatever the kernel's time zone (docs/questions.md Q-44).
+if [[ "$fs" == vfat ]]; then
+    options="$options,utf8,tz=UTC"
+fi
 
 if [[ ! -d "$mount_point" ]]; then
     mkdir -m 0755 -- "$mount_point"
