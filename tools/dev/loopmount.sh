@@ -18,8 +18,9 @@
 # ext4 driver (ADR-17).
 #
 # Exit codes: 0 mounted (the last line names the file system as fat12, fat16, fat32, exfat, ntfs, ext2,
-# ext3 or ext4, and the mount point), 1 failure, 2 refused arguments, 3 not root, 4 unsupported or
-# unrecognised file system (nothing mounted).
+# ext3 or ext4, and the mount point), 1 failure of the helper, 2 refused arguments, 3 not root, 4 unsupported
+# or unrecognised file system, partition table or ambivalent signatures, 5 the driver refused a recognised
+# file system (damaged). Nothing stays mounted or attached on a non-zero exit.
 #
 # Residual risk, accepted for development use: root parses the caller's image (libblkid, the kernel or
 # FUSE file-system driver). The production mount helper is WP-4.5.
@@ -211,12 +212,29 @@ PY
 
 # The file system is reported in the report's vocabulary (report.md `medium.file_system`): the mount layer
 # never reads the image itself (SEC-05, docs/questions.md Q-46).
-fs="$(blkid -p -o value -s TYPE -- "$loop" || true)"
+unsupported() {
+    echo "loopmount: unsupported file system$*" >&2
+    exit 4
+}
+# blkid exits 0 when it found something, 2 when nothing, 8 when signatures are ambivalent; anything else is
+# a failure of blkid itself, not a property of the image.
+if probe="$(blkid -p -o export -- "$loop")"; then status=0; else status=$?; fi
+case "$status" in
+    0) ;;
+    2) unsupported " 'none' in $image" ;;
+    8) unsupported ": ambivalent signatures in $image" ;;
+    *) fail "blkid failed on $image (exit $status)" ;;
+esac
+probed() { sed -n "s/^$1=//p" <<<"$probe" | head -n 1; }
+pttype="$(probed PTTYPE)"
+# A partitioned image is refused in P1 (cli.md), even when blkid also finds a file system at its start.
+[[ -z "$pttype" ]] || unsupported ": partition table '$pttype' in $image"
+fs="$(probed TYPE)"
 variant="$fs"
 case "$fs" in
     vfat)
         module=vfat kernel_type=vfat fuse=""
-        case "$(blkid -p -o value -s VERSION -- "$loop" || true)" in
+        case "$(probed VERSION)" in
             FAT12) variant=fat12 ;;
             FAT16) variant=fat16 ;;
             FAT32) variant=fat32 ;;
@@ -228,10 +246,7 @@ case "$fs" in
     ntfs) module="" kernel_type="" fuse=ntfs-3g ;;
     # The ext2 driver may be built without xattr support (WSL2); the ext4 driver reads all three (Q-45).
     ext2 | ext3 | ext4) module=ext4 kernel_type=ext4 fuse="" ;;
-    *)
-        echo "loopmount: unsupported file system '${fs:-none}' in $image" >&2
-        exit 4
-        ;;
+    *) unsupported " '${fs:-none}' in $image" ;;
 esac
 
 kernel_has() { [[ -n "$1" ]] && { grep -qw -- "$1" /proc/filesystems || modprobe -q -- "$1" 2>/dev/null; }; }
@@ -259,6 +274,16 @@ fi
 if [[ "$fs" == vfat ]]; then
     options="$options,utf8,tz=UTC"
 fi
+# Streams as user.<stream> attributes, whatever ntfs-3g's built-in default (ADR-17).
+if [[ "$fs" == ntfs ]]; then
+    options="$options,streams_interface=xattr"
+fi
+# The driver refused a recognised file system (a damaged one): exit 5, told apart from the helper's own
+# failures (exit 1).
+mount_failed() {
+    echo "loopmount: $*" >&2
+    exit 5
+}
 
 if [[ ! -d "$mount_point" ]]; then
     mkdir -m 0755 -- "$mount_point"
@@ -266,12 +291,12 @@ if [[ ! -d "$mount_point" ]]; then
 fi
 if [[ "$driver" == kernel ]]; then
     mount --no-canonicalize -t "$kernel_type" -o "$options" -- "$loop" "$mount_point" ||
-        fail "mounting $image ($variant, kernel driver) failed"
+        mount_failed "mounting $image ($variant, kernel driver) failed"
     mounted=1
 else
     # The FUSE driver stays running as a daemon: it must not inherit the lock.
     "$fuse" -o "$options" "$loop" "$mount_point" {lock_fd}>&- ||
-        fail "mounting $image ($variant, fuse driver) failed"
+        mount_failed "mounting $image ($variant, fuse driver) failed"
     mounted=1
     # FUSE drivers do not all apply the generic flags: set them on the mount itself.
     mount --no-canonicalize -o "remount,bind,$required" -- "$mount_point" ||

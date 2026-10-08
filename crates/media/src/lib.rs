@@ -4,9 +4,8 @@
 //! the privileged helper of P4 replaces it behind the same trait. The orchestrator never reads the image to
 //! find its file system (SEC-05): the helper's blkid does, and this crate only reads the helper's answer.
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -31,11 +30,11 @@ pub enum MediaError {
     /// message contains the words `unsupported file system` (cli.md).
     #[error("{0}")]
     UnsupportedFileSystem(String),
-    /// A supported file system that cannot be mounted, a damaged one included (exit 5).
+    /// A recognised file system the driver refused to mount, a damaged one (exit 5).
     #[error("{0}")]
     MountFailed(String),
-    /// The mount helper is missing, out of date, refused its arguments or answered something unexpected
-    /// (exit 5).
+    /// The mount helper is missing, out of date, failed, refused its arguments, was refused by sudo or
+    /// answered something unexpected (exit 5).
     #[error("{0}")]
     Helper(String),
 }
@@ -51,7 +50,7 @@ impl MediaError {
     }
 }
 
-type Release = Box<dyn FnOnce() -> Result<(), MediaError> + Send>;
+type Release = Box<dyn Fn() -> Result<(), MediaError> + Send>;
 
 /// A mounted medium; unmounted by [`Mounted::unmount`] or, failing that, when dropped.
 pub struct Mounted {
@@ -70,11 +69,12 @@ impl fmt::Debug for Mounted {
 }
 
 impl Mounted {
-    /// A mount at `root` holding `file_system`, released by `unmount`.
+    /// A mount at `root` holding `file_system`, released by `unmount` (called once more on drop after an
+    /// explicit unmount failed).
     pub fn new(
         root: PathBuf,
         file_system: FileSystem,
-        unmount: impl FnOnce() -> Result<(), MediaError> + Send + 'static,
+        unmount: impl Fn() -> Result<(), MediaError> + Send + 'static,
     ) -> Self {
         Self {
             root,
@@ -100,7 +100,12 @@ impl Mounted {
     /// # Errors
     /// [`MediaError::Helper`] when the helper cannot unmount it.
     pub fn unmount(mut self) -> Result<(), MediaError> {
-        self.release.take().map_or(Ok(()), |release| release())
+        let result = self.release.as_ref().map_or(Ok(()), |release| release());
+        if result.is_ok() {
+            self.release = None;
+        }
+        // On failure the release stays: dropping `self` now tries once more.
+        result
     }
 }
 
@@ -115,18 +120,27 @@ impl Drop for Mounted {
 
 const INSTALLED_HELPER: &str = "/usr/local/sbin/ostia-loopmount";
 const HELPER_SCRIPT: &str = "tools/dev/loopmount.sh";
-/// Exit code of the helper for an unsupported or unrecognised file system.
+/// Exit code of the helper for no file system, one outside FR-03, a partition table or ambivalent
+/// signatures (nothing mounted).
 const UNSUPPORTED: i32 = 4;
-/// Exit code of the helper for a failure (a mount the kernel or the FUSE driver refused included).
-const FAILED: i32 = 1;
+/// Exit code of the helper when the driver refused a recognised file system (nothing mounted).
+const MOUNT_REFUSED: i32 = 5;
 
 /// Mount names unique within this process; the process id makes them unique per user.
 static NEXT_MOUNT: AtomicU32 = AtomicU32::new(0);
 
+#[derive(Debug, Clone)]
+enum Helper {
+    /// `tools/dev/loopmount.sh` of a repository, directly as root or through sudo and its installed copy.
+    Repository(PathBuf),
+    /// A program and its leading arguments.
+    Command(Vec<OsString>),
+}
+
 /// Loop mounts of disk images through the development helper `tools/dev/loopmount.sh` (P1).
 #[derive(Debug, Clone)]
 pub struct DevLoopMount {
-    repository: PathBuf,
+    helper: Helper,
 }
 
 impl DevLoopMount {
@@ -136,21 +150,33 @@ impl DevLoopMount {
     #[must_use]
     pub fn for_repository(repository: &Path) -> Self {
         Self {
-            repository: repository.to_path_buf(),
+            helper: Helper::Repository(repository.to_path_buf()),
         }
     }
 
     /// A layer that runs `command` (program and leading arguments) as its helper, with the helper's
     /// arguments appended: for another helper location, and for tests with a fake helper.
     #[must_use]
-    pub fn with_helper(command: Vec<std::ffi::OsString>) -> Self {
-        drop(command);
-        todo!("WP-1.4: helper command")
+    pub fn with_helper(command: Vec<OsString>) -> Self {
+        Self {
+            helper: Helper::Command(command),
+        }
     }
 
-    fn helper(&self, args: &[&OsStr]) -> Result<Output, MediaError> {
-        let script = self.repository.join(HELPER_SCRIPT);
-        let mut command = if running_as_root() {
+    fn command(&self) -> Result<Command, MediaError> {
+        let repository = match &self.helper {
+            Helper::Command(words) => {
+                let (program, leading) = words
+                    .split_first()
+                    .ok_or_else(|| MediaError::Helper("empty mount helper command".to_owned()))?;
+                let mut command = Command::new(program);
+                command.args(leading);
+                return Ok(command);
+            }
+            Helper::Repository(repository) => repository,
+        };
+        let script = repository.join(HELPER_SCRIPT);
+        Ok(if running_as_root() {
             let mut command = Command::new("bash");
             command.arg(&script);
             command
@@ -171,8 +197,11 @@ impl DevLoopMount {
             let mut command = Command::new("sudo");
             command.args(["-n", INSTALLED_HELPER]);
             command
-        };
-        command
+        })
+    }
+
+    fn helper(&self, args: &[&OsStr]) -> Result<Output, MediaError> {
+        self.command()?
             .args(args)
             .stdin(Stdio::null())
             .output()
@@ -209,7 +238,8 @@ impl MediaAccess for DevLoopMount {
                     },
                 ));
             }
-            Some(FAILED) => return Err(MediaError::MountFailed(reason(&output))),
+            Some(MOUNT_REFUSED) => return Err(MediaError::MountFailed(reason(&output))),
+            // 1 (the helper failed), 2 (refused arguments), 3 (not root), a signal, or sudo's own refusal.
             _ => return Err(MediaError::Helper(reason(&output))),
         }
         match mounted(&output, &name) {
@@ -219,18 +249,26 @@ impl MediaAccess for DevLoopMount {
                     layer.unmount(&name)
                 }))
             }
-            Err(error) => {
-                // Fail closed: an answer we cannot read is never used, and the mount is not left behind.
-                let _ = self.unmount(&name);
-                Err(error)
-            }
+            // Fail closed: an answer we cannot read is never used, and the mount is not left behind.
+            Err(MediaError::Helper(detail)) => Err(MediaError::Helper(match self.unmount(&name) {
+                Ok(()) => detail,
+                Err(unmount) => format!("{detail}; and {name} may still be mounted: {unmount}"),
+            })),
+            Err(other) => Err(other),
         }
     }
 }
 
 fn running_as_root() -> bool {
-    // /proc/self belongs to the effective user of this process.
-    std::fs::metadata("/proc/self").is_ok_and(|meta| meta.uid() == 0)
+    // The effective uid: the second field of the `Uid:` line (the owner of /proc/self is not it for a
+    // non-dumpable process).
+    std::fs::read_to_string("/proc/self/status").is_ok_and(|status| {
+        status
+            .lines()
+            .find_map(|line| line.strip_prefix("Uid:"))
+            .and_then(|ids| ids.split_whitespace().nth(1))
+            == Some("0")
+    })
 }
 
 /// The helper's last line on standard error, without its `loopmount: ` prefix; one line.
