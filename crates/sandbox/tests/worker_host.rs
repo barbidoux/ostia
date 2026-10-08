@@ -6,13 +6,13 @@
 //! Workers are small `/bin/sh` scripts written to a directory per test. Response frames are prepared with the
 //! contract encoder of `ostia-contracts` (WP-0.5) and written by the script with `cat`.
 
-use std::os::fd::AsRawFd;
+use std::os::fd::OwnedFd;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use nix::fcntl::{FcntlArg, FdFlag, fcntl};
 use ostia_contracts::v1::{
     AnalyzeRequest, AnalyzeResponse, ContractVersion, Finding, Hint, Limits, Origin, Status,
 };
@@ -20,7 +20,8 @@ use ostia_contracts::{
     ContractError, DEFAULT_MAX_FRAME, decode_frame, decode_request, encode_frame,
 };
 use ostia_sandbox::{
-    DEFAULT_STDERR_CAP, EngineIdentity, Failure, HostLimits, WorkerCommand, WorkerHost, WorkerRun,
+    DEFAULT_STDERR_CAP, EngineIdentity, Failure, HostLimits, Launcher, WorkerCommand, WorkerHost,
+    WorkerRun,
 };
 use ostia_traceability::req;
 
@@ -32,6 +33,10 @@ const OBJECT_SHA256: &str = "867d87de441ccfd98a63cad4e0525959fef3a5bb0021c668016
 const GENEROUS: Duration = Duration::from_secs(30);
 const SHORT: Duration = Duration::from_secs(1);
 
+/// A worker that records the hash of its descriptor 3 and its standard input, then answers.
+const ECHO: &str = r#"sha256sum <&3 | cut -d' ' -f1 > "$D/fd3.sha256"
+cat > "$D/request.bin"; cat "$ANSWER""#;
+
 static DIRS: AtomicU32 = AtomicU32::new(0);
 
 /// A directory of its own for one test (or one worker of a test), holding the object and the scripts.
@@ -41,6 +46,11 @@ struct Scratch {
 
 impl Scratch {
     fn new() -> Self {
+        Self::holding(OBJECT)
+    }
+
+    /// A directory whose object holds `object`.
+    fn holding(object: &[u8]) -> Self {
         let dir = std::env::temp_dir().join(format!(
             "ostia-worker-host-{}-{}",
             std::process::id(),
@@ -48,7 +58,7 @@ impl Scratch {
         ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("scratch directory");
-        std::fs::write(dir.join("object"), OBJECT).expect("object");
+        std::fs::write(dir.join("object"), object).expect("object");
         Self { dir }
     }
 
@@ -194,10 +204,15 @@ fn ended(pid: &str) -> bool {
 }
 
 fn grandchild(scratch: &Scratch) -> String {
-    String::from_utf8(scratch.read("grandchild"))
+    let pid = String::from_utf8(scratch.read("grandchild"))
         .expect("pid")
         .trim()
-        .to_owned()
+        .to_owned();
+    assert!(
+        !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()),
+        "pid {pid:?}"
+    );
+    pid
 }
 
 #[req("CTR-01")]
@@ -283,8 +298,9 @@ fn sleeping_worker_yields_timeout() {
 fn timeout_kills_the_whole_process_group() {
     let scratch = Scratch::new();
     let worker = scratch.worker(r#"sleep 300 & echo $! > "$D/grandchild"; wait"#);
-    let (done, elapsed) = run(&scratch, &worker, SHORT);
+    let (done, elapsed) = run(&scratch, &worker, Duration::from_secs(3));
     assert_synthesised(&done, Status::Timeout, &Failure::Timeout, elapsed);
+    assert!(elapsed < Duration::from_secs(10), "{elapsed:?}");
     let pid = grandchild(&scratch);
     assert!(ended(&pid), "process {pid} outlived its run");
 }
@@ -336,6 +352,15 @@ fn crashing_worker_yields_error() {
 
 #[req("NFR-05")]
 #[test]
+fn synthesised_duration_is_the_time_spent() {
+    let scratch = Scratch::new();
+    let (done, elapsed) = run(&scratch, &scratch.worker("sleep 0.3; exit 3"), GENEROUS);
+    assert_synthesised(&done, Status::Error, &Failure::Exited(3), elapsed);
+    assert!(done.response.duration_ms >= 300, "{:?}", done.response);
+}
+
+#[req("NFR-05")]
+#[test]
 fn valid_answer_then_failing_exit_yields_error() {
     let scratch = Scratch::new();
     scratch.answer(&answer());
@@ -368,8 +393,11 @@ fn answer_that_is_not_one_valid_response_frame_yields_error() {
         version: Some(ContractVersion { major: 2, minor: 0 }),
         ..answer()
     };
+    // Versions unlike the declared ones: a synthesised result must not take them from the refused answer.
     let anonymous = AnalyzeResponse {
         engine_id: String::new(),
+        engine_version: "9.9.9".into(),
+        content_version: "rules-9".into(),
         ..answer()
     };
     let cases: Vec<(&str, Vec<u8>, Failure)> = vec![
@@ -429,6 +457,8 @@ fn answer_from_another_engine_yields_error() {
     let scratch = Scratch::new();
     scratch.answer(&AnalyzeResponse {
         engine_id: "clamav".into(),
+        engine_version: "9.9.9".into(),
+        content_version: "rules-9".into(),
         ..answer()
     });
     let (done, elapsed) = run(&scratch, &scratch.worker(r#"cat "$ANSWER""#), GENEROUS);
@@ -456,6 +486,17 @@ fn endless_output_is_cut_short() {
 
 #[req("NFR-05")]
 #[test]
+fn empty_frame_is_refused_without_waiting_for_the_deadline() {
+    let scratch = Scratch::new();
+    let worker = scratch.worker(r"printf '\000\000\000\000'; exec sleep 60");
+    let (done, elapsed) = run(&scratch, &worker, GENEROUS);
+    let failure = Failure::Protocol(ContractError::Empty);
+    assert_synthesised(&done, Status::Error, &failure, elapsed);
+    assert!(elapsed < Duration::from_secs(10), "{elapsed:?}");
+}
+
+#[req("NFR-05")]
+#[test]
 fn endless_output_after_the_answer_is_cut_short() {
     let scratch = Scratch::new();
     scratch.answer(&answer());
@@ -472,31 +513,38 @@ fn endless_output_after_the_answer_is_cut_short() {
 #[req("NFR-05")]
 #[test]
 fn answer_over_the_frame_cap_yields_error() {
-    let scratch = Scratch::new();
-    // The cap holds in both directions: the request (under 200 bytes) passes, the answer (over 300) does not.
+    // The cap holds in both directions: the request (85 bytes) passes under every cap here, the answer
+    // (its message length from the fixture's own encoding) passes at the cap and is refused one byte below.
     let mut long = answer();
     long.findings[0].evidence = "e".repeat(300);
-    scratch.answer(&long);
-    let limits = HostLimits {
-        max_frame: 200,
-        ..HostLimits::new(GENEROUS)
-    };
-    let started = Instant::now();
-    let worker = scratch.worker(r#"cat > "$D/request.bin"; cat "$ANSWER""#);
-    let done =
-        WorkerHost::unconfined(limits).run(&worker, &identity(), &request(), &scratch.object());
-    let elapsed = started.elapsed();
-    assert!(scratch.exists("request.bin"), "the request was not sent");
-    assert!(
-        matches!(
-            done.failure,
-            Some(Failure::Protocol(ContractError::Oversized { cap: 200, .. }))
-        ),
-        "{:?}",
-        done.failure
-    );
-    let failure = done.failure.clone().expect("failure");
-    assert_synthesised(&done, Status::Error, &failure, elapsed);
+    let length = encode_frame(&long, DEFAULT_MAX_FRAME).expect("frame").len() - 4;
+    for cap in [length, length - 1, 200] {
+        let scratch = Scratch::new();
+        scratch.answer(&long);
+        let limits = HostLimits {
+            max_frame: cap,
+            ..HostLimits::new(GENEROUS)
+        };
+        let started = Instant::now();
+        let worker = scratch.worker(r#"cat > "$D/request.bin"; cat "$ANSWER""#);
+        let done =
+            WorkerHost::unconfined(limits).run(&worker, &identity(), &request(), &scratch.object());
+        let elapsed = started.elapsed();
+        assert!(
+            scratch.exists("request.bin"),
+            "cap {cap}: the request was not sent"
+        );
+        if cap == length {
+            assert_eq!(done.failure, None, "cap {cap}");
+            assert_eq!(done.response, long, "cap {cap}");
+        } else {
+            let oversized = ContractError::Oversized {
+                len: u64::try_from(length).expect("length"),
+                cap,
+            };
+            assert_synthesised(&done, Status::Error, &Failure::Protocol(oversized), elapsed);
+        }
+    }
 }
 
 #[req("CTR-01")]
@@ -512,16 +560,8 @@ fn request_over_the_frame_cap_is_not_sent() {
     let done =
         WorkerHost::unconfined(limits).run(&worker, &identity(), &request(), &scratch.object());
     let elapsed = started.elapsed();
-    assert!(
-        matches!(
-            done.failure,
-            Some(Failure::Request(ContractError::Oversized { cap: 16, .. }))
-        ),
-        "{:?}",
-        done.failure
-    );
-    let failure = done.failure.clone().expect("failure");
-    assert_synthesised(&done, Status::Error, &failure, elapsed);
+    let oversized = ContractError::Oversized { len: 85, cap: 16 };
+    assert_synthesised(&done, Status::Error, &Failure::Request(oversized), elapsed);
     assert!(!scratch.exists("started"), "the worker ran");
 }
 
@@ -550,25 +590,79 @@ fn short_standard_error_is_kept_whole() {
     assert!(!done.stderr_truncated);
 }
 
-#[req("CTR-01")]
+#[req("NFR-05")]
 #[test]
-fn inheritable_descriptor_of_the_host_stops_the_launch() {
-    // nextest runs each test in a process of its own: the stray descriptor reaches no other test.
+fn standard_error_cap_is_the_configured_one() {
+    let limits = HostLimits {
+        stderr_cap: 10,
+        ..HostLimits::new(GENEROUS)
+    };
+    for (written, truncated) in [("0123456789", false), ("0123456789A", true)] {
+        let scratch = Scratch::new();
+        let worker = scratch.worker(&format!("printf '{written}' >&2; exit 3"));
+        let done =
+            WorkerHost::unconfined(limits).run(&worker, &identity(), &request(), &scratch.object());
+        assert_eq!(done.failure, Some(Failure::Exited(3)), "{written}");
+        assert_eq!(done.stderr, b"0123456789", "{written}");
+        assert_eq!(done.stderr_truncated, truncated, "{written}");
+    }
+}
+
+#[req("NFR-05")]
+#[test]
+fn launcher_that_does_not_give_the_worker_its_own_process_group_is_refused() {
     let scratch = Scratch::new();
-    let stray = std::fs::File::open(scratch.object()).expect("stray descriptor");
-    fcntl(&stray, FcntlArg::F_SETFD(FdFlag::empty())).expect("inheritable");
-    let worker = scratch.worker(r#"touch "$D/started""#);
-    let (done, elapsed) = run(&scratch, &worker, GENEROUS);
-    let named = format!("descriptor {}", stray.as_raw_fd());
-    drop(stray);
+    let pid_slot = Arc::new(Mutex::new(None));
+    let shared = SharedGroup {
+        launched: Arc::clone(&pid_slot),
+    };
+    let started = Instant::now();
+    let done = WorkerHost::new(shared, HostLimits::new(GENEROUS)).run(
+        &scratch.worker("exec sleep 60"),
+        &identity(),
+        &request(),
+        &scratch.object(),
+    );
+    let elapsed = started.elapsed();
     assert!(
-        matches!(&done.failure, Some(Failure::Spawn(reason)) if reason.contains(&named)),
+        matches!(&done.failure, Some(Failure::Spawn(reason)) if reason.contains("process group")),
         "{:?}",
         done.failure
     );
     let failure = done.failure.clone().expect("failure");
     assert_synthesised(&done, Status::Error, &failure, elapsed);
-    assert!(!scratch.exists("started"), "the worker ran");
+    assert!(elapsed < Duration::from_secs(10), "{elapsed:?}");
+    let pid = pid_slot.lock().expect("pid").expect("launched").to_string();
+    assert!(ended(&pid), "process {pid} outlived its run");
+}
+
+/// A launcher that leaves the worker in the host's process group, as a faulty P2 launcher could.
+struct SharedGroup {
+    launched: Arc<Mutex<Option<u32>>>,
+}
+
+impl Launcher for SharedGroup {
+    fn launch(&self, command: &WorkerCommand, object: OwnedFd) -> std::io::Result<Child> {
+        drop(object);
+        let child = Command::new(command.program())
+            .args(command.args())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        *self.launched.lock().expect("pid") = Some(child.id());
+        Ok(child)
+    }
+}
+
+#[req("NFR-05")]
+#[test]
+fn time_limit_too_far_to_represent_does_not_stop_the_host() {
+    let scratch = Scratch::new();
+    scratch.answer(&answer());
+    let (done, _) = run(&scratch, &scratch.worker(r#"cat "$ANSWER""#), Duration::MAX);
+    assert_eq!(done.failure, None);
+    assert_eq!(done.response, answer());
 }
 
 #[req("NFR-05")]
@@ -640,38 +734,58 @@ fn host_keeps_serving_after_a_crash() {
 #[req("NFR-05")]
 #[test]
 fn concurrent_runs_do_not_disturb_each_other() {
-    let host = Arc::new(host(Duration::from_secs(3)));
-    let bodies = [
-        r#"cat > "$D/request.bin"; cat "$ANSWER""#,
-        "exit 3",
-        "exec sleep 60",
-        r#"cat > "$D/request.bin"; cat "$ANSWER""#,
-        "kill -KILL $$",
-        r#"cat > "$D/request.bin"; cat "$ANSWER""#,
+    // Each answering run has its own object ("concurrent object <n>\n", hashes from sha256sum) and its own
+    // answer: a host mixing up pipes, buffers or descriptors between runs hands one run another's.
+    let runs: [(&str, Option<&str>); 6] = [
+        (
+            ECHO,
+            Some("e595bcac4673c5f130507ae88f23724af72d6ed1e519b2301638852598ca8ece"),
+        ),
+        ("exit 3", None),
+        ("exec sleep 60", None),
+        (
+            ECHO,
+            Some("49048b6457c0452ee6be358e1d942d0bc9104e1fe62dd277699887112a474362"),
+        ),
+        ("kill -KILL $$", None),
+        (
+            ECHO,
+            Some("efedea37277708f6aa61db985f97afc4348a0ef6c6427db02e97a61843679b7f"),
+        ),
     ];
-    let runs: Vec<_> = bodies
+    let host = Arc::new(host(Duration::from_secs(10)));
+    let handles: Vec<_> = runs
         .into_iter()
-        .map(|body| {
+        .enumerate()
+        .map(|(n, (body, hash))| {
             let host = Arc::clone(&host);
             std::thread::spawn(move || {
-                let scratch = Scratch::new();
-                scratch.answer(&answer());
+                let scratch = Scratch::holding(format!("concurrent object {n}\n").as_bytes());
+                let mut own = answer();
+                own.findings[0].id = format!("marker-{n}");
+                scratch.answer(&own);
                 let worker = scratch.worker(body);
-                (
-                    body,
-                    host.run(&worker, &identity(), &request(), &scratch.object()),
-                )
+                let done = host.run(&worker, &identity(), &request(), &scratch.object());
+                if let Some(hash) = hash {
+                    assert_eq!(done.failure, None, "run {n}");
+                    assert_eq!(done.response, own, "run {n}");
+                    assert_eq!(scratch.read("fd3.sha256"), format!("{hash}\n").into_bytes());
+                    let sent = scratch.read("request.bin");
+                    let body = decode_frame(&sent, DEFAULT_MAX_FRAME).expect("one frame");
+                    assert_eq!(decode_request(body).expect("request"), request(), "run {n}");
+                }
+                (body, done.failure)
             })
         })
         .collect();
-    for handle in runs {
-        let (body, done) = handle.join().expect("run thread");
+    for handle in handles {
+        let (body, failure) = handle.join().expect("run thread");
         let expected = match body {
             "exit 3" => Some(Failure::Exited(3)),
             "exec sleep 60" => Some(Failure::Timeout),
             "kill -KILL $$" => Some(Failure::Signalled(9)),
             _ => None,
         };
-        assert_eq!(done.failure, expected, "{body}");
+        assert_eq!(failure, expected, "{body}");
     }
 }

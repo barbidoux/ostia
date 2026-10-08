@@ -135,6 +135,8 @@ pub enum Failure {
     Request(ContractError),
     /// The worker could not be started.
     Spawn(String),
+    /// These descriptors of the host lack close-on-exec: the worker would inherit them.
+    InheritedDescriptors(Vec<u32>),
     /// No answer and exit within the time limit; the worker's process group was killed.
     Timeout,
     /// The worker exited with a non-zero code.
