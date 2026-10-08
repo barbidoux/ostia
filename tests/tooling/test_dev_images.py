@@ -143,6 +143,53 @@ def test_fat32_image_is_really_fat32(tmp_path: Path) -> None:
     assert probe.stdout.strip() == "FAT32"
 
 
+def super_options(mount_point: Path) -> set[str]:
+    """Options of the file system mounted on a mount point (the field after the source in mountinfo)."""
+    for line in Path("/proc/self/mountinfo").read_text().splitlines():
+        fields = line.split()
+        if fields[4] == str(mount_point):
+            return set(fields[fields.index("-") + 3].split(","))
+    raise AssertionError(f"{mount_point} is not in /proc/self/mountinfo")
+
+
+@pytest.mark.req("NFR-15")
+@pytest.mark.parametrize("mode", ["rw-image", "ro"])
+def test_fat_is_mounted_with_utf8_names_and_utc_times(
+    tmp_path: Path, mounts: list[str], mode: str
+) -> None:
+    # Kernel defaults are iocharset=ascii and the kernel time zone: a FAT name outside ASCII would be
+    # refused and FAT times (no zone on disk) would shift with the machine (docs/questions.md Q-44).
+    disk = tmp_path / "target" / "fixtures" / "utf8.img"
+    mkimage("fat16", 16, disk)
+    name = f"fat-{mode}-{os.getpid()}"
+    mounts.append(name)
+    mounted = loopmount(mode, str(disk), name)
+    assert mounted.returncode == 0, mounted.stdout + mounted.stderr
+    assert {"utf8", "tz=UTC"} <= super_options(MOUNT_BASE / name)
+    unmounted = loopmount("umount", name)
+    assert unmounted.returncode == 0, unmounted.stdout + unmounted.stderr
+
+
+@pytest.mark.req("NFR-15")
+def test_fat_name_outside_ascii_is_written_and_read_back(tmp_path: Path, mounts: list[str]) -> None:
+    disk = tmp_path / "target" / "fixtures" / "names.img"
+    mkimage("fat16", 16, disk)
+    planted = "caf\N{LATIN SMALL LETTER E WITH ACUTE} \N{RIGHT-TO-LEFT OVERRIDE}txt.exe"
+    writer = f"fat-names-rw-{os.getpid()}"
+    mounts.append(writer)
+    mounted = loopmount("rw-image", str(disk), writer)
+    assert mounted.returncode == 0, mounted.stdout + mounted.stderr
+    (MOUNT_BASE / writer / planted).write_bytes(b"trapped name")
+    assert loopmount("umount", writer).returncode == 0
+    reader = f"fat-names-{os.getpid()}"
+    mounts.append(reader)
+    mounted = loopmount("ro", str(disk), reader)
+    assert mounted.returncode == 0, mounted.stdout + mounted.stderr
+    assert os.listdir(MOUNT_BASE / reader) == [planted]
+    assert (MOUNT_BASE / reader / planted).read_bytes() == b"trapped name"
+    assert loopmount("umount", reader).returncode == 0
+
+
 @pytest.mark.req("TOOLING")
 def test_image_owned_by_another_user_is_refused(tmp_path: Path, mounts: list[str]) -> None:
     # The helper must not mount, as root, an image the invoking user does not own. An ext4 image built

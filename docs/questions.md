@@ -71,7 +71,29 @@ Recommendation: (a). Every one of them needs a deliberate weakening to slip thro
 reads each diff.
 Blocking: no.
 
+### Q-45 · WP-1.4, WP-1.5 · FR-04 · exFAT attributes and ext2 extended attributes are invisible on a mount
+Context: found while writing the WP-1.3 generator on the WSL2 kernel 6.6. (1) No exFAT driver there exposes the
+hidden and read-only attributes: exfat-fuse has no attribute interface and the kernel's exfat attribute ioctls
+are newer than 6.6; the generator sets them in the directory entry set itself. The locked
+`test_file_systems.py::test_hidden_files_are_marked_hidden` and `test_read_only_attribute_is_reported` expect
+them for exFAT. (2) The kernel ext2 driver there is built without xattr support: an ext2 image holding
+`user.*` attributes shows none through `loopmount.sh ro`; the ext4 driver reads ext2 and ext3 with them.
+Options: (a) WP-1.5 reads exFAT attributes from the image in a sandboxed worker (the orchestrator never parses
+it, SEC-05) and WP-1.4 mounts ext2 and ext3 with the ext4 driver (b) decide in WP-1.4/1.5 with an ADR.
+Recommendation: (a), confirmed in the ADR WP-1.5 writes for the NTFS driver (prompts/P1.md).
+Blocking: no (WP-1.4, WP-1.5).
+
 ## Answered
+
+### Q-44 · WP-1.3 · FR-03, FR-04 · FAT names and times through the development mount helper
+Context: `tools/dev/loopmount.sh` mounted vfat with the kernel defaults: `iocharset=ascii` (Debian and Ubuntu
+kernels; utf8 off) and times in `sys_tz`. Through it, any FAT name outside ASCII (accents, the bidi override
+U+202E of a trapped name) was refused with EINVAL, both when the generator plants it (`rw-image`) and when
+WP-1.4 reads a medium (`ro`); FAT times followed the kernel's time zone instead of UTC (report.md reads FAT
+times as UTC). exFAT, NTFS and ext take UTF-8 names already.
+Options: (a) add `utf8,tz=UTC` to the vfat options of both modes in `loopmount.sh`; the owner re-installs the
+root-owned copy (b) add `mtools` and plant FAT without mounting (c) refuse non-ASCII FAT names until WP-1.4.
+Answer (owner, 2026-10-08): (a); the owner re-installs with `sudo tools/dev/setup-debian.sh --install`.
 
 ### Q-43 · WP-1.2 · FR-09, ADR-09 · dependencies of the policy loader
 Context: the loader verifies an Ed25519 signature over the exact policy bytes, parses strict JSON, and reports
