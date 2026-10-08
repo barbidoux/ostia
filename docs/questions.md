@@ -71,6 +71,22 @@ Recommendation: (a). Every one of them needs a deliberate weakening to slip thro
 reads each diff.
 Blocking: no.
 
+## Answered
+
+### Q-46 · WP-1.4 · FR-03, SEC-05 · what the development mount helper tells the mount layer
+Context: WP-1.4's mount layer (`crates/media`, behind a `MediaAccess` trait) must report the file system in the
+report's vocabulary (`fat12` … `ext4`) and tell an unsupported file system (exit 4) from a mount failure
+(exit 5), without parsing the image itself (SEC-05: detection is blkid run by the helper). Today
+`tools/dev/loopmount.sh` prints blkid's TYPE (`vfat` for all FAT variants) and exits 1 for both cases. It also
+mounts ext2/ext3 with drivers that may hide extended attributes and NTFS with the kernel ntfs3 driver, which
+does not expose alternate data streams (Q-45; prompts/P1.md WP-1.5).
+Options: (a) one helper change, re-installed once: print the variant (FAT version from blkid), exit 4 for an
+unsupported or unrecognised file system, mount ext2/ext3 with the ext4 driver and NTFS with ntfs-3g in both
+modes; ADR-17 (proposed) records the drivers (b) the mount layer runs blkid itself, unprivileged, on the image
+file, and the helper only changes drivers.
+Recommendation: (a): all detection stays in one place, outside the orchestrator.
+Answer (owner, 2026-10-08): (a), ADR-17.
+
 ### Q-45 · WP-1.4, WP-1.5 · FR-04 · exFAT attributes and ext2 extended attributes are invisible on a mount
 Context: found while writing the WP-1.3 generator on the WSL2 kernel 6.6. (1) No exFAT driver there exposes the
 hidden and read-only attributes: exfat-fuse has no attribute interface and the kernel's exfat attribute ioctls
@@ -81,9 +97,8 @@ them for exFAT. (2) The kernel ext2 driver there is built without xattr support:
 Options: (a) WP-1.5 reads exFAT attributes from the image in a sandboxed worker (the orchestrator never parses
 it, SEC-05) and WP-1.4 mounts ext2 and ext3 with the ext4 driver (b) decide in WP-1.4/1.5 with an ADR.
 Recommendation: (a), confirmed in the ADR WP-1.5 writes for the NTFS driver (prompts/P1.md).
-Blocking: no (WP-1.4, WP-1.5).
-
-## Answered
+Answer (owner, 2026-10-08): (a): WP-1.5 reads exFAT attributes from the image in a sandboxed worker;
+WP-1.4 mounts ext2 and ext3 with the ext4 driver (Q-46).
 
 ### Q-44 · WP-1.3 · FR-03, FR-04 · FAT names and times through the development mount helper
 Context: `tools/dev/loopmount.sh` mounted vfat with the kernel defaults: `iocharset=ascii` (Debian and Ubuntu

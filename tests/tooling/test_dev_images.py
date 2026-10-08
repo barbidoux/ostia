@@ -12,6 +12,7 @@ message saying what to install; nothing is skipped. Mount points live under the 
 import errno
 import filecmp
 import hashlib
+import importlib
 import os
 import subprocess
 from collections.abc import Iterator
@@ -105,7 +106,7 @@ def test_image_mounts_read_only_refuses_writes_and_unmounts(
     mounts.append(rw_name)
     mounted = loopmount("rw-image", str(disk), rw_name)
     assert mounted.returncode == 0, mounted.stdout + mounted.stderr
-    assert f"({blkid_type}, " in mounted.stdout
+    assert f"({fs_type}, " in mounted.stdout
     (MOUNT_BASE / rw_name / "marker.txt").write_text(marker)
     unmounted = loopmount("umount", rw_name)
     assert unmounted.returncode == 0, unmounted.stdout + unmounted.stderr
@@ -188,6 +189,117 @@ def test_fat_name_outside_ascii_is_written_and_read_back(tmp_path: Path, mounts:
     assert os.listdir(MOUNT_BASE / reader) == [planted]
     assert (MOUNT_BASE / reader / planted).read_bytes() == b"trapped name"
     assert loopmount("umount", reader).returncode == 0
+
+
+VARIANTS = ["fat12", "fat16", "fat32", "exfat", "ntfs", "ext2", "ext3", "ext4"]
+SIZES = {"fat32": 64}
+
+
+@pytest.mark.req("FR-03")
+@pytest.mark.parametrize("variant", VARIANTS)
+def test_mount_reports_the_file_system_in_the_report_vocabulary(
+    tmp_path: Path, mounts: list[str], variant: str
+) -> None:
+    # The mount layer reports what the helper's blkid found (SEC-05: it never reads the image itself);
+    # FAT12, FAT16 and FAT32 are told apart (report.md `medium.file_system`).
+    disk = tmp_path / "target" / f"{variant}.img"
+    mkimage(variant, SIZES.get(variant, 16), disk)
+    name = f"variant-{variant}-{os.getpid()}"
+    mounts.append(name)
+    mounted = loopmount("ro", str(disk), name)
+    assert mounted.returncode == 0, mounted.stdout + mounted.stderr
+    assert f" ({variant}, " in mounted.stdout, mounted.stdout
+    assert mounted.stdout.rstrip().endswith(f") on {MOUNT_BASE / name}"), mounted.stdout
+
+
+def blank(path: Path, size_mib: int = 4) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as image:
+        image.truncate(size_mib * 1024 * 1024)
+    return path
+
+
+@pytest.mark.req("FR-03")
+@pytest.mark.parametrize("kind", ["blank", "minix"])
+def test_unsupported_file_system_exits_4_and_mounts_nothing(
+    tmp_path: Path, mounts: list[str], kind: str
+) -> None:
+    disk = blank(tmp_path / "target" / f"{kind}.img")
+    if kind == "minix":
+        made = run(["mkfs.minix", "-3", str(disk)], cwd=REPO)
+        assert made.returncode == 0, made.stdout + made.stderr
+    name = f"unsupported-{kind}-{os.getpid()}"
+    mounts.append(name)
+    refused = loopmount("ro", str(disk), name)
+    assert refused.returncode == 4, refused.stdout + refused.stderr
+    expected = "none" if kind == "blank" else "minix"
+    assert f"loopmount: unsupported file system '{expected}'" in refused.stderr
+    assert not (MOUNT_BASE / name).exists()
+    assert attached_loops(disk) == ""
+
+
+GENERATOR = importlib.import_module("tests.fixtures.images")
+
+
+def file_system_type(mount_point: Path) -> str:
+    for line in Path("/proc/self/mountinfo").read_text().splitlines():
+        fields = line.split()
+        if fields[4] == str(mount_point):
+            return fields[fields.index("-") + 1]
+    raise AssertionError(f"{mount_point} is not in /proc/self/mountinfo")
+
+
+@pytest.mark.req("FR-03", "FR-04")
+@pytest.mark.parametrize("variant", ["ext2", "ext3"])
+def test_ext2_and_ext3_are_read_with_the_ext4_driver_and_their_attributes(
+    mounts: list[str], variant: str
+) -> None:
+    # The ext2 driver may be built without xattr support (WSL2): the ext4 driver reads all three
+    # (docs/questions.md Q-45, Q-46).
+    planted = {
+        "path": "tagged.txt",
+        "content": b"tagged",
+        "hidden": False,
+        "read_only": False,
+        "modified": None,
+        "streams": {},
+        "xattrs": {"user.comment": b"planted"},
+        "symlink": None,
+    }
+    image = Path(GENERATOR.build_image(variant, [planted]))
+    name = f"extdriver-{variant}-{os.getpid()}"
+    mounts.append(name)
+    mounted = loopmount("ro", str(image), name)
+    assert mounted.returncode == 0, mounted.stdout + mounted.stderr
+    assert f" ({variant}, " in mounted.stdout, mounted.stdout
+    assert file_system_type(MOUNT_BASE / name) == "ext4"
+    assert os.getxattr(MOUNT_BASE / name / "tagged.txt", "user.comment") == b"planted"
+
+
+@pytest.mark.req("FR-03", "FR-04")
+def test_ntfs_is_read_with_ntfs_3g_and_its_streams(mounts: list[str]) -> None:
+    # The kernel ntfs3 driver does not show alternate data streams; ntfs-3g shows them as user.* attributes.
+    planted = {
+        "path": "host.txt",
+        "content": b"host",
+        "hidden": False,
+        "read_only": False,
+        "modified": None,
+        "streams": {"Zone.Identifier": b"[ZoneTransfer]\r\nZoneId=3\r\n"},
+        "xattrs": {},
+        "symlink": None,
+    }
+    image = Path(GENERATOR.build_image("ntfs", [planted]))
+    name = f"ntfsdriver-{os.getpid()}"
+    mounts.append(name)
+    mounted = loopmount("ro", str(image), name)
+    assert mounted.returncode == 0, mounted.stdout + mounted.stderr
+    assert file_system_type(MOUNT_BASE / name) == "fuseblk"
+    host = MOUNT_BASE / name / "host.txt"
+    assert os.getxattr(host, "user.Zone.Identifier") == b"[ZoneTransfer]\r\nZoneId=3\r\n"
+    with pytest.raises(OSError) as refused:
+        host.write_bytes(b"must not be written")
+    assert refused.value.errno == errno.EROFS
 
 
 @pytest.mark.req("TOOLING")

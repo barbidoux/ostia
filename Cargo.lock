@@ -444,6 +444,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ostia-media"
+version = "0.0.0"
+dependencies = [
+ "ostia-core-domain",
+ "ostia-traceability",
+ "thiserror",
+]
+
+[[package]]
 name = "ostia-traceability"
 version = "0.0.0"
 
