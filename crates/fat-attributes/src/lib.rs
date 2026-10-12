@@ -4,6 +4,7 @@
 //! `FAT_IOCTL_GET_ATTRIBUTES` ioctl. The kernel already parsed the directory entry for the mount: this crate
 //! asks it for the byte it holds and parses nothing. It is the one crate of `docs/unsafe-allowlist.md`.
 
+use std::fs::File;
 use std::os::fd::{AsFd, AsRawFd};
 
 mod ioctl {
@@ -15,9 +16,17 @@ mod ioctl {
 /// `ATTR_DIR` 0x10, `ATTR_ARCH` 0x20).
 ///
 /// # Errors
-/// The ioctl failed: `file` is not on a vfat mount (`ENOTTY`), or the kernel refused.
+/// [`std::io::ErrorKind::InvalidInput`] for anything but a regular file (no ioctl is issued then); otherwise
+/// the ioctl failed: `file` is not on a vfat mount (`ENOTTY`), or the kernel refused.
 pub fn attributes(file: &impl AsFd) -> std::io::Result<u32> {
     let fd = file.as_fd();
+    // Only regular files get the request: no device or directory driver sees an unknown ioctl.
+    if !File::from(fd.try_clone_to_owned()?).metadata()?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "not a regular file",
+        ));
+    }
     let mut bits: u32 = 0;
     // SAFETY: FAT_IOCTL_GET_ATTRIBUTES writes exactly one u32 through its argument, which points to `bits`, a
     // live, aligned, writable u32 on this stack frame; `fd` is borrowed from `file` and stays open for the call.

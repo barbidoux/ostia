@@ -14,7 +14,7 @@ ostia-fat-attributes = { path = "../fat-attributes" }
 thiserror = "=2.0.21"
 # Inventory (Q-50): extended attributes and NTFS streams on the opened descriptor (rustix), the single read's
 # SHA-256 and SHA-1.
-rustix = { version = "=1.1.5", features = ["fs"] }
+rustix = { version = "=1.1.5", features = ["fs", "process"] }
 sha1 = "=0.11.0"
 sha2 = "=0.11.0"
 

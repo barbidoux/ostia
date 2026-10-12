@@ -10,16 +10,20 @@
 use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
 use std::fmt::Write as _;
-use std::fs::{File, OpenOptions, Permissions};
+use std::fs::{DirBuilder, File, Permissions};
 use std::io::{ErrorKind, Read, Write};
-use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::fd::OwnedFd;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ostia_core_domain::object::{Kind, Origin};
 use ostia_core_domain::session::FileSystem;
-use rustix::fs::{OFlags, fgetxattr, flistxattr, llistxattr};
+use rustix::fs::{
+    AtFlags, Dir, FileType, Mode, OFlags, Stat, fgetxattr, flistxattr, open, openat, statat,
+};
+use rustix::process::geteuid;
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
 
@@ -39,44 +43,58 @@ const USER: &[u8] = b"user.";
 pub const MAX_DIRECTORY_DEPTH: usize = 128;
 
 /// The directory that holds the copies of a session's objects (plain in P1, encrypted in P4).
+///
+/// It belongs to this process's user and is closed to everyone else (mode 0700, no symbolic link): nobody else
+/// can replace a sealed copy. Copies are created relative to the directory's descriptor.
 #[derive(Debug)]
 pub struct Workspace {
     root: PathBuf,
+    dir: OwnedFd,
     copies: u64,
 }
 
 impl Workspace {
-    /// A workspace in `dir`, which must not exist or be empty.
+    /// A workspace in `dir`, which must not exist (it is created with mode 0700), or be an empty directory of
+    /// this user closed to the group and others.
     ///
     /// # Errors
-    /// [`InventoryError::Workspace`] when `dir` holds anything or cannot be created.
+    /// [`InventoryError::Workspace`] when `dir` cannot be created, is not such a directory, or holds anything.
     pub fn create(dir: &Path) -> Result<Self, InventoryError> {
-        match std::fs::read_dir(dir) {
-            Ok(mut entries) => {
-                if entries.next().is_some() {
-                    return Err(InventoryError::Workspace(format!(
-                        "workspace {} is not empty",
-                        dir.display()
-                    )));
-                }
-            }
-            Err(error) if error.kind() == ErrorKind::NotFound => {
-                std::fs::create_dir_all(dir).map_err(|error| {
-                    InventoryError::Workspace(format!(
-                        "cannot create the workspace {}: {error}",
-                        dir.display()
-                    ))
-                })?;
-            }
-            Err(error) => {
-                return Err(InventoryError::Workspace(format!(
-                    "cannot use the workspace {}: {error}",
-                    dir.display()
-                )));
-            }
+        let refused =
+            |why: &str| InventoryError::Workspace(format!("workspace {}: {why}", dir.display()));
+        match std::fs::symlink_metadata(dir) {
+            Err(error) if error.kind() == ErrorKind::NotFound => DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(dir)
+                .map_err(|error| refused(&format!("cannot create: {error}")))?,
+            Err(error) => return Err(refused(&format!("cannot inspect: {error}"))),
+            Ok(_) => {}
+        }
+        let metadata = std::fs::symlink_metadata(dir)
+            .map_err(|error| refused(&format!("cannot inspect: {error}")))?;
+        if !metadata.file_type().is_dir() {
+            return Err(refused("not a directory"));
+        }
+        if metadata.uid() != geteuid().as_raw() {
+            return Err(refused("owned by another user"));
+        }
+        if metadata.mode() & 0o077 != 0 {
+            return Err(refused("open to the group or to others"));
+        }
+        let handle = open(
+            dir,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|error| refused(&format!("cannot open: {error}")))?;
+        let names = children(&handle).map_err(|error| refused(&format!("cannot list: {error}")))?;
+        if !names.is_empty() {
+            return Err(refused("not empty"));
         }
         Ok(Self {
             root: dir.to_path_buf(),
+            dir: handle,
             copies: 0,
         })
     }
@@ -89,15 +107,17 @@ impl Workspace {
 
     /// A new, empty copy file, writable by this process only until it is sealed.
     fn new_copy(&mut self) -> Result<(PathBuf, File), InventoryError> {
-        let path = self.root.join(format!("{:08}", self.copies));
+        let name = format!("{:08}", self.copies);
+        let path = self.root.join(&name);
         self.copies += 1;
-        let file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&path)
-            .map_err(|error| workspace_error(&path, &error))?;
-        Ok((path, file))
+        let file = openat(
+            &self.dir,
+            name.as_str(),
+            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::from_raw_mode(0o600),
+        )
+        .map_err(|error| workspace_error(&path, &error.into()))?;
+        Ok((path, File::from(file)))
     }
 }
 
@@ -218,12 +238,19 @@ pub fn take_inventory(
     file_system: FileSystem,
     workspace: &mut Workspace,
 ) -> Result<Inventory, InventoryError> {
-    let names = children(root).map_err(|error| {
+    let cannot_list = |error: rustix::io::Errno| {
         InventoryError::Root(format!(
             "cannot list the medium {}: {error}",
             root.display()
         ))
-    })?;
+    };
+    let handle = open(
+        root,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(cannot_list)?;
+    let names = children(&handle).map_err(cannot_list)?;
     let mut walk = Walk {
         file_system,
         workspace,
@@ -232,17 +259,35 @@ pub fn take_inventory(
             unlisted: Vec::new(),
         },
     };
-    walk.directory(root, Path::new(""), names)?;
+    walk.check_directory_attributes(&handle, Path::new(""));
+    walk.directory(&handle, Path::new(""), names, 1)?;
     Ok(walk.inventory)
 }
 
-/// The names in `dir`, in byte order.
-fn children(dir: &Path) -> std::io::Result<Vec<OsString>> {
-    let mut names = std::fs::read_dir(dir)?
-        .map(|entry| entry.map(|entry| entry.file_name()))
-        .collect::<std::io::Result<Vec<_>>>()?;
+/// The names in the directory open as `dir`, in byte order (`.` and `..` left out). The listing reads that
+/// directory, whatever its path resolves to now.
+fn children(dir: &OwnedFd) -> Result<Vec<OsString>, rustix::io::Errno> {
+    let mut names = Vec::new();
+    for entry in Dir::read_from(dir)? {
+        let bytes = entry?.file_name().to_bytes().to_vec();
+        if bytes != b"." && bytes != b".." {
+            names.push(OsString::from_vec(bytes));
+        }
+    }
     names.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
     Ok(names)
+}
+
+/// The modification time of a `stat` result, when it can be represented.
+fn modified(stat: &Stat) -> Option<SystemTime> {
+    let nanos = u32::try_from(stat.st_mtime_nsec).ok()?;
+    if let Ok(seconds) = u64::try_from(stat.st_mtime) {
+        return UNIX_EPOCH.checked_add(Duration::new(seconds, nanos));
+    }
+    let before = Duration::from_secs(stat.st_mtime.unsigned_abs());
+    UNIX_EPOCH
+        .checked_sub(before)?
+        .checked_add(Duration::from_nanos(u64::from(nanos)))
 }
 
 /// A path's bytes in the report's encoding: UTF-8, `\xNN` for a byte that is not valid UTF-8, `\\` for a
@@ -315,58 +360,92 @@ impl Walk<'_> {
         });
     }
 
+    /// Lists the directory open as `dir` (at `depth` below the root). Every child is reached from `dir` by its
+    /// single name, never through a path, so a directory swapped for a link while it is walked is not followed.
     fn directory(
         &mut self,
-        dir: &Path,
+        dir: &OwnedFd,
         relative: &Path,
         names: Vec<OsString>,
+        depth: usize,
     ) -> Result<(), InventoryError> {
         for name in names {
-            let path = dir.join(&name);
             let child = relative.join(&name);
-            let metadata = match std::fs::symlink_metadata(&path) {
-                Ok(metadata) => metadata,
+            let stat = match statat(dir, name.as_os_str(), AtFlags::SYMLINK_NOFOLLOW) {
+                Ok(stat) => stat,
                 Err(error) => {
                     self.unlisted(&child, format!("cannot inspect: {error}"));
                     continue;
                 }
             };
-            let kind = metadata.file_type();
-            if kind.is_dir() {
-                self.check_directory_attributes(&path, &child);
-                match children(&path) {
-                    Ok(names) => self.directory(&path, &child, names)?,
-                    Err(error) => self.unlisted(&child, format!("cannot list: {error}")),
+            match FileType::from_raw_mode(stat.st_mode) {
+                FileType::Directory => self.subdirectory(dir, &name, &child, depth)?,
+                FileType::RegularFile => self.file(dir, &name, &child, modified(&stat))?,
+                kind => {
+                    let kind = if kind == FileType::Symlink {
+                        Kind::Symlink
+                    } else {
+                        Kind::Special
+                    };
+                    self.push(Entry {
+                        parent: None,
+                        origin: Origin::File,
+                        kind,
+                        path: report_path(child.as_os_str().as_bytes()),
+                        name: child,
+                        stream: None,
+                        modified: modified(&stat),
+                        attributes: dot_name(&name),
+                        content: Content::NotRead,
+                    });
                 }
-            } else if kind.is_file() {
-                self.file(&path, &child, &name, metadata.modified().ok())?;
-            } else {
-                let kind = if kind.is_symlink() {
-                    Kind::Symlink
-                } else {
-                    Kind::Special
-                };
-                self.push(Entry {
-                    parent: None,
-                    origin: Origin::File,
-                    kind,
-                    path: report_path(child.as_os_str().as_bytes()),
-                    name: child,
-                    stream: None,
-                    modified: metadata.modified().ok(),
-                    attributes: dot_name(&name),
-                    content: Content::NotRead,
-                });
             }
         }
         Ok(())
     }
 
-    /// A stream or attribute on a directory has no host file to hang from in the report: its content is
-    /// recorded as unlisted, never silently dropped.
-    fn check_directory_attributes(&mut self, path: &Path, relative: &Path) {
+    fn subdirectory(
+        &mut self,
+        parent: &OwnedFd,
+        name: &OsStr,
+        relative: &Path,
+        depth: usize,
+    ) -> Result<(), InventoryError> {
+        if depth > MAX_DIRECTORY_DEPTH {
+            self.unlisted(
+                relative,
+                format!("more than {MAX_DIRECTORY_DEPTH} directories deep"),
+            );
+            return Ok(());
+        }
+        let opened = openat(
+            parent,
+            name,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        );
+        let handle = match opened {
+            Ok(handle) => handle,
+            Err(error) => {
+                self.unlisted(relative, format!("cannot open: {error}"));
+                return Ok(());
+            }
+        };
+        self.check_directory_attributes(&handle, relative);
+        match children(&handle) {
+            Ok(names) => self.directory(&handle, relative, names, depth + 1),
+            Err(error) => {
+                self.unlisted(relative, format!("cannot list: {error}"));
+                Ok(())
+            }
+        }
+    }
+
+    /// A stream or attribute on a directory, the medium root included, has no host file to hang from in the
+    /// report: its content is recorded as unlisted, never silently dropped.
+    fn check_directory_attributes(&mut self, dir: &OwnedFd, relative: &Path) {
         let mut list = vec![0_u8; XATTR_MAX];
-        match llistxattr(path, &mut list[..]) {
+        match flistxattr(dir, &mut list[..]) {
             Ok(len) => {
                 let listed = list.get(..len).unwrap_or_default();
                 if listed
@@ -391,9 +470,9 @@ impl Walk<'_> {
 
     fn file(
         &mut self,
-        path: &Path,
-        relative: &Path,
+        dir: &OwnedFd,
         name: &OsStr,
+        relative: &Path,
         listed_modified: Option<SystemTime>,
     ) -> Result<(), InventoryError> {
         let mut entry = Entry {
@@ -407,12 +486,14 @@ impl Walk<'_> {
             attributes: dot_name(name),
             content: Content::NotRead,
         };
-        let opened = OpenOptions::new()
-            .read(true)
-            .custom_flags((OFlags::NOFOLLOW | OFlags::NONBLOCK).bits().cast_signed())
-            .open(path);
+        let opened = openat(
+            dir,
+            name,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
+            Mode::empty(),
+        );
         let mut file = match opened {
-            Ok(file) => file,
+            Ok(handle) => File::from(handle),
             Err(error) => {
                 entry.content = Content::Unreadable(format!("cannot open: {error}"));
                 self.push(entry);
@@ -433,29 +514,35 @@ impl Walk<'_> {
                 return Ok(());
             }
         }
-        entry.attributes.extend(self.file_system_attributes(&file));
+        match self.file_system_attributes(&file) {
+            Ok(attributes) => entry.attributes.extend(attributes),
+            // Unknown attributes are never guessed absent: the file is listed, the gap recorded.
+            Err(reason) => self.unlisted(relative, format!("cannot read attributes: {reason}")),
+        }
         entry.content = read_once(&mut file, self.workspace)?;
         let host = self.push(entry);
         self.streams(&file, relative, host)
     }
 
-    fn file_system_attributes(&self, file: &File) -> Attributes {
+    fn file_system_attributes(&self, file: &File) -> Result<Attributes, String> {
         match self.file_system {
             FileSystem::Ntfs => {
                 let mut flags = [0_u8; 4];
                 match fgetxattr(file, NTFS_ATTRIBUTES, &mut flags[..]) {
-                    Ok(4) => ntfs_attributes(u32::from_be_bytes(flags)),
-                    _ => Attributes::new(),
+                    Ok(4) => Ok(ntfs_attributes(u32::from_be_bytes(flags))),
+                    Ok(len) => Err(format!("{len} bytes of NTFS attribute flags")),
+                    Err(error) => Err(error.to_string()),
                 }
             }
-            // The byte the vfat driver holds (Q-48); a refused ioctl reports no attribute.
+            // The byte the vfat driver holds (Q-48).
             FileSystem::Fat12 | FileSystem::Fat16 | FileSystem::Fat32 => {
                 ostia_fat_attributes::attributes(file)
-                    .map_or_else(|_| Attributes::new(), fat_attributes)
+                    .map(fat_attributes)
+                    .map_err(|error| error.to_string())
             }
             // exFAT attributes are read from the image by a worker (WP-1.13); ext has none of these.
             FileSystem::Exfat | FileSystem::Ext2 | FileSystem::Ext3 | FileSystem::Ext4 => {
-                Attributes::new()
+                Ok(Attributes::new())
             }
         }
     }
