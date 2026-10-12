@@ -484,6 +484,7 @@ name = "ostia-media"
 version = "0.0.0"
 dependencies = [
  "ostia-core-domain",
+ "ostia-fat-attributes",
  "ostia-traceability",
  "rustix",
  "sha1",

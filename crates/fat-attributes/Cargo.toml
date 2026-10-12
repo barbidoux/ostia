@@ -14,11 +14,10 @@ nix = { version = "=0.31.3", features = ["ioctl"] }
 [dev-dependencies]
 ostia-traceability = { path = "../traceability" }
 
-# Listed in docs/unsafe-allowlist.md (Q-48): the workspace's `unsafe_code = "forbid"` cannot be relaxed by a local
-# allow, so this crate declares the workspace lints itself, with `unsafe_code` at deny and the one call allowed
-# where it is made.
+# Listed in docs/unsafe-allowlist.md (Q-48): the workspace's `unsafe_code = "forbid"` cannot be relaxed, so this
+# crate declares the workspace lints itself without it (root Cargo.toml). Its one unsafe block is the ioctl, and
+# every unsafe block must carry a SAFETY comment.
 [lints.rust]
-unsafe_code = "deny"
 missing_docs = "warn"
 unsafe_op_in_unsafe_fn = "deny"
 

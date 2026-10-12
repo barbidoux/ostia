@@ -445,14 +445,15 @@ impl Walk<'_> {
                     _ => Attributes::new(),
                 }
             }
-            // FAT attributes: Q-48 (the ioctl crate); exFAT attributes: WP-1.5b (image worker).
-            FileSystem::Fat12
-            | FileSystem::Fat16
-            | FileSystem::Fat32
-            | FileSystem::Exfat
-            | FileSystem::Ext2
-            | FileSystem::Ext3
-            | FileSystem::Ext4 => Attributes::new(),
+            // The byte the vfat driver holds (Q-48); a refused ioctl reports no attribute.
+            FileSystem::Fat12 | FileSystem::Fat16 | FileSystem::Fat32 => {
+                ostia_fat_attributes::attributes(file)
+                    .map_or_else(|_| Attributes::new(), fat_attributes)
+            }
+            // exFAT attributes are read from the image by a worker (WP-1.13); ext has none of these.
+            FileSystem::Exfat | FileSystem::Ext2 | FileSystem::Ext3 | FileSystem::Ext4 => {
+                Attributes::new()
+            }
         }
     }
 
