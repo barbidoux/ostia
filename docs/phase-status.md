@@ -31,7 +31,7 @@ Gate P0 (owner): [x] evidence in `docs/gates/P0.md` reviewed; `tests/acceptance/
 - [x] WP-1.3 Disk-image fixture generator: FAT, exFAT, NTFS, ext4 with planted files, hidden files, alternate data strea... (after: P0) — wp/1.3-disk-image-fixtures
 - [x] WP-1.4 Development mount layer: loop device, read-only, file-system detection, clean refusal of unsupported systems (after: 1.3) — wp/1.4-dev-mount-layer
 - [ ] WP-1.5 Inventory with hidden files and alternate streams, metadata, single read with SHA-256 and SHA-1, copy into... (after: 1.4)
-- [ ] WP-1.6 Worker host v0: spawn a worker, pass the object as descriptor 3, framed exchange, timeout and crash handling (after: 1.1)
+- [x] WP-1.6 Worker host v0: spawn a worker, pass the object as descriptor 3, framed exchange, timeout and crash handling (after: 1.1) — wp/1.6-worker-host
 - [ ] WP-1.7 Triage worker (Rust): type from content, extension mismatch flag (after: 1.6)
 - [ ] WP-1.8 Extraction worker, part 1: zip, tar, gz; limits on depth, ratio, total size, count; children returned as ob... (after: 1.6)
 - [ ] WP-1.9 Extraction worker, part 2: 7z, rar, cab, iso, msi (after: 1.8)

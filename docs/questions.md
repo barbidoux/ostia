@@ -73,6 +73,23 @@ Blocking: no.
 
 ## Answered
 
+### Q-47 · WP-1.6 · CTR-01, NFR-05 · dependencies of the worker host
+Context: the worker host (`crates/sandbox`, prompts/P1.md WP-1.6) must give the worker the object as file
+descriptor 3, read-only, and kill the worker's whole process group on a timeout. The Rust standard library
+does neither: placing an open file on fd 3 in the child needs `dup2` between fork and exec
+(`CommandExt::pre_exec`, which is `unsafe`), and `killpg` is a libc call. `unsafe` is forbidden outside
+`docs/unsafe-allowlist.md`, which lists no crate. P2's bubblewrap sandbox will also need to pass descriptors
+(`bwrap --seccomp FD`).
+Options: (a) two dependencies, no `unsafe` in Ostia: `command-fds =0.3.3` (Apache-2.0, Google; maps open
+files to child descriptor numbers) and `nix =0.31.3` (MIT; safe `killpg` and `waitid`, already required by
+command-fds). Transitive crates: `bitflags`, `cfg-if`, `libc` (already in Cargo.lock), `cfg_aliases` (MIT,
+build only) (b) list `ostia-sandbox` in the unsafe allowlist and call `libc` (`dup2` in `pre_exec`, `killpg`)
+(c) no dependency and no `unsafe`: spawn through `/bin/sh -c 'exec 3<"$1"; …'` (the child opens the object by
+path) and kill the group with the `kill` command.
+Recommendation: (a): no `unsafe` in Ostia, small and maintained crates under allowed licences, and the same
+descriptor passing serves P2's sandbox; (c) leaves a shell in every worker launch.
+Answer (owner, 2026-10-08): (a), command-fds 0.3.3 and nix 0.31.3.
+
 ### Q-46 · WP-1.4 · FR-03, SEC-05 · what the development mount helper tells the mount layer
 Context: WP-1.4's mount layer (`crates/media`, behind a `MediaAccess` trait) must report the file system in the
 report's vocabulary (`fat12` … `ext4`) and tell an unsupported file system (exit 4) from a mount failure
