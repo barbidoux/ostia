@@ -17,6 +17,7 @@ import hashlib
 import importlib
 import json
 import os
+import re
 import stat
 import struct
 import subprocess
@@ -463,6 +464,19 @@ def test_ext_extended_attributes_are_planted(
     files, image = image_of(fs)
     for plant in (p for p in files if p.symlink is None):
         assert ext_user_xattrs(image, plant.path, tmp_path) == plant.xattrs, plant.path
+
+
+@pytest.mark.req("TOOLING")
+@pytest.mark.slow
+@pytest.mark.parametrize("fs", EXT)
+def test_ext_lost_and_found_belongs_to_the_invoking_user(
+    image_of: Callable[[str], Built], fs: str
+) -> None:
+    # mke2fs makes lost+found root's, mode 0700: an unprivileged inventory could not list it (Q-51).
+    _, image = image_of(fs)
+    details = debugfs(image, 'stat "/lost+found"')
+    assert re.search(r"Type: directory\s+Mode:\s+0700\b", details), details
+    assert re.search(rf"User:\s+{os.getuid()}\s+Group:\s+{os.getgid()}\b", details), details
 
 
 @pytest.mark.req("TOOLING")
