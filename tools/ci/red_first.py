@@ -167,9 +167,11 @@ def file_at(repo: Path, rev: str | None, path: str | None) -> str | None:
     if rev is None or path is None:
         return None
     result = subprocess.run(
-        ["git", "show", f"{rev}:{path}"], cwd=repo, capture_output=True, text=True, check=False
+        ["git", "show", f"{rev}:{path}"], cwd=repo, capture_output=True, check=False
     )
-    return result.stdout if result.returncode == 0 else None
+    # Any file of a commit is read, binary ones (golden vectors) included: those hold no test, and bytes that
+    # are not UTF-8 are replaced instead of stopping the check.
+    return result.stdout.decode("utf-8", errors="replace") if result.returncode == 0 else None
 
 
 def parent(repo: Path, sha: str) -> str | None:
