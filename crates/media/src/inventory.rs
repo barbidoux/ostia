@@ -35,6 +35,9 @@ const NTFS_ATTRIBUTES: &str = "system.ntfs_attrib_be";
 /// The namespace of the attributes listed: ext `user.*` attributes, ntfs-3g's streams (`streams_interface=xattr`).
 const USER: &[u8] = b"user.";
 
+/// Directories nested deeper below the medium root are not opened: recorded as unlisted.
+pub const MAX_DIRECTORY_DEPTH: usize = 128;
+
 /// The directory that holds the copies of a session's objects (plain in P1, encrypted in P4).
 #[derive(Debug)]
 pub struct Workspace {
@@ -586,4 +589,112 @@ fn seal(path: &Path, copy: &File) -> Result<(), InventoryError> {
     copy.sync_all()
         .and_then(|()| copy.set_permissions(Permissions::from_mode(0o400)))
         .map_err(|error| workspace_error(path, &error))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Read, Write};
+
+    use ostia_traceability::req;
+
+    use super::{CopyError, hash_and_copy};
+
+    /// A source that gives `first` once, then would give `second` to anyone reading it again.
+    struct Changing {
+        reads: u32,
+    }
+
+    impl Read for Changing {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.reads += 1;
+            let bytes: &[u8] = match self.reads {
+                1 => b"readme\n",
+                2 => b"",
+                _ => b"changed after the read\n",
+            };
+            let len = bytes.len().min(buf.len());
+            buf[..len].copy_from_slice(&bytes[..len]);
+            Ok(len)
+        }
+    }
+
+    #[req("SEC-10")]
+    #[test]
+    fn one_pass_hashes_and_copies_the_same_bytes() {
+        let mut source = Changing { reads: 0 };
+        let mut copy = Vec::new();
+        let (size, sha256, sha1) = hash_and_copy(&mut source, &mut copy).expect("one pass");
+        assert_eq!(source.reads, 2, "read to its end once, never again");
+        assert_eq!(copy, b"readme\n");
+        assert_eq!(size, 7);
+        let hex = |bytes: &[u8]| {
+            bytes.iter().fold(String::new(), |mut out, b| {
+                let _ = std::fmt::Write::write_fmt(&mut out, format_args!("{b:02x}"));
+                out
+            })
+        };
+        assert_eq!(
+            hex(&sha256),
+            "00d75b5176b48ccc71d91bcc1d7b90fc2820429b1629b77fd1d5f4c5dcee4f6d"
+        );
+        assert_eq!(hex(&sha1), "0753dda729217d9bd892d252bdd35f2ee6774a5b");
+    }
+
+    /// A copy that accepts `room` bytes, then fails like a full disk (ENOSPC).
+    struct Full {
+        room: usize,
+    }
+
+    impl Write for Full {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if self.room == 0 {
+                return Err(std::io::Error::from_raw_os_error(28));
+            }
+            let len = buf.len().min(self.room);
+            self.room -= len;
+            Ok(len)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[req("SEC-10")]
+    #[test]
+    fn copy_that_cannot_be_written_is_a_write_failure_not_a_read() {
+        let bytes = vec![7_u8; 200_000];
+        let failed = hash_and_copy(&mut bytes.as_slice(), &mut Full { room: 100_000 });
+        assert!(
+            matches!(&failed, Err(CopyError::Write(error)) if error.raw_os_error() == Some(28)),
+            "{failed:?}"
+        );
+    }
+
+    /// A source that fails after its first chunk (EIO), like a medium with a bad sector.
+    struct Failing {
+        reads: u32,
+    }
+
+    impl Read for Failing {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.reads += 1;
+            if self.reads == 1 {
+                buf[0] = 1;
+                Ok(1)
+            } else {
+                Err(std::io::Error::from_raw_os_error(5))
+            }
+        }
+    }
+
+    #[req("FR-04")]
+    #[test]
+    fn source_that_fails_is_a_read_failure() {
+        let failed = hash_and_copy(&mut Failing { reads: 0 }, &mut Vec::new());
+        assert!(
+            matches!(&failed, Err(CopyError::Read(error)) if error.raw_os_error() == Some(5)),
+            "{failed:?}"
+        );
+    }
 }

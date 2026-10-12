@@ -21,8 +21,10 @@ fn file_outside_a_vfat_mount_is_an_error() {
 
 #[req("FR-04")]
 #[test]
-fn directory_outside_a_vfat_mount_is_an_error() {
+fn anything_but_a_regular_file_is_refused_before_the_ioctl() {
+    // The ioctl is only issued on a regular file: no device or directory gets an unknown request.
     let dir = std::fs::File::open(std::env::temp_dir()).expect("directory");
-    let error = attributes(&dir).expect_err("no attribute byte outside vfat");
-    assert_eq!(error.raw_os_error(), Some(ENOTTY), "{error}");
+    let error = attributes(&dir).expect_err("no attribute byte for a directory");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput, "{error}");
+    assert_eq!(error.raw_os_error(), None, "{error}");
 }

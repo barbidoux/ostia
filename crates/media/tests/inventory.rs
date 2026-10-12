@@ -16,10 +16,11 @@ use Attribute::{Archive, Hidden, ReadOnly, System};
 use ostia_core_domain::object::{Kind, Origin};
 use ostia_core_domain::session::FileSystem;
 use ostia_media::inventory::{
-    Attribute, Attributes, Content, Entry, Inventory, InventoryError, Workspace, fat_attributes,
-    ntfs_attributes, report_path, take_inventory,
+    Attribute, Attributes, Content, Entry, Inventory, InventoryError, MAX_DIRECTORY_DEPTH,
+    Workspace, fat_attributes, ntfs_attributes, report_path, take_inventory,
 };
 use ostia_traceability::req;
+use rustix::fs::{XattrFlags, inotify};
 
 static DIRS: AtomicU32 = AtomicU32::new(0);
 
@@ -30,7 +31,17 @@ struct Scratch {
 
 impl Scratch {
     fn new() -> Self {
-        let dir = std::env::temp_dir().join(format!(
+        Self::under(&std::env::temp_dir())
+    }
+
+    /// Under cargo's target directory, on the repository's file system, which keeps `user.*` attributes (a
+    /// temporary directory may be a tmpfs that does not, before Linux 6.6).
+    fn keeping_attributes() -> Self {
+        Self::under(Path::new(env!("CARGO_TARGET_TMPDIR")))
+    }
+
+    fn under(base: &Path) -> Self {
+        let dir = base.join(format!(
             "ostia-inventory-{}-{}",
             std::process::id(),
             DIRS.fetch_add(1, Ordering::Relaxed)
@@ -186,6 +197,9 @@ fn plain_tree_is_inventoried_with_sizes_and_hashes() {
 fn entries_come_depth_first_in_name_order() {
     let scratch = Scratch::new();
     plant_tree(&scratch);
+    // Byte order, not a locale or case-insensitive one: "Zeta" (0x5a) before "alpha" (0x61).
+    scratch.plant("alpha.txt", b"readme\n");
+    scratch.plant("Zeta.txt", b"readme\n");
     let paths: Vec<_> = scratch
         .inventory()
         .entries
@@ -196,6 +210,8 @@ fn entries_come_depth_first_in_name_order() {
         paths,
         [
             ".dotfile",
+            "Zeta.txt",
+            "alpha.txt",
             "big.bin",
             "docs/deep/nested/photo.bin",
             "docs/report.txt",
@@ -310,12 +326,18 @@ fn special_files_are_listed_and_never_opened() {
         .status()
         .expect("mkfifo");
     assert!(fifo.success());
+    let socket =
+        std::os::unix::net::UnixListener::bind(scratch.medium().join("socket")).expect("socket");
     let inventory = scratch.inventory();
-    let pipe = entry(&inventory, "pipe");
-    assert_eq!(
-        (pipe.kind, &pipe.content),
-        (Kind::Special, &Content::NotRead)
-    );
+    drop(socket);
+    for name in ["pipe", "socket"] {
+        let special = entry(&inventory, name);
+        assert_eq!(
+            (special.kind, &special.content),
+            (Kind::Special, &Content::NotRead),
+            "{name}"
+        );
+    }
 }
 
 #[req("FR-04")]
@@ -422,21 +444,41 @@ fn attribute_names_are_the_report_ones() {
 
 #[req("SEC-10")]
 #[test]
-fn workspace_must_be_new_or_empty() {
+fn workspace_must_be_private_and_new_or_empty() {
     let scratch = Scratch::new();
-    let used = scratch.dir.join("used");
-    std::fs::create_dir_all(&used).expect("directory");
+    let private = |name: &str| {
+        let dir = scratch.dir.join(name);
+        std::fs::create_dir_all(&dir).expect("directory");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).expect("mode");
+        dir
+    };
+    let refused = |dir: &Path| {
+        let answer = Workspace::create(dir);
+        assert!(
+            matches!(answer, Err(InventoryError::Workspace(_))),
+            "{}: {answer:?}",
+            dir.display()
+        );
+    };
+    let used = private("used");
     std::fs::write(used.join("left-over"), b"x").expect("left-over");
-    assert!(matches!(
-        Workspace::create(&used),
-        Err(InventoryError::Workspace(_))
-    ));
-    let empty = scratch.dir.join("empty");
-    std::fs::create_dir_all(&empty).expect("directory");
+    refused(&used);
+    // Another user could replace a sealed copy in a directory open to the group or to others (SEC-10).
+    let shared = private("shared");
+    std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o770)).expect("mode");
+    refused(&shared);
+    let link = scratch.dir.join("link");
+    std::os::unix::fs::symlink(private("target"), &link).expect("symlink");
+    refused(&link);
+    let empty = private("empty");
     assert_eq!(Workspace::create(&empty).expect("empty").root(), empty);
     let fresh = scratch.dir.join("fresh/nested");
     assert_eq!(Workspace::create(&fresh).expect("fresh").root(), fresh);
-    assert!(fresh.is_dir());
+    let mode = std::fs::metadata(&fresh)
+        .expect("fresh")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o700);
 }
 
 #[req("SEC-10")]
@@ -468,4 +510,169 @@ fn missing_root_is_an_error() {
         matches!(refused, Err(InventoryError::Root(_))),
         "{refused:?}"
     );
+}
+
+fn unlisted_paths(inventory: &Inventory) -> Vec<&str> {
+    inventory.unlisted.iter().map(|u| u.path.as_str()).collect()
+}
+
+fn set_user_attribute(path: &Path) {
+    rustix::fs::setxattr(path, "user.hidden", b"payload", XattrFlags::empty())
+        .expect("user.* attribute");
+}
+
+#[req("DEEP-05", "FR-04")]
+#[test]
+fn stream_or_attribute_on_a_directory_is_recorded_as_unlisted() {
+    // No host file to hang it from in the report: never silently dropped.
+    let scratch = Scratch::keeping_attributes();
+    scratch.plant("docs/report.txt", b"report\n");
+    set_user_attribute(&scratch.medium().join("docs"));
+    let inventory = scratch.inventory();
+    assert_eq!(unlisted_paths(&inventory), ["docs"]);
+    assert_eq!(read(entry(&inventory, "docs/report.txt")), owned(REPORT));
+}
+
+#[req("DEEP-05", "FR-04")]
+#[test]
+fn stream_or_attribute_on_the_medium_root_is_recorded_as_unlisted() {
+    let scratch = Scratch::keeping_attributes();
+    scratch.plant("readme.txt", b"readme\n");
+    set_user_attribute(&scratch.medium());
+    let inventory = scratch.inventory();
+    // The medium root's path is empty.
+    assert_eq!(unlisted_paths(&inventory), [""]);
+    assert_eq!(read(entry(&inventory, "readme.txt")), owned(README));
+}
+
+#[req("FR-04")]
+#[test]
+fn attributes_that_cannot_be_read_are_recorded_as_unlisted() {
+    // A plain directory is no vfat mount (the FAT ioctl fails) and has no ntfs-3g attribute: the hidden
+    // attribute is unknown, never guessed absent.
+    for file_system in [FileSystem::Fat32, FileSystem::Ntfs] {
+        let scratch = Scratch::new();
+        scratch.plant("readme.txt", b"readme\n");
+        let inventory = take_inventory(&scratch.medium(), file_system, &mut scratch.workspace())
+            .expect("inventory");
+        assert_eq!(
+            unlisted_paths(&inventory),
+            ["readme.txt"],
+            "{file_system:?}"
+        );
+        assert_eq!(
+            read(entry(&inventory, "readme.txt")),
+            owned(README),
+            "{file_system:?}"
+        );
+    }
+}
+
+#[req("SEC-10")]
+#[test]
+fn each_regular_file_is_opened_once_and_nothing_else_is_opened() {
+    let scratch = Scratch::new();
+    plant_tree(&scratch);
+    let medium = scratch.medium();
+    std::os::unix::fs::symlink("readme.txt", medium.join("link")).expect("symlink");
+    let fifo = std::process::Command::new("mkfifo")
+        .arg(medium.join("pipe"))
+        .status()
+        .expect("mkfifo");
+    assert!(fifo.success());
+    let watcher = inotify::init(inotify::CreateFlags::CLOEXEC | inotify::CreateFlags::NONBLOCK)
+        .expect("inotify");
+    let mut directories = std::collections::HashMap::new();
+    for dir in ["", "docs", "docs/deep", "docs/deep/nested"] {
+        let wd = inotify::add_watch(&watcher, medium.join(dir), inotify::WatchFlags::OPEN)
+            .expect("watch");
+        directories.insert(wd, dir);
+    }
+    let _ = scratch.inventory();
+    let mut opened: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
+    let mut buffer = [std::mem::MaybeUninit::<u8>::uninit(); 8192];
+    let mut events = inotify::Reader::new(&watcher, &mut buffer);
+    while let Ok(event) = events.next() {
+        if event.events().contains(inotify::ReadFlags::ISDIR) {
+            continue;
+        }
+        let name = event
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let dir = directories[&event.wd()];
+        let path = if dir.is_empty() {
+            name
+        } else {
+            format!("{dir}/{name}")
+        };
+        *opened.entry(path).or_default() += 1;
+    }
+    let expected: std::collections::BTreeMap<String, u32> = [
+        ".dotfile",
+        "big.bin",
+        "docs/deep/nested/photo.bin",
+        "docs/report.txt",
+        "empty.dat",
+        "readme.txt",
+    ]
+    .into_iter()
+    .map(|path| (path.to_owned(), 1))
+    .collect();
+    assert_eq!(opened, expected);
+}
+
+#[req("FR-04")]
+#[test]
+fn nesting_deeper_than_the_limit_is_recorded_as_unlisted() {
+    assert_eq!(MAX_DIRECTORY_DEPTH, 128);
+    let scratch = Scratch::new();
+    let deep = vec!["d"; 130].join("/");
+    scratch.plant(&format!("{deep}/deep.txt"), b"readme\n");
+    scratch.plant("readme.txt", b"readme\n");
+    let inventory = scratch.inventory();
+    // Directories at depths 1 to 128 are listed; the one at depth 129 is not opened.
+    let limit = vec!["d"; 129].join("/");
+    assert_eq!(unlisted_paths(&inventory), [limit.as_str()]);
+    let paths: Vec<_> = inventory.entries.iter().map(|e| e.path.as_str()).collect();
+    assert_eq!(paths, ["readme.txt"]);
+}
+
+#[req("FR-04", "SEC-10")]
+#[test]
+fn directory_swapped_for_a_link_during_the_walk_is_not_followed() {
+    let scratch = Scratch::new();
+    let medium = scratch.medium();
+    // Large enough that reading it leaves time to swap its directory before the next file is opened.
+    let large: Vec<u8> = (0..64 * 1024 * 1024_u32)
+        .map(|i| u8::try_from(i % 253).expect("byte"))
+        .collect();
+    scratch.plant("a/big.bin", &large);
+    scratch.plant("a/zz.txt", b"report\n");
+    let outside = scratch.dir.join("outside");
+    std::fs::create_dir_all(&outside).expect("outside");
+    std::fs::write(outside.join("zz.txt"), b"secret outside the medium\n").expect("secret");
+    let workspace_dir = scratch.dir.join("workspace");
+    let mut workspace = Workspace::create(&workspace_dir).expect("workspace");
+    let swapper = {
+        let medium = medium.clone();
+        std::thread::spawn(move || {
+            // The first copy appears when a/big.bin starts being read: swap a/ for a link to outside/.
+            let deadline = std::time::Instant::now() + Duration::from_secs(60);
+            while std::time::Instant::now() < deadline {
+                if std::fs::read_dir(&workspace_dir).is_ok_and(|mut e| e.next().is_some()) {
+                    std::fs::rename(medium.join("a"), medium.join("a.moved")).expect("move a/");
+                    std::os::unix::fs::symlink(&outside, medium.join("a")).expect("link a");
+                    return true;
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            false
+        })
+    };
+    let inventory = take_inventory(&medium, FileSystem::Ext4, &mut workspace).expect("inventory");
+    assert!(swapper.join().expect("swapper"), "the swap never happened");
+    let paths: Vec<_> = inventory.entries.iter().map(|e| e.path.as_str()).collect();
+    assert_eq!(paths, ["a/big.bin", "a/zz.txt"]);
+    assert_eq!(read(entry(&inventory, "a/zz.txt")), owned(REPORT));
 }

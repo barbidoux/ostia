@@ -466,3 +466,136 @@ fn symbolic_links_of_an_image_are_listed_and_never_followed() {
     assert_eq!(inventory.entries.len(), 4, "{inventory:?}");
     let _ = std::fs::remove_dir_all(workspace);
 }
+
+/// (path, origin, stream, parent) of every entry.
+fn shape(inventory: &Inventory) -> Vec<(&str, Origin, Option<&str>, Option<usize>)> {
+    inventory
+        .entries
+        .iter()
+        .map(|e| (e.path.as_str(), e.origin, e.stream.as_deref(), e.parent))
+        .collect()
+}
+
+const EMPTY: (u64, &str, &str) = (
+    0,
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "da39a3ee5e6b4b0d3255bfef95601890afd80709",
+);
+
+#[req("DEEP-05", "FR-04")]
+#[test]
+fn several_ext_attributes_follow_their_own_host_in_name_order() {
+    let mut first = file("first.txt", b"readme\n");
+    first.xattrs.push(("user.x", b"x"));
+    let mut tagged = file("tagged.txt", b"report\n");
+    tagged.xattrs.push(("user.zeta", COMMENT));
+    tagged.xattrs.push(("user.alpha", b""));
+    let (inventory, workspace) =
+        inventory_of(&generated("ext4", &[first, tagged]), FileSystem::Ext4);
+    assert_eq!(
+        shape(&inventory),
+        [
+            ("first.txt", Origin::File, None, None),
+            ("first.txt", Origin::Xattr, Some("user.x"), Some(0)),
+            ("tagged.txt", Origin::File, None, None),
+            ("tagged.txt", Origin::Xattr, Some("user.alpha"), Some(2)),
+            ("tagged.txt", Origin::Xattr, Some("user.zeta"), Some(2)),
+        ]
+    );
+    assert_eq!(read(&inventory.entries[3]), owned(EMPTY));
+    assert_eq!(copied(&inventory.entries[4]), COMMENT);
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[req("DEEP-05", "FR-04")]
+#[test]
+fn several_ntfs_streams_follow_their_own_host_in_name_order() {
+    let mut first = file("first.txt", b"readme\n");
+    first.streams.push(("x", b"x"));
+    let mut host = file("readme.txt", b"report\n");
+    host.streams.push(("Zone.Identifier", ZONE));
+    host.streams.push(("Alpha", COMMENT));
+    let (inventory, workspace) = inventory_of(&generated("ntfs", &[first, host]), FileSystem::Ntfs);
+    assert_eq!(
+        shape(&inventory),
+        [
+            ("first.txt", Origin::File, None, None),
+            ("first.txt", Origin::AltStream, Some("x"), Some(0)),
+            ("readme.txt", Origin::File, None, None),
+            ("readme.txt", Origin::AltStream, Some("Alpha"), Some(2)),
+            (
+                "readme.txt",
+                Origin::AltStream,
+                Some("Zone.Identifier"),
+                Some(2)
+            ),
+        ]
+    );
+    assert_eq!(copied(&inventory.entries[3]), COMMENT);
+    assert_eq!(copied(&inventory.entries[4]), ZONE);
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+/// A copy of `image` under target/fixtures (where the helper accepts images), removed when dropped.
+struct ImageCopy(PathBuf);
+
+impl ImageCopy {
+    fn of(image: &Path, name: &str) -> Self {
+        let path = repository()
+            .join("target/fixtures")
+            .join(format!("inventory-{name}-{}.img", std::process::id()));
+        std::fs::copy(image, &path).expect("image copy");
+        Self(path)
+    }
+}
+
+impl Drop for ImageCopy {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+fn le16(bytes: &[u8], at: usize) -> usize {
+    usize::from(u16::from_le_bytes([bytes[at], bytes[at + 1]]))
+}
+
+#[req("FR-04", "SEC-10")]
+#[test]
+fn file_whose_read_fails_is_unreadable_and_leaves_no_copy() {
+    // FAT16: the FAT entry of the file's first cluster (from its root directory entry) is set to 0x0001, a
+    // reserved value, in every FAT copy: the kernel reads the first cluster, then fails the chain with EIO.
+    let content: Vec<u8> = (0..65_536_u32)
+        .map(|i| u8::try_from(i % 241).expect("byte"))
+        .collect();
+    let image = ImageCopy::of(
+        &generated("fat16", &[file("data.bin", &content)]),
+        "broken-chain",
+    );
+    let mut bytes = std::fs::read(&image.0).expect("image");
+    let (bytes_per_sector, reserved) = (le16(&bytes, 11), le16(&bytes, 14));
+    let (fats, sectors_per_fat) = (usize::from(bytes[16]), le16(&bytes, 22));
+    let root = (reserved + fats * sectors_per_fat) * bytes_per_sector;
+    let first_cluster = (0..64)
+        .map(|i| root + 32 * i)
+        .find(|at| &bytes[*at..*at + 11] == b"DATA    BIN")
+        .map(|at| le16(&bytes, at + 26))
+        .expect("directory entry of data.bin");
+    for fat in 0..fats {
+        let entry = (reserved + fat * sectors_per_fat) * bytes_per_sector + 2 * first_cluster;
+        bytes[entry..entry + 2].copy_from_slice(&[0x01, 0x00]);
+    }
+    std::fs::write(&image.0, &bytes).expect("broken image");
+    let (inventory, workspace) = inventory_of(&image.0, FileSystem::Fat16);
+    let data = entry(&inventory, "data.bin");
+    assert!(
+        matches!(data.content, Content::Unreadable(_)),
+        "{:?}",
+        data.content
+    );
+    let left: Vec<_> = std::fs::read_dir(&workspace)
+        .expect("workspace")
+        .map(|e| e.expect("entry").file_name())
+        .collect();
+    assert!(left.is_empty(), "copies left behind: {left:?}");
+    let _ = std::fs::remove_dir_all(workspace);
+}
