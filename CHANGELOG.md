@@ -107,4 +107,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `ostia.engine.v1` (Q-54), and messages now carry contract version 1.1. `ostia_core_domain::types` names the
   types and computes the name flags `extension_mismatch` and `double_extension`. A structural test on `cargo
   metadata` proves SEC-05: no orchestrator-side crate links the workers or any type-detection, archive or document
-  parser.
+  parser, and no orchestrator crate's code holds a magic number. Every rule is tried: an object matching two
+  (a polyglot) is not typed and becomes UNSCANNABLE (Q-55). The name flags drop trailing dots and spaces first, as
+  Windows does (Q-56). The type rules have a fuzz target (`triage_identify`).

@@ -52,7 +52,7 @@ The policy is checked before the image is opened. A refused report has `objects:
 | `attributes` | `hidden` (file-system hidden attribute, or a name starting with `.` on any file system), `system`, `read_only`, `archive` (FAT, exFAT and NTFS attributes). |
 | `detected_type` | Type from content, never from the name (FR-05): see [Types](#types). |
 | `extension_mismatch` | The name's last extension is not one of the extensions of `detected_type`. Never true for `unknown` or for a name without extension (a name whose only dot is the first character, `.profile`, has none). |
-| `double_extension` | The name has at least two extensions after a non-empty stem and the last one is executable: `exe scr com bat cmd pif cpl vbs vbe js jse wsf wsh ps1 msi hta lnk jar dll` (case-insensitive). `invoice.pdf.exe`: true; `backup.tar.gz`: false. |
+| `double_extension` | The name has at least two extensions after a non-empty stem and the last one is executable: `exe scr com bat cmd pif cpl vbs vbe js jse wsf wsh ps1 msi hta lnk jar dll` (case-insensitive). `invoice.pdf.exe`: true; `backup.tar.gz`: false. For both flags, trailing dots and spaces are dropped first, as Windows drops them when it opens a file (`invoice.pdf.exe.` has a double extension), case is compared in ASCII only, and the first dot of a dot name belongs to the stem (`.bashrc.exe` has one extension) (Q-56). |
 | `verdict`, `rule` | The first matching policy rule and its verdict ([policy.md](policy.md)). |
 | `limit` | The limit that made the object UNSCANNABLE (`depth`, `ratio`, `total_size`, `entry_count`, `path_length`, `scan_time`), else null. |
 | `score` | The highest score among the scorer engines' results with status `OK`, else null. |
@@ -95,6 +95,11 @@ extensions consistent:
 | `iso9660` | `CD001` at offset 32769 | `iso` |
 | `msi` | Compound file whose root CLSID is the Windows Installer package one | `msi` |
 | `unknown` | None of the above | (never a mismatch) |
+
+Every rule is tried. An object matching two or more rules (a polyglot: a tar whose first member's name starts
+with `%PDF-`, an ISO 9660 image whose system area starts with `PK\x03\x04`) could not be typed: the triage worker
+answers status `ERROR` with a `triage.polyglot` finding naming the types, and the object is UNSCANNABLE through
+R1 (Q-55).
 
 ## Medium verdict
 
