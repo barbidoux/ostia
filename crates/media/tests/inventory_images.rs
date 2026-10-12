@@ -8,8 +8,9 @@
 //! contents planted here).
 
 use std::fmt::Write as _;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -94,16 +95,32 @@ fn generated(fs: &str, files: &[Planted]) -> PathBuf {
             )
         })
         .collect();
+    build_image(fs, &specs)
+}
+
+/// Runs the generator on `specs` (Python dict literals). The script goes on standard input: a 1 MiB file in
+/// hex is beyond the limit of one command-line argument.
+fn build_image(fs: &str, specs: &[String]) -> PathBuf {
     let script = format!(
         "import sys\nsys.path.insert(0, {repo:?})\nfrom tests.fixtures.images import build_image\n\
          print(build_image({fs:?}, [{files}]))",
         repo = repository().display().to_string(),
         files = specs.join(", "),
     );
-    let output = Command::new("python3")
-        .args(["-I", "-c", &script])
-        .output()
+    let mut child = Command::new("python3")
+        .args(["-I", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .expect("python3 runs");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(script.as_bytes())
+        .expect("script written");
+    let output = child.wait_with_output().expect("python3 ends");
     assert!(
         output.status.success(),
         "{}",
@@ -429,23 +446,7 @@ fn symbolic_links_of_an_image_are_listed_and_never_followed() {
              'streams': {{}}, 'xattrs': {{}}, 'symlink': {target:?}}}"
         ));
     }
-    let script = format!(
-        "import sys\nsys.path.insert(0, {repo:?})\nfrom tests.fixtures.images import build_image\n\
-         print(build_image('ext4', [{files}]))",
-        repo = repository().display().to_string(),
-        files = specs.join(", "),
-    );
-    let output = Command::new("python3")
-        .args(["-I", "-c", &script])
-        .output()
-        .expect("python3 runs");
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let image = PathBuf::from(String::from_utf8(output.stdout).expect("a path").trim());
-    let (inventory, workspace) = inventory_of(&image, FileSystem::Ext4);
+    let (inventory, workspace) = inventory_of(&build_image("ext4", &specs), FileSystem::Ext4);
     for (name, _) in script_links {
         let link = entry(&inventory, name);
         assert_eq!(
