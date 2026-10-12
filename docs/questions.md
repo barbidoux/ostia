@@ -73,6 +73,64 @@ Blocking: no.
 
 ## Answered
 
+### Q-51 · WP-1.5 · FR-04, SEC-10 · ext content the unprivileged orchestrator cannot read
+Context: the inventory runs unprivileged on the read-only mount (FAT, exFAT and NTFS are mounted with the
+orchestrator's uid; ext keeps the on-disk owners and modes). mke2fs always creates `lost+found` owned by root,
+mode 0700, so on every ext medium, generated images included, the inventory cannot list it and records it as
+unlisted, which must make the medium UNSCANNABLE (fail closed) and turns the locked ext cases of
+`test_file_systems.py` red when not run as root (CI runs as root, so it would not notice). Real media from
+Linux machines also hold files owned by other users with modes like 0600.
+Options: (a) P1: the generator stages a `lost+found` owned by the invoking user (`mkfs.ext4 -d` then keeps it),
+so generated images are fully readable; the inventory keeps refusing what it cannot read (unlisted or
+unreadable, UNSCANNABLE); the real-media case is decided in P4 with the privileged helper (idmapped read-only
+mount mapping the on-disk owners to the orchestrator, or reads through the raw-read helper) (b) the inventory
+skips an unreadable `lost+found` at the root of an ext file system (an empty directory e2fsck owns) and keeps
+refusing anything else (c) decide the P4 mechanism now and build it in WP-1.5.
+Recommendation: (a): no silent skip, test images that match what P1 can read, and the privilege question
+settled where the privileged helper is built. I add a line for it to the P4 open points.
+Answer (owner, 2026-10-12): (a). Open for P4: how the kiosk reads ext content owned by other users (idmapped
+read-only mount or the raw-read helper), to be settled with the privileged helper.
+
+### Q-50 · WP-1.5 · FR-04, SEC-10 · dependencies of the inventory
+Context: the inventory lists extended attributes and NTFS streams (ntfs-3g `user.*` names) on the descriptor it
+opened, and hashes each object with SHA-256 and SHA-1. The standard library has no extended-attribute calls;
+`sha2 =0.11.0` is already used (policy loader) but SHA-1 is not.
+Options: (a) `rustix =1.1.5` (feature `fs`; `flistxattr`, `fgetxattr` on the opened descriptor, safe API;
+Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT; already in Cargo.lock through tempfile) and `sha1 =0.11.0`
+(MIT OR Apache-2.0, RustCrypto, same `digest` 0.11 as sha2) (b) the `xattr` crate (MIT OR Apache-2.0, built on
+rustix) instead of rustix directly.
+Recommendation: (a): no new crate for the attributes beyond what the lock already holds.
+Answer (owner, 2026-10-12): (a).
+
+### Q-49 · WP-1.5 · FR-04 · split out the exFAT attribute worker
+Context: Q-45 put the exFAT hidden and read-only attributes in WP-1.5, read from the image by a sandboxed worker.
+That worker is a parser of exFAT directory entry sets (boot sector, cluster chains, NoFatChain, file and stream
+entries) with its own fuzz target, and it needs a new message in the worker contract to return a listing
+(`ostia.engine.v1` answers carry findings, not inventories). With the inventory, single read, streams,
+attributes and workspace copy, WP-1.5 (size M) would become L.
+Options: (a) split: WP-1.5 does the inventory over the mount, the single hashed read into the workspace,
+streams, extended attributes and the FAT, NTFS and dot-name attributes; a new package (WP-1.5b, after WP-1.5 and
+WP-1.6, before WP-1.10) adds the exFAT attribute worker and its contract message (b) keep everything in WP-1.5.
+Recommendation: (a). The exFAT hidden and read-only acceptance cases stay red until WP-1.5b; they need WP-1.10
+anyway.
+Answer (owner, 2026-10-12): (a); the owner added the package to the plan as WP-1.13 (the plan tools accept numeric
+ids only), before WP-1.10.
+
+### Q-48 · WP-1.5 · FR-04 · FAT hidden, system and archive attributes
+Context: the locked `test_file_systems.py::test_hidden_files_are_marked_hidden` expects the FAT hidden attribute
+(fat12/16/32) and report.md lists `system` and `archive` too. The vfat driver exposes them only through the
+`FAT_IOCTL_GET_ATTRIBUTES` ioctl (read-only shows in the mode bits, the others nowhere). Every `ioctl` call is
+`unsafe` in Rust, even through nix or rustix, and no crate is on `docs/unsafe-allowlist.md`. NTFS attributes come
+from ntfs-3g's `system.ntfs_attrib_be` extended attribute (no `unsafe`); exFAT ones need the image worker (Q-45).
+Options: (a) a tiny crate `ostia-fat-attributes` with one `unsafe` call (`FAT_IOCTL_GET_ATTRIBUTES` on a
+descriptor the inventory opened), listed on the unsafe allowlist by the owner; the kernel already parsed the
+directory for the mount, nothing is parsed in Ostia (b) the exFAT image worker of Q-45 also reads FAT12/16/32
+directory entries from the image (long names, cluster chains) and returns the attributes per path: no `unsafe`,
+but a second parser and a path-matching problem between image names and mounted names.
+Recommendation: (a): one reviewed line instead of a parser, and the same data the mount already uses.
+Answer (owner, 2026-10-12): (a); the owner listed `ostia-fat-attributes` (`crates/fat-attributes`) on the unsafe
+allowlist.
+
 ### Q-47 · WP-1.6 · CTR-01, NFR-05 · dependencies of the worker host
 Context: the worker host (`crates/sandbox`, prompts/P1.md WP-1.6) must give the worker the object as file
 descriptor 3, read-only, and kill the worker's whole process group on a timeout. The Rust standard library

@@ -90,3 +90,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   of every run. A crash, signal, garbage, malformed frame, answer from another engine or missed deadline gives
   the synthesised `ERROR` or `TIMEOUT` result of `docs/contracts/cli.md`, and the host keeps serving.
   New dependencies (Q-47): `command-fds` 0.3.3 (Apache-2.0), `nix` 0.31.3 (MIT).
+- Inventory and single read (WP-1.5, `ostia_media::inventory`): `take_inventory` walks a mounted medium without
+  following links. It lists files, symbolic links and special files (never opened), NTFS alternate data streams
+  and ext `user.*` attributes (after their host file), with path (report encoding, original bytes kept), size,
+  modification time and attributes (dot names; NTFS through ntfs-3g; FAT through the new `ostia-fat-attributes`,
+  the one crate on the unsafe allowlist, Q-48). Each object is read once into SHA-256, SHA-1 and a read-only
+  copy in a new or empty workspace, the only copy used afterwards (SEC-10). Anything it cannot list or read is
+  recorded, never dropped. exFAT attributes move to WP-1.13 (Q-49); generated ext images give `lost+found` to the
+  invoking user (Q-51). New dependencies (Q-50): `rustix` 1.1.5, `sha1` 0.11.0.
