@@ -93,9 +93,10 @@ def refused(call: object, *args: object) -> ContractError:
 
 
 @pytest.mark.req("CTR-04")
-def test_messages_carry_contract_version_one_zero() -> None:
-    assert (MAJOR, MINOR) == (1, 0)
-    assert current_version() == engine_pb2.ContractVersion(major=1, minor=0)
+def test_messages_carry_contract_version_one_one() -> None:
+    # Minor 1 added AnalyzeResponse.detected_type (Q-54).
+    assert (MAJOR, MINOR) == (1, 1)
+    assert current_version() == engine_pb2.ContractVersion(major=1, minor=1)
 
 
 @pytest.mark.req("CTR-01")

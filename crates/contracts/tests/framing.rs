@@ -68,9 +68,10 @@ fn decode_response_frame(frame: &[u8]) -> Result<AnalyzeResponse, ContractError>
 
 #[req("CTR-04")]
 #[test]
-fn messages_carry_contract_version_one_zero() {
-    assert_eq!((MAJOR, MINOR), (1, 0));
-    assert_eq!(current_version(), ContractVersion { major: 1, minor: 0 });
+fn messages_carry_contract_version_one_one() {
+    // Minor 1 added AnalyzeResponse.detected_type (Q-54).
+    assert_eq!((MAJOR, MINOR), (1, 1));
+    assert_eq!(current_version(), ContractVersion { major: 1, minor: 1 });
 }
 
 #[req("CTR-01")]

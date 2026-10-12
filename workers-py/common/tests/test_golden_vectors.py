@@ -76,9 +76,24 @@ def response_scored() -> engine_pb2.AnalyzeResponse:
     )
 
 
+def response_typed() -> engine_pb2.AnalyzeResponse:
+    """The triage worker's answer: the type found in the content (minor 1, Q-54)."""
+    return engine_pb2.AnalyzeResponse(
+        engine_id="ostia-triage",
+        engine_version="0.0.0",
+        content_version="magic-1",
+        status=engine_pb2.OK,
+        hint=engine_pb2.NONE,
+        duration_ms=1,
+        detected_type="png",
+        version=engine_pb2.ContractVersion(major=1, minor=1),
+    )
+
+
 VALID_RESPONSES = {
     "response_clean": response_clean(0),
     "response_scored": response_scored(),
+    "response_typed": response_typed(),
     "response_newer_minor": response_clean(7),
 }
 VALID_DECODE_ONLY = ["response_minor_1_extra_field", "response_unknown_group"]

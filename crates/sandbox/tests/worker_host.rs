@@ -177,7 +177,8 @@ fn assert_synthesised(done: &WorkerRun, status: Status, failure: &Failure, elaps
         findings: vec![],
         duration_ms: done.response.duration_ms,
         detected_type: String::new(),
-        version: VERSION,
+        // The host writes the contract version it speaks.
+        version: Some(ContractVersion { major: 1, minor: 1 }),
     };
     assert_eq!(done.failure.as_ref(), Some(failure));
     assert_eq!(done.response, expected);

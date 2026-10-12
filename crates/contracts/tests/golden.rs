@@ -78,6 +78,22 @@ fn response_scored() -> AnalyzeResponse {
     }
 }
 
+/// The triage worker's answer: the type found in the content (minor 1, Q-54).
+fn response_typed() -> AnalyzeResponse {
+    AnalyzeResponse {
+        engine_id: "ostia-triage".into(),
+        engine_version: "0.0.0".into(),
+        content_version: "magic-1".into(),
+        status: 1,
+        hint: 1,
+        score: None,
+        findings: vec![],
+        duration_ms: 1,
+        detected_type: "png".into(),
+        version: Some(ContractVersion { major: 1, minor: 1 }),
+    }
+}
+
 /// Invalid vectors: name, message type, expected error kind.
 const INVALID: [(&str, &str, &str); 26] = [
     ("frame_empty", "response", "empty"),
@@ -124,10 +140,11 @@ const INVALID: [(&str, &str, &str); 26] = [
     ("response_mismatched_group", "response", "malformed"),
 ];
 
-const VALID: [&str; 6] = [
+const VALID: [&str; 7] = [
     "request_pdf",
     "response_clean",
     "response_scored",
+    "response_typed",
     "response_newer_minor",
     "response_minor_1_extra_field",
     "response_unknown_group",
@@ -150,6 +167,7 @@ fn rust_encodes_the_valid_vectors_to_the_python_bytes() {
     let cases = [
         ("response_clean", response_clean(0)),
         ("response_scored", response_scored()),
+        ("response_typed", response_typed()),
         ("response_newer_minor", response_clean(7)),
     ];
     for (name, message) in cases {
@@ -170,6 +188,7 @@ fn rust_decodes_the_python_bytes_of_the_valid_vectors() {
     let cases = [
         ("response_clean", response_clean(0)),
         ("response_scored", response_scored()),
+        ("response_typed", response_typed()),
         ("response_newer_minor", response_clean(7)),
         // Minor 1 with a field this decoder does not know (field 13): ignored, not refused.
         ("response_minor_1_extra_field", response_clean(1)),
