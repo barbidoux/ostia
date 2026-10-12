@@ -4,19 +4,42 @@
 //! link and special file, the NTFS alternate data streams and the ext `user.*` extended attributes, with their
 //! path, size, modification time and attributes. Each regular file, stream and attribute value is read once:
 //! the bytes feed SHA-256, SHA-1 and a copy in the [`Workspace`] in the same pass, and only that copy is used
-//! afterwards (SEC-10). Nothing here interprets content: the kernel's mount does the file-system parsing.
+//! afterwards (SEC-10). Nothing here interprets content: the kernel's mount does the file-system parsing, and
+//! streams, attributes and file-system attributes come from kernel calls on the descriptor that was opened.
 
 use std::collections::BTreeSet;
+use std::ffi::{OsStr, OsString};
+use std::fmt::Write as _;
+use std::fs::{File, OpenOptions, Permissions};
+use std::io::{ErrorKind, Read, Write};
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use ostia_core_domain::object::{Kind, Origin};
 use ostia_core_domain::session::FileSystem;
+use rustix::fs::{OFlags, fgetxattr, flistxattr, llistxattr};
+use sha1::Sha1;
+use sha2::{Digest, Sha256};
+
+/// Bytes read at a time from an object.
+const CHUNK: usize = 64 * 1024;
+
+/// The kernel's limit on one extended attribute value, and on the list of a file's attribute names.
+const XATTR_MAX: usize = 64 * 1024;
+
+/// ntfs-3g's extended attribute holding the NTFS file attribute flags, big-endian.
+const NTFS_ATTRIBUTES: &str = "system.ntfs_attrib_be";
+
+/// The namespace of the attributes listed: ext `user.*` attributes, ntfs-3g's streams (`streams_interface=xattr`).
+const USER: &[u8] = b"user.";
 
 /// The directory that holds the copies of a session's objects (plain in P1, encrypted in P4).
 #[derive(Debug)]
 pub struct Workspace {
     root: PathBuf,
+    copies: u64,
 }
 
 impl Workspace {
@@ -25,8 +48,34 @@ impl Workspace {
     /// # Errors
     /// [`InventoryError::Workspace`] when `dir` holds anything or cannot be created.
     pub fn create(dir: &Path) -> Result<Self, InventoryError> {
-        let _ = dir;
-        todo!("WP-1.5")
+        match std::fs::read_dir(dir) {
+            Ok(mut entries) => {
+                if entries.next().is_some() {
+                    return Err(InventoryError::Workspace(format!(
+                        "workspace {} is not empty",
+                        dir.display()
+                    )));
+                }
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                std::fs::create_dir_all(dir).map_err(|error| {
+                    InventoryError::Workspace(format!(
+                        "cannot create the workspace {}: {error}",
+                        dir.display()
+                    ))
+                })?;
+            }
+            Err(error) => {
+                return Err(InventoryError::Workspace(format!(
+                    "cannot use the workspace {}: {error}",
+                    dir.display()
+                )));
+            }
+        }
+        Ok(Self {
+            root: dir.to_path_buf(),
+            copies: 0,
+        })
     }
 
     /// The workspace directory.
@@ -34,6 +83,23 @@ impl Workspace {
     pub fn root(&self) -> &Path {
         &self.root
     }
+
+    /// A new, empty copy file, writable by this process only until it is sealed.
+    fn new_copy(&mut self) -> Result<(PathBuf, File), InventoryError> {
+        let path = self.root.join(format!("{:08}", self.copies));
+        self.copies += 1;
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|error| workspace_error(&path, &error))?;
+        Ok((path, file))
+    }
+}
+
+fn workspace_error(path: &Path, error: &std::io::Error) -> InventoryError {
+    InventoryError::Workspace(format!("cannot write the copy {}: {error}", path.display()))
 }
 
 /// A file-system attribute of an object (`docs/contracts/report.md`, `attributes`).
@@ -53,8 +119,12 @@ impl Attribute {
     /// The attribute's name in the report: `hidden`, `system`, `read_only`, `archive`.
     #[must_use]
     pub fn name(self) -> &'static str {
-        let _ = self;
-        todo!("WP-1.5")
+        match self {
+            Self::Hidden => "hidden",
+            Self::System => "system",
+            Self::ReadOnly => "read_only",
+            Self::Archive => "archive",
+        }
     }
 }
 
@@ -145,29 +215,352 @@ pub fn take_inventory(
     file_system: FileSystem,
     workspace: &mut Workspace,
 ) -> Result<Inventory, InventoryError> {
-    let _ = (root, file_system, workspace);
-    todo!("WP-1.5")
+    let names = children(root).map_err(|error| {
+        InventoryError::Root(format!(
+            "cannot list the medium {}: {error}",
+            root.display()
+        ))
+    })?;
+    let mut walk = Walk {
+        file_system,
+        workspace,
+        inventory: Inventory {
+            entries: Vec::new(),
+            unlisted: Vec::new(),
+        },
+    };
+    walk.directory(root, Path::new(""), names)?;
+    Ok(walk.inventory)
+}
+
+/// The names in `dir`, in byte order.
+fn children(dir: &Path) -> std::io::Result<Vec<OsString>> {
+    let mut names = std::fs::read_dir(dir)?
+        .map(|entry| entry.map(|entry| entry.file_name()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    names.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+    Ok(names)
 }
 
 /// A path's bytes in the report's encoding: UTF-8, `\xNN` for a byte that is not valid UTF-8, `\\` for a
 /// backslash.
 #[must_use]
 pub fn report_path(raw: &[u8]) -> String {
-    let _ = raw;
-    todo!("WP-1.5")
+    let mut path = String::with_capacity(raw.len());
+    for chunk in raw.utf8_chunks() {
+        for character in chunk.valid().chars() {
+            if character == '\\' {
+                path.push_str("\\\\");
+            } else {
+                path.push(character);
+            }
+        }
+        for byte in chunk.invalid() {
+            let _ = write!(path, "\\x{byte:02x}");
+        }
+    }
+    path
 }
 
 /// The attributes of a FAT attribute byte (`ATTR_RO` 0x01, `ATTR_HIDDEN` 0x02, `ATTR_SYS` 0x04, `ATTR_ARCH`
 /// 0x20).
 #[must_use]
 pub fn fat_attributes(bits: u32) -> Attributes {
-    let _ = bits;
-    todo!("WP-1.5")
+    flags_to_attributes(bits)
 }
 
 /// The attributes of NTFS file attribute flags (`READONLY` 0x1, `HIDDEN` 0x2, `SYSTEM` 0x4, `ARCHIVE` 0x20).
 #[must_use]
 pub fn ntfs_attributes(flags: u32) -> Attributes {
-    let _ = flags;
-    todo!("WP-1.5")
+    flags_to_attributes(flags)
+}
+
+/// FAT and NTFS share the bits of the four attributes of the report.
+fn flags_to_attributes(flags: u32) -> Attributes {
+    [
+        (0x01, Attribute::ReadOnly),
+        (0x02, Attribute::Hidden),
+        (0x04, Attribute::System),
+        (0x20, Attribute::Archive),
+    ]
+    .into_iter()
+    .filter(|(bit, _)| flags & bit != 0)
+    .map(|(_, attribute)| attribute)
+    .collect()
+}
+
+/// A name starting with `.` is hidden on every file system.
+fn dot_name(name: &OsStr) -> Attributes {
+    if name.as_bytes().first() == Some(&b'.') {
+        BTreeSet::from([Attribute::Hidden])
+    } else {
+        BTreeSet::new()
+    }
+}
+
+struct Walk<'a> {
+    file_system: FileSystem,
+    workspace: &'a mut Workspace,
+    inventory: Inventory,
+}
+
+impl Walk<'_> {
+    fn unlisted(&mut self, relative: &Path, reason: String) {
+        self.inventory.unlisted.push(Unlisted {
+            path: report_path(relative.as_os_str().as_bytes()),
+            reason,
+        });
+    }
+
+    fn directory(
+        &mut self,
+        dir: &Path,
+        relative: &Path,
+        names: Vec<OsString>,
+    ) -> Result<(), InventoryError> {
+        for name in names {
+            let path = dir.join(&name);
+            let child = relative.join(&name);
+            let metadata = match std::fs::symlink_metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(error) => {
+                    self.unlisted(&child, format!("cannot inspect: {error}"));
+                    continue;
+                }
+            };
+            let kind = metadata.file_type();
+            if kind.is_dir() {
+                self.check_directory_attributes(&path, &child);
+                match children(&path) {
+                    Ok(names) => self.directory(&path, &child, names)?,
+                    Err(error) => self.unlisted(&child, format!("cannot list: {error}")),
+                }
+            } else if kind.is_file() {
+                self.file(&path, &child, &name, metadata.modified().ok())?;
+            } else {
+                let kind = if kind.is_symlink() {
+                    Kind::Symlink
+                } else {
+                    Kind::Special
+                };
+                self.push(Entry {
+                    parent: None,
+                    origin: Origin::File,
+                    kind,
+                    path: report_path(child.as_os_str().as_bytes()),
+                    name: child,
+                    stream: None,
+                    modified: metadata.modified().ok(),
+                    attributes: dot_name(&name),
+                    content: Content::NotRead,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// A stream or attribute on a directory has no host file to hang from in the report: its content is
+    /// recorded as unlisted, never silently dropped.
+    fn check_directory_attributes(&mut self, path: &Path, relative: &Path) {
+        let mut list = vec![0_u8; XATTR_MAX];
+        match llistxattr(path, &mut list[..]) {
+            Ok(len) => {
+                let listed = list.get(..len).unwrap_or_default();
+                if listed
+                    .split(|byte| *byte == 0)
+                    .any(|name| name.starts_with(USER))
+                {
+                    self.unlisted(
+                        relative,
+                        "stream or extended attribute on a directory".into(),
+                    );
+                }
+            }
+            Err(rustix::io::Errno::OPNOTSUPP) => {}
+            Err(error) => self.unlisted(relative, format!("cannot list attributes: {error}")),
+        }
+    }
+
+    fn push(&mut self, entry: Entry) -> usize {
+        self.inventory.entries.push(entry);
+        self.inventory.entries.len() - 1
+    }
+
+    fn file(
+        &mut self,
+        path: &Path,
+        relative: &Path,
+        name: &OsStr,
+        listed_modified: Option<SystemTime>,
+    ) -> Result<(), InventoryError> {
+        let mut entry = Entry {
+            parent: None,
+            origin: Origin::File,
+            kind: Kind::File,
+            path: report_path(relative.as_os_str().as_bytes()),
+            name: relative.to_path_buf(),
+            stream: None,
+            modified: listed_modified,
+            attributes: dot_name(name),
+            content: Content::NotRead,
+        };
+        let opened = OpenOptions::new()
+            .read(true)
+            .custom_flags((OFlags::NOFOLLOW | OFlags::NONBLOCK).bits().cast_signed())
+            .open(path);
+        let mut file = match opened {
+            Ok(file) => file,
+            Err(error) => {
+                entry.content = Content::Unreadable(format!("cannot open: {error}"));
+                self.push(entry);
+                return Ok(());
+            }
+        };
+        match file.metadata() {
+            Ok(metadata) if metadata.is_file() => entry.modified = metadata.modified().ok(),
+            Ok(_) => {
+                // Replaced by something else since it was listed: never read.
+                entry.kind = Kind::Special;
+                self.push(entry);
+                return Ok(());
+            }
+            Err(error) => {
+                entry.content = Content::Unreadable(format!("cannot inspect: {error}"));
+                self.push(entry);
+                return Ok(());
+            }
+        }
+        entry.attributes.extend(self.file_system_attributes(&file));
+        entry.content = read_once(&mut file, self.workspace)?;
+        let host = self.push(entry);
+        self.streams(&file, relative, host)
+    }
+
+    fn file_system_attributes(&self, file: &File) -> Attributes {
+        match self.file_system {
+            FileSystem::Ntfs => {
+                let mut flags = [0_u8; 4];
+                match fgetxattr(file, NTFS_ATTRIBUTES, &mut flags[..]) {
+                    Ok(4) => ntfs_attributes(u32::from_be_bytes(flags)),
+                    _ => Attributes::new(),
+                }
+            }
+            // FAT attributes: Q-48 (the ioctl crate); exFAT attributes: WP-1.5b (image worker).
+            FileSystem::Fat12
+            | FileSystem::Fat16
+            | FileSystem::Fat32
+            | FileSystem::Exfat
+            | FileSystem::Ext2
+            | FileSystem::Ext3
+            | FileSystem::Ext4 => Attributes::new(),
+        }
+    }
+
+    /// The streams (NTFS) or `user.*` attributes (other file systems) of the opened file, after their host.
+    fn streams(&mut self, file: &File, relative: &Path, host: usize) -> Result<(), InventoryError> {
+        let (origin, keep_prefix) = if self.file_system == FileSystem::Ntfs {
+            (Origin::AltStream, false)
+        } else {
+            (Origin::Xattr, true)
+        };
+        let mut list = vec![0_u8; XATTR_MAX];
+        let names: Vec<Vec<u8>> = match flistxattr(file, &mut list[..]) {
+            Ok(len) => {
+                let mut names: Vec<_> = list
+                    .get(..len)
+                    .unwrap_or_default()
+                    .split(|byte| *byte == 0)
+                    .filter(|name| name.starts_with(USER))
+                    .map(<[u8]>::to_vec)
+                    .collect();
+                names.sort();
+                names
+            }
+            Err(rustix::io::Errno::OPNOTSUPP) => Vec::new(),
+            Err(error) => {
+                self.unlisted(relative, format!("cannot list streams: {error}"));
+                Vec::new()
+            }
+        };
+        let host_path = report_path(relative.as_os_str().as_bytes());
+        for name in names {
+            let shown = if keep_prefix {
+                name.as_slice()
+            } else {
+                name.get(USER.len()..).unwrap_or_default()
+            };
+            let mut value = vec![0_u8; XATTR_MAX];
+            let content = match fgetxattr(file, OsStr::from_bytes(&name), &mut value[..]) {
+                Ok(len) => copy_bytes(value.get(..len).unwrap_or_default(), self.workspace)?,
+                Err(error) => Content::Unreadable(format!("cannot read: {error}")),
+            };
+            self.push(Entry {
+                parent: Some(host),
+                origin,
+                kind: Kind::File,
+                path: host_path.clone(),
+                name: relative.to_path_buf(),
+                stream: Some(report_path(shown)),
+                modified: None,
+                attributes: Attributes::new(),
+                content,
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Hashes and copies one read of `source`; a read failure leaves no copy behind.
+fn read_once(source: &mut File, workspace: &mut Workspace) -> Result<Content, InventoryError> {
+    let (path, mut copy) = workspace.new_copy()?;
+    let mut sha256 = Sha256::new();
+    let mut sha1 = Sha1::new();
+    let mut size: u64 = 0;
+    let mut chunk = vec![0_u8; CHUNK];
+    loop {
+        let read = match source.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(read) => read,
+            Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+            Err(error) => {
+                drop(copy);
+                let _ = std::fs::remove_file(&path);
+                return Ok(Content::Unreadable(format!("cannot read: {error}")));
+            }
+        };
+        let bytes = chunk.get(..read).unwrap_or_default();
+        sha256.update(bytes);
+        sha1.update(bytes);
+        copy.write_all(bytes)
+            .map_err(|error| workspace_error(&path, &error))?;
+        size += u64::try_from(read).unwrap_or(u64::MAX);
+    }
+    seal(&path, &copy)?;
+    Ok(Content::Read {
+        size,
+        sha256: sha256.finalize().into(),
+        sha1: sha1.finalize().into(),
+        copy: path,
+    })
+}
+
+/// Hashes and copies bytes already read (a stream or attribute value).
+fn copy_bytes(bytes: &[u8], workspace: &mut Workspace) -> Result<Content, InventoryError> {
+    let (path, mut copy) = workspace.new_copy()?;
+    copy.write_all(bytes)
+        .map_err(|error| workspace_error(&path, &error))?;
+    seal(&path, &copy)?;
+    Ok(Content::Read {
+        size: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+        sha256: Sha256::digest(bytes).into(),
+        sha1: Sha1::digest(bytes).into(),
+        copy: path,
+    })
+}
+
+/// Flushes a copy and makes it read-only.
+fn seal(path: &Path, copy: &File) -> Result<(), InventoryError> {
+    copy.sync_all()
+        .and_then(|()| copy.set_permissions(Permissions::from_mode(0o400)))
+        .map_err(|error| workspace_error(path, &error))
 }
