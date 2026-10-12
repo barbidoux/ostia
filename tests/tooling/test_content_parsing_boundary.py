@@ -82,7 +82,17 @@ MAGIC_LITERALS = [
 def metadata() -> dict[str, Any]:
     cargo = shutil.which("cargo")
     assert cargo is not None, "cargo not found"
-    result = run([cargo, "metadata", "--format-version", "1", "--locked", "--offline"], cwd=REPO)
+    rustc = run(["rustc", "-vV"], cwd=REPO)
+    assert rustc.returncode == 0, rustc.stderr
+    host = next(
+        line.removeprefix("host: ")
+        for line in rustc.stdout.splitlines()
+        if line.startswith("host: ")
+    )
+    # Filtered to the host platform, the kiosk's: crates of other platforms or cfgs (fiat-crypto) are never
+    # downloaded by the build, so a fresh offline cache (CI) does not hold them.
+    command = [cargo, "metadata", "--format-version", "1", "--locked", "--offline"]
+    result = run([*command, "--filter-platform", host], cwd=REPO)
     assert result.returncode == 0, result.stderr
     data: dict[str, Any] = json.loads(result.stdout)
     return data
