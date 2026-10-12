@@ -93,7 +93,8 @@ def unsafe_allowlist() -> set[str]:
             continue
         first = line.strip().strip("|").split("|")[0].strip()
         if first not in ("Crate", "(none yet)") and set(first) - {"-"}:
-            names.add(first)
+            # "ostia-fat-attributes (`crates/fat-attributes`)": the crate name, then the path the guard reads.
+            names.add(first.split()[0])
     return names
 
 

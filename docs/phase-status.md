@@ -30,7 +30,7 @@ Gate P0 (owner): [x] evidence in `docs/gates/P0.md` reviewed; `tests/acceptance/
 - [x] WP-1.2 Verdict policy engine: declarative policy format, loader with signature check, rules R1–R7, hooks for D1 an... (after: 1.1) — wp/1.2-verdict-policy
 - [x] WP-1.3 Disk-image fixture generator: FAT, exFAT, NTFS, ext4 with planted files, hidden files, alternate data strea... (after: P0) — wp/1.3-disk-image-fixtures
 - [x] WP-1.4 Development mount layer: loop device, read-only, file-system detection, clean refusal of unsupported systems (after: 1.3) — wp/1.4-dev-mount-layer
-- [ ] WP-1.5 Inventory with hidden files and alternate streams, metadata, single read with SHA-256 and SHA-1, copy into... (after: 1.4)
+- [x] WP-1.5 Inventory with hidden files and alternate streams, metadata, single read with SHA-256 and SHA-1, copy into... (after: 1.4) — wp/1.5-inventory-single-read
 - [x] WP-1.6 Worker host v0: spawn a worker, pass the object as descriptor 3, framed exchange, timeout and crash handling (after: 1.1) — wp/1.6-worker-host
 - [ ] WP-1.7 Triage worker (Rust): type from content, extension mismatch flag (after: 1.6)
 - [ ] WP-1.8 Extraction worker, part 1: zip, tar, gz; limits on depth, ratio, total size, count; children returned as ob... (after: 1.6)
@@ -38,6 +38,7 @@ Gate P0 (owner): [x] evidence in `docs/gates/P0.md` reviewed; `tests/acceptance/
 - [ ] WP-1.10 Orchestrator pipeline: session lifecycle, bounded queues, dispatch to the fake engine, medium verdict, JSON... (after: 1.2, 1.5, 1.7)
 - [ ] WP-1.11 Maximum scan time and configurable expiry action (after: 1.10)
 - [ ] WP-1.12 Lock: write P2 acceptance tests, review, lock (after: 1.10)
+- [ ] WP-1.13 exFAT attribute worker: attributes read from the image in a sandboxed worker, new contract message (after: 1.5, 1.6)
 
 Gate P1 (owner): [ ] evidence in `docs/gates/P1.md` reviewed; `tests/acceptance/p2` locked and tagged `lock-p2`; retrospective written
 

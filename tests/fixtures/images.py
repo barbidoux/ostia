@@ -347,6 +347,12 @@ def _build_ext(fs: str, plants: Sequence[_Plant], image: Path) -> None:
     try:
         for plant in plants:
             _stage(staging, plant)
+        # mke2fs would make lost+found root's, mode 0700, unreadable to an unprivileged inventory (Q-51); a
+        # staged one keeps the mode and takes the invoking user, as on a medium that user formatted.
+        lost_and_found = staging / "lost+found"
+        if not lost_and_found.exists():
+            lost_and_found.mkdir()
+            lost_and_found.chmod(0o700)
         mkfs = shutil.which(f"mkfs.{fs}", path=SBIN_PATH)
         if mkfs is None:
             raise RuntimeError(f"mkfs.{fs} not found: install e2fsprogs (tools/dev/packages.txt)")

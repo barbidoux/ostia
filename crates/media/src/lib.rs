@@ -3,6 +3,10 @@
 //! P1 mounts disk images through the development helper `tools/dev/loopmount.sh` ([`DevLoopMount`], WP-1.4);
 //! the privileged helper of P4 replaces it behind the same trait. The orchestrator never reads the image to
 //! find its file system (SEC-05): the helper's blkid does, and this crate only reads the helper's answer.
+//!
+//! [`inventory`] lists a mounted medium and reads each object once into the workspace (WP-1.5).
+
+pub mod inventory;
 
 use std::ffi::{OsStr, OsString};
 use std::fmt;
