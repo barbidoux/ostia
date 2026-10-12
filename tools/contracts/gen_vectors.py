@@ -135,7 +135,7 @@ def vectors() -> list[Vector]:
     clean_frame = encode_frame(response_clean())
     clean_body = response_clean().SerializeToString()
     major_2 = engine_pb2.ContractVersion(major=2, minor=0)
-    minor_1 = engine_pb2.ContractVersion(major=1, minor=1)
+    minor_2 = engine_pb2.ContractVersion(major=1, minor=2)
     severity_5 = response_scored()
     severity_5.findings[0].severity = 5
     return [
@@ -269,10 +269,10 @@ def vectors() -> list[Vector]:
             clean_body + b"\xa3\x06\xac\x06",
         ),
         body_vector(
-            "response_minor_1_extra_field",
+            "response_minor_2_extra_field",
             "ok",
-            "minor 1 with field 13 (unknown to this decoder) appended: ignored",
-            changed(response_clean(), version=minor_1).SerializeToString() + b"\x6a\x01x",
+            "minor 2 (newer than this decoder) with field 99 (unknown to it) appended: ignored",
+            changed(response_clean(), version=minor_2).SerializeToString() + b"\x9a\x06\x01x",
         ),
     ]
 

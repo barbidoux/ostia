@@ -436,10 +436,10 @@
       "fields": null
     },
     {
-      "name": "response_minor_1_extra_field",
+      "name": "response_minor_2_extra_field",
       "message": "AnalyzeResponse",
       "expect": "ok",
-      "description": "minor 1 with field 13 (unknown to this decoder) appended: ignored",
+      "description": "minor 2 (newer than this decoder) with field 99 (unknown to it) appended: ignored",
       "fields": null
     }
   ]

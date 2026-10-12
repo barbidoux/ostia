@@ -34,6 +34,16 @@ const AT_START: [(&[u8], DetectedType); 9] = [
     (b"MSCF", DetectedType::Cab),
 ];
 
+/// Every type whose rule `object` matches, in report.md's order: none for an object of no known type, one
+/// for a typed object, several for a polyglot (never typed, Q-55). Reads only the bytes the rules look at.
+///
+/// # Errors
+/// Reading or seeking the object failed.
+pub fn matching_types(object: &mut (impl Read + Seek)) -> std::io::Result<Vec<DetectedType>> {
+    let _ = object;
+    todo!("WP-1.7: every rule, no early return")
+}
+
 /// The type of the object read from `object`; `unknown` when no rule matches. Reads only the bytes the rules
 /// look at.
 ///

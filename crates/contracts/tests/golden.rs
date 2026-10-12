@@ -146,7 +146,7 @@ const VALID: [&str; 7] = [
     "response_scored",
     "response_typed",
     "response_newer_minor",
-    "response_minor_1_extra_field",
+    "response_minor_2_extra_field",
     "response_unknown_group",
 ];
 
@@ -190,8 +190,8 @@ fn rust_decodes_the_python_bytes_of_the_valid_vectors() {
         ("response_scored", response_scored()),
         ("response_typed", response_typed()),
         ("response_newer_minor", response_clean(7)),
-        // Minor 1 with a field this decoder does not know (field 13): ignored, not refused.
-        ("response_minor_1_extra_field", response_clean(1)),
+        // A newer minor (2) with a field this decoder does not know (field 99): ignored, not refused.
+        ("response_minor_2_extra_field", response_clean(2)),
         // Nested unknown groups (field 100) are skipped like any unknown field.
         ("response_unknown_group", response_clean(0)),
     ];

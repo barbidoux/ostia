@@ -10,7 +10,10 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-use ostia_contracts::v1::{AnalyzeRequest, ContractVersion, Hint, Origin, Status};
+use ostia_contracts::v1::{
+    AnalyzeRequest, AnalyzeResponse, ContractVersion, Finding, Hint, Origin, Status,
+};
+use ostia_contracts::{DEFAULT_MAX_FRAME, decode_frame, decode_response, encode_frame};
 use ostia_sandbox::{EngineIdentity, HostLimits, WorkerCommand, WorkerHost, WorkerRun};
 use ostia_traceability::req;
 
@@ -41,20 +44,75 @@ fn request() -> AnalyzeRequest {
     }
 }
 
+/// A directory of its own, removed when dropped (also when a test fails).
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new() -> Self {
+        let dir = std::env::temp_dir().join(format!(
+            "ostia-triage-{}-{}",
+            std::process::id(),
+            OBJECTS.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).expect("directory");
+        Self(dir)
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// Runs the triage worker on `bytes`, written to a file called `name`.
 fn triage(name: &str, bytes: &[u8]) -> WorkerRun {
-    let dir = std::env::temp_dir().join(format!(
-        "ostia-triage-{}-{}",
-        std::process::id(),
-        OBJECTS.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(&dir).expect("directory");
-    let object: PathBuf = dir.join(name);
+    let scratch = Scratch::new();
+    let object = scratch.0.join(name);
     std::fs::write(&object, bytes).expect("object");
     let host = WorkerHost::unconfined(HostLimits::new(Duration::from_secs(30)));
-    let done = host.run(&worker(), &identity(), &request(), &object);
-    let _ = std::fs::remove_dir_all(&dir);
-    done
+    host.run(&worker(), &identity(), &request(), &object)
+}
+
+/// Runs the triage worker directly through `/bin/sh`, its descriptor 3 being what `redirect` makes it (empty:
+/// no descriptor 3), with a valid request on standard input; returns the exit code and the decoded answer.
+fn triage_with_descriptor_3(redirect: &str) -> (Option<i32>, AnalyzeResponse) {
+    let script = format!("exec \"$0\" {redirect}");
+    let mut child = Command::new("/bin/sh")
+        .args(["-c", &script, env!("CARGO_BIN_EXE_ostia-triage")])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("triage worker");
+    let frame = encode_frame(&request(), DEFAULT_MAX_FRAME).expect("request frame");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(&frame)
+        .expect("request written");
+    let output = child.wait_with_output().expect("worker ends");
+    let body = decode_frame(&output.stdout, DEFAULT_MAX_FRAME).expect("one answer frame");
+    (
+        output.status.code(),
+        decode_response(body).expect("valid answer"),
+    )
+}
+
+/// The answer of a worker that could not type the object: status ERROR, no type, hint NONE (policy.md R1:
+/// "could not be typed" makes the object UNSCANNABLE).
+fn assert_untyped(response: &AnalyzeResponse, case: &str) {
+    assert_eq!(
+        (
+            response.status,
+            response.detected_type.as_str(),
+            response.hint,
+            response.score
+        ),
+        (i32::from(Status::Error), "", i32::from(Hint::None), None),
+        "{case}"
+    );
 }
 
 #[req("FR-05", "CTR-01")]
@@ -120,4 +178,44 @@ fn request_that_is_not_a_valid_frame_gets_no_answer() {
     let output = child.wait_with_output().expect("worker ends");
     assert_eq!(output.status.code(), Some(2));
     assert!(output.stdout.is_empty(), "{:?}", output.stdout);
+}
+
+#[req("FR-05")]
+#[test]
+fn polyglot_is_not_typed_and_its_types_are_named() {
+    for (case, bytes, types) in samples::polyglots() {
+        let done = triage("object", &bytes);
+        assert_eq!(done.failure, None, "{case}: {:?}", done.stderr);
+        assert_untyped(&done.response, case);
+        assert_eq!(
+            done.response.findings,
+            [Finding {
+                id: "triage.polyglot".into(),
+                title: "content matches several type rules".into(),
+                severity: 2,
+                evidence: format!("types: {}", types.join(", ")),
+                attack_ids: vec![],
+            }],
+            "{case}"
+        );
+    }
+}
+
+#[req("FR-05")]
+#[test]
+fn object_that_cannot_be_read_is_not_typed() {
+    let scratch = Scratch::new();
+    // No descriptor 3 at all, then a directory on descriptor 3 (reading it fails with EISDIR).
+    for (case, redirect) in [
+        ("no descriptor 3", String::new()),
+        (
+            "a directory on descriptor 3",
+            format!("3<'{}'", scratch.0.display()),
+        ),
+    ] {
+        let (code, response) = triage_with_descriptor_3(&redirect);
+        assert_eq!(code, Some(0), "{case}");
+        assert_untyped(&response, case);
+        assert!(response.findings.is_empty(), "{case}");
+    }
 }

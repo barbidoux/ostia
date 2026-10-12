@@ -84,6 +84,13 @@ fn extension_mismatch_follows_the_report() {
         ("photo.png", DetectedType::Unknown, false),
         ("README", DetectedType::Pdf, false),
         (".profile", DetectedType::Pdf, false),
+        // Trailing dots and spaces are dropped first, as Windows does (Q-56).
+        ("report.", DetectedType::Pdf, false),
+        ("report.pdf.", DetectedType::Png, true),
+        ("setup.exe. ", DetectedType::Pe, false),
+        ("libz.so.", DetectedType::Elf, false),
+        // Case is compared in ASCII only: the Kelvin sign (U+212A) is no `k`.
+        ("x.ap\u{212A}", DetectedType::Zip, true),
     ];
     for (name, detected, expected) in cases {
         assert_eq!(
@@ -109,6 +116,13 @@ fn double_extension_follows_the_report() {
         // The first dot of a dot name belongs to the stem: one extension only.
         (".bashrc.exe", false),
         ("README", false),
+        // Trailing dots and spaces are dropped first, as Windows does (Q-56).
+        ("invoice.pdf.exe.", true),
+        ("invoice.pdf.exe ", true),
+        ("invoice.pdf.exe. .", true),
+        ("invoice.exe.", false),
+        // Case is compared in ASCII only: the Kelvin sign (U+212A) is no `k`.
+        ("x.pdf.ln\u{212A}", false),
     ];
     for (name, expected) in cases {
         assert_eq!(double_extension(name), expected, "{name}");

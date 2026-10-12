@@ -30,7 +30,7 @@ def edited_snapshot(tmp_path: Path, edit: str) -> Path:
     data = json.loads(path.read_text())
     response = data["messages"]["AnalyzeResponse"]
     if edit == "unknown field":
-        response["10"] = ["verdict", "string", ""]
+        response["99"] = ["verdict", "string", ""]
     elif edit == "renamed field":
         response["1"] = ["engine", "string", ""]
     elif edit == "retyped field":
@@ -65,7 +65,7 @@ def test_the_generated_contract_matches_its_v1_snapshot() -> None:
 @pytest.mark.parametrize(
     ("edit", "message"),
     [
-        ("unknown field", "AnalyzeResponse field 10 (verdict) is missing"),
+        ("unknown field", "AnalyzeResponse field 99 (verdict) is missing"),
         ("renamed field", "AnalyzeResponse field 1 is engine_id, string; v1 has engine, string"),
         (
             "retyped field",
@@ -107,12 +107,12 @@ def test_an_added_field_is_compatible(tmp_path: Path) -> None:
 def test_removing_a_field_from_the_proto_and_the_snapshot_together_is_refused(
     tmp_path: Path,
 ) -> None:
-    # The base froze field 10; this change dropped it from both the .proto and compat.json.
+    # The base froze field 99; this change dropped it from both the .proto and compat.json.
     base = edited_snapshot(tmp_path, "unknown field")
     code, lines = compat("--snapshot", str(SNAPSHOT), "--base-snapshot", str(base))
     assert code == 1
     assert (
-        "compat: compat.json drops AnalyzeResponse field 10 (verdict) frozen on the base" in lines
+        "compat: compat.json drops AnalyzeResponse field 99 (verdict) frozen on the base" in lines
     )
 
 

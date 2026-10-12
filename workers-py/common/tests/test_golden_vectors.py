@@ -96,7 +96,7 @@ VALID_RESPONSES = {
     "response_typed": response_typed(),
     "response_newer_minor": response_clean(7),
 }
-VALID_DECODE_ONLY = ["response_minor_1_extra_field", "response_unknown_group"]
+VALID_DECODE_ONLY = ["response_minor_2_extra_field", "response_unknown_group"]
 
 INVALID = [
     ("frame_empty", "response", "empty"),
@@ -173,9 +173,9 @@ def test_python_decodes_the_valid_vectors() -> None:
 
 @pytest.mark.req("CTR-04")
 def test_a_newer_minor_with_an_unknown_field_is_accepted() -> None:
-    decoded = decode_response(decode_frame(vector("response_minor_1_extra_field")))
+    decoded = decode_response(decode_frame(vector("response_minor_2_extra_field")))
     decoded.DiscardUnknownFields()
-    assert decoded == response_clean(1)
+    assert decoded == response_clean(2)
     grouped = decode_response(decode_frame(vector("response_unknown_group")))
     grouped.DiscardUnknownFields()
     assert grouped == response_clean(0)
