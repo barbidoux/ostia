@@ -124,6 +124,9 @@ message AnalyzeResponse {
   repeated Finding findings = 7;
   // Time the analysis took, in milliseconds.
   uint32 duration_ms = 8;
+  // Type identified from the content (report.md "Types"), set by the triage worker; empty for engines
+  // (minor 1, Q-54).
+  string detected_type = 9;
   // Contract version of this message.
   ContractVersion version = 15;
 }

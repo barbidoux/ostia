@@ -95,6 +95,51 @@ Blocking: no.
 
 ## Answered
 
+### Q-56 · WP-1.7 · FR-05 · trailing dots and spaces in names; dot names and double extensions
+Context: Windows drops trailing dots and spaces from a name when it opens it: `invoice.pdf.exe.` and
+`invoice.pdf.exe ` run as `invoice.pdf.exe`. report.md's name flags do not mention them, so today
+`invoice.pdf.exe.` has an empty last extension: neither an extension mismatch nor a double extension. Also,
+report.md says a dot name's first dot is not an extension for `extension_mismatch` but is silent for
+`double_extension`; the code reads `.a.b.exe` as stem `.a` with two extensions (a double extension).
+Options: (a) both flags first strip trailing dots and spaces from the name, as Windows does, and treat a dot name's
+first dot as part of the stem for both flags; an empty last part after that means no extension (b) keep the
+literal reading, an empty last part being an extension that matches nothing.
+Recommendation: (a), and a sentence added to report.md for both points.
+Answer (owner, 2026-10-12): (a).
+
+### Q-55 · WP-1.7 · FR-05 · an object that matches two type rules (polyglot)
+Context: report.md's "Types" table does not say which rule wins when several match. A crafted file can: a tar
+whose first member is named `MZ…` or `%PDF-…` (the name is at offset 0, `ustar` at 257), an ISO 9660 image whose
+free 32 KiB system area starts with `PK\x03\x04` or `MZ` (`CD001` at 32769), a zip with `ustar` at 257. Whatever
+type wins, the other view is never extracted or scanned as such (WP-1.8/1.9 pick the extractor by type).
+Legitimate files rarely match two of these rules: every rule is at offset 0, 257 or 32769, where real formats
+put their own headers.
+Options: (a) the table's order is the priority, first match wins (documented in report.md) (b) a container type
+(zip, gzip, tar, 7z, rar, cab, iso9660, msi) wins over an opaque one (pe, elf, pdf, png) (c) fail closed: an
+object matching two rules "could not be typed" (policy.md R1, UNSCANNABLE); the triage worker answers status
+ERROR with a finding naming the matched types, so no contract field changes.
+Recommendation: (c): one hidden view would be enough to carry a payload past the scan, and the cost on
+legitimate media is close to nothing.
+Answer (owner, 2026-10-12): (c).
+
+### Q-54 · WP-1.7 · FR-05, CTR-01 · how the triage worker returns the detected type
+Context: the triage worker (WP-1.7) reads the object on descriptor 3 and must hand back its type (`detected_type`,
+report.md "Types"). Workers speak `ostia.engine.v1` through the worker host (CTR-01), and `AnalyzeResponse` has no
+field for a type: it carries engine identity, status, hint, score and findings. The spec defines no other worker
+message. WP-1.8 (extracted children) and WP-1.13 (exFAT attribute listing) will need messages of their own.
+Options: (a) one additive field `string detected_type = 9` on `AnalyzeResponse` ("type identified from the
+content; set by the triage worker, empty for engines"), appended to `compat.json` with contract minor 1; the
+Python stubs are regenerated (b) a new internal package `ostia.worker.v1` for triage, extraction and listings:
+cleaner, but it generalizes the codegen, the compatibility check, the Python generator and the golden vectors,
+better done once in WP-1.8 where extraction needs real messages (c) no contract change: the triage worker answers
+status OK, hint NONE and one finding `{id: "type", evidence: "<type>"}`, which the orchestrator reads.
+Recommendation: (a): typed, small, and compatible within v1 (CTR-04). Decided independently of this: the
+extension flags (`extension_mismatch`, `double_extension`) depend only on the name and the detected type, so they
+are pure functions of the domain (no content read), and type identification is a small magic table written to
+report.md's rules (no dependency: `infer` recognises other things and misses `e_lfanew`, ISO 9660 and the MSI
+root CLSID).
+Answer (owner, 2026-10-12): (a).
+
 ### Q-51 · WP-1.5 · FR-04, SEC-10 · ext content the unprivileged orchestrator cannot read
 Context: the inventory runs unprivileged on the read-only mount (FAT, exFAT and NTFS are mounted with the
 orchestrator's uid; ext keeps the on-disk owners and modes). mke2fs always creates `lost+found` owned by root,

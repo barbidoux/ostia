@@ -885,6 +885,7 @@ def test_rust_sbom_per_shipped_crate(generated: tuple[Path, str]) -> None:
         "ostia-media.cdx.json",
         "ostia-sandbox.cdx.json",
         "ostia-traceability.cdx.json",
+        "ostia-workers.cdx.json",
     }
     contracts = bom(rust / "ostia-contracts.cdx.json")
     assert contracts["metadata"]["component"]["name"] == "ostia-contracts"

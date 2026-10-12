@@ -18,10 +18,19 @@ fuzzing_selftest = []
 [dependencies]
 libfuzzer-sys = "=0.4.13"
 ostia-contracts = { path = "../crates/contracts" }
+ostia-core-domain = { path = "../crates/core-domain" }
+ostia-workers = { path = "../crates/workers" }
 
 [[bin]]
 name = "frame_decoder"
 path = "fuzz_targets/frame_decoder.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "triage_identify"
+path = "fuzz_targets/triage_identify.rs"
 test = false
 doc = false
 bench = false

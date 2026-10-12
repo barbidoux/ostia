@@ -1,0 +1,189 @@
+"""SEC-05, proved on the dependency graph (cargo metadata): content is parsed in workers, never by the
+orchestrator. The triage worker lives in `ostia-workers`; no other shipped crate depends on it, nor on any crate
+that identifies file types or opens archives."""
+
+import json
+import shutil
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from tooling_support import REPO, run
+
+WORKERS = "ostia-workers"
+# Type detection, archives, compression, executable and document parsers: the work of sandboxed workers.
+CONTENT_PARSERS = {
+    "infer",
+    "tree_magic",
+    "tree_magic_mini",
+    "file-format",
+    "magic",
+    "filemagic",
+    "zip",
+    "async_zip",
+    "tar",
+    "flate2",
+    "libflate",
+    "miniz_oxide",
+    "bzip2",
+    "xz2",
+    "lzma-rs",
+    "zstd",
+    "sevenz-rust",
+    "sevenz-rust2",
+    "unrar",
+    "compress-tools",
+    "cab",
+    "cfb",
+    "msi",
+    "goblin",
+    "object",
+    "pelite",
+    "pdf",
+    "lopdf",
+    "image",
+    "png",
+    "ruzstd",
+    "liblzma",
+    "lzma-rust2",
+    "xz",
+    "brotli",
+    "cpio",
+    "ar",
+    "elf",
+    "xmas-elf",
+    "pe-parser",
+    "exe",
+    "pdf-extract",
+    "mupdf",
+    "ole",
+    "iso9660",
+    "cdfs",
+}
+# Magic numbers of report.md's "Types" table as Rust literals: none may appear in an orchestrator crate's code.
+MAGIC_LITERALS = [
+    r'b"%PDF-',
+    r'b"\x7fELF',
+    r'b"\x89PNG',
+    r'b"PK\x03\x04',
+    r'b"PK\x05\x06',
+    r'b"\x1f\x8b',
+    r'b"ustar',
+    r'b"7z\xbc',
+    r'b"Rar!',
+    r'b"MSCF',
+    r'b"CD001',
+    r'b"MZ"',
+    "0xD0, 0xCF, 0x11, 0xE0",
+]
+
+
+def metadata() -> dict[str, Any]:
+    cargo = shutil.which("cargo")
+    assert cargo is not None, "cargo not found"
+    rustc = run(["rustc", "-vV"], cwd=REPO)
+    assert rustc.returncode == 0, rustc.stderr
+    host = next(
+        line.removeprefix("host: ")
+        for line in rustc.stdout.splitlines()
+        if line.startswith("host: ")
+    )
+    # Filtered to the host platform, the kiosk's: crates of other platforms or cfgs (fiat-crypto) are never
+    # downloaded by the build, so a fresh offline cache (CI) does not hold them.
+    command = [cargo, "metadata", "--format-version", "1", "--locked", "--offline"]
+    result = run([*command, "--filter-platform", host], cwd=REPO)
+    assert result.returncode == 0, result.stderr
+    data: dict[str, Any] = json.loads(result.stdout)
+    return data
+
+
+def packages(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {p["id"]: p for p in data["packages"]}
+
+
+def shipped(data: dict[str, Any]) -> dict[str, str]:
+    """Name → id of the workspace crates under crates/ (tests/fakes are test doubles, never shipped)."""
+    by_id = packages(data)
+    return {
+        by_id[i]["name"]: i
+        for i in data["workspace_members"]
+        if "/crates/" in by_id[i]["manifest_path"]
+    }
+
+
+def linked(data: dict[str, Any], root: str) -> set[str]:
+    """Names of every crate `root` links: normal dependencies, transitively (not dev, not build)."""
+    nodes = {n["id"]: n for n in data["resolve"]["nodes"]}
+    by_id = packages(data)
+    seen: set[str] = set()
+    stack = [root]
+    while stack:
+        for dep in nodes[stack.pop()]["deps"]:
+            if any(kind["kind"] is None for kind in dep["dep_kinds"]) and dep["pkg"] not in seen:
+                seen.add(dep["pkg"])
+                stack.append(dep["pkg"])
+    return {by_id[i]["name"] for i in seen}
+
+
+@pytest.fixture(scope="module")
+def graph() -> dict[str, Any]:
+    return metadata()
+
+
+@pytest.mark.req("SEC-05")
+def test_the_triage_worker_lives_in_the_workers_crate(graph: dict[str, Any]) -> None:
+    crates = shipped(graph)
+    assert WORKERS in crates, sorted(crates)
+    targets = {(t["name"], tuple(t["kind"])) for t in packages(graph)[crates[WORKERS]]["targets"]}
+    assert ("ostia-triage", ("bin",)) in targets, targets
+
+
+@pytest.mark.req("SEC-05")
+def test_no_orchestrator_crate_links_the_workers(graph: dict[str, Any]) -> None:
+    crates = shipped(graph)
+    assert WORKERS in crates, sorted(crates)
+    for name, crate in crates.items():
+        if name != WORKERS:
+            assert WORKERS not in linked(graph, crate), name
+
+
+@pytest.mark.req("SEC-05")
+def test_no_orchestrator_crate_links_a_content_parser(graph: dict[str, Any]) -> None:
+    for name, crate in shipped(graph).items():
+        if name != WORKERS:
+            assert linked(graph, crate) & CONTENT_PARSERS == set(), name
+
+
+@pytest.mark.req("SEC-05")
+def test_the_dependency_walk_sees_what_a_crate_links(graph: dict[str, Any]) -> None:
+    # Positive control: the walk is not empty, so the two tests above cannot pass vacuously.
+    crates = shipped(graph)
+    assert {"ostia-contracts", "prost"} <= linked(graph, crates[WORKERS])
+    assert "ostia-workers" not in linked(graph, crates[WORKERS])
+
+
+def code_lines(path: Path) -> list[tuple[int, str]]:
+    """The lines of a Rust file that are not comments (line comments and doc comments)."""
+    return [
+        (number, line)
+        for number, line in enumerate(path.read_text().splitlines(), start=1)
+        if not line.lstrip().startswith("//")
+    ]
+
+
+@pytest.mark.req("SEC-05")
+def test_no_orchestrator_crate_holds_a_magic_number() -> None:
+    # The dependency graph cannot see a magic table written by hand: the sources are searched too.
+    found = []
+    for source in sorted((REPO / "crates").glob("*/src/**/*.rs")):
+        if source.relative_to(REPO).parts[1] == "workers":
+            continue
+        for number, line in code_lines(source):
+            found += [
+                f"{source.relative_to(REPO)}:{number}: {m}" for m in MAGIC_LITERALS if m in line
+            ]
+    assert found == []
+    # The search finds them where they belong.
+    triage = REPO / "crates" / "workers" / "src" / "triage.rs"
+    assert all(any(m in line for _, line in code_lines(triage)) for m in MAGIC_LITERALS[:11])

@@ -16,7 +16,8 @@ from ostia_common.engine_v1 import engine_pb2
 
 DEFAULT_MAX_FRAME = 16 * 1024 * 1024
 MAJOR = 1
-MINOR = 0
+# Minor 1: AnalyzeResponse.detected_type.
+MINOR = 1
 
 
 class ByteReader(Protocol):

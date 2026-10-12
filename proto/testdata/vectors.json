@@ -68,6 +68,25 @@
       }
     },
     {
+      "name": "response_typed",
+      "message": "AnalyzeResponse",
+      "expect": "ok",
+      "description": "type from the triage worker",
+      "fields": {
+        "engine_id": "ostia-triage",
+        "engine_version": "0.0.0",
+        "content_version": "magic-1",
+        "status": "OK",
+        "hint": "NONE",
+        "duration_ms": 1,
+        "detected_type": "png",
+        "version": {
+          "major": 1,
+          "minor": 1
+        }
+      }
+    },
+    {
       "name": "response_newer_minor",
       "message": "AnalyzeResponse",
       "expect": "ok",
@@ -417,10 +436,10 @@
       "fields": null
     },
     {
-      "name": "response_minor_1_extra_field",
+      "name": "response_minor_2_extra_field",
       "message": "AnalyzeResponse",
       "expect": "ok",
-      "description": "minor 1 with field 9 (unknown to this decoder) appended: ignored",
+      "description": "minor 2 (newer than this decoder) with field 99 (unknown to it) appended: ignored",
       "fields": null
     }
   ]

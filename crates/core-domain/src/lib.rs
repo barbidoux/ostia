@@ -9,4 +9,5 @@ pub mod engine;
 pub mod object;
 pub mod policy;
 pub mod session;
+pub mod types;
 pub mod verdict;

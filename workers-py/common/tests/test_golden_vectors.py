@@ -76,12 +76,27 @@ def response_scored() -> engine_pb2.AnalyzeResponse:
     )
 
 
+def response_typed() -> engine_pb2.AnalyzeResponse:
+    """The triage worker's answer: the type found in the content (minor 1, Q-54)."""
+    return engine_pb2.AnalyzeResponse(
+        engine_id="ostia-triage",
+        engine_version="0.0.0",
+        content_version="magic-1",
+        status=engine_pb2.OK,
+        hint=engine_pb2.NONE,
+        duration_ms=1,
+        detected_type="png",
+        version=engine_pb2.ContractVersion(major=1, minor=1),
+    )
+
+
 VALID_RESPONSES = {
     "response_clean": response_clean(0),
     "response_scored": response_scored(),
+    "response_typed": response_typed(),
     "response_newer_minor": response_clean(7),
 }
-VALID_DECODE_ONLY = ["response_minor_1_extra_field", "response_unknown_group"]
+VALID_DECODE_ONLY = ["response_minor_2_extra_field", "response_unknown_group"]
 
 INVALID = [
     ("frame_empty", "response", "empty"),
@@ -158,9 +173,9 @@ def test_python_decodes_the_valid_vectors() -> None:
 
 @pytest.mark.req("CTR-04")
 def test_a_newer_minor_with_an_unknown_field_is_accepted() -> None:
-    decoded = decode_response(decode_frame(vector("response_minor_1_extra_field")))
+    decoded = decode_response(decode_frame(vector("response_minor_2_extra_field")))
     decoded.DiscardUnknownFields()
-    assert decoded == response_clean(1)
+    assert decoded == response_clean(2)
     grouped = decode_response(decode_frame(vector("response_unknown_group")))
     grouped.DiscardUnknownFields()
     assert grouped == response_clean(0)

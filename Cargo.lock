@@ -507,6 +507,16 @@ name = "ostia-traceability"
 version = "0.0.0"
 
 [[package]]
+name = "ostia-workers"
+version = "0.0.0"
+dependencies = [
+ "ostia-contracts",
+ "ostia-core-domain",
+ "ostia-sandbox",
+ "ostia-traceability",
+]
+
+[[package]]
 name = "petgraph"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

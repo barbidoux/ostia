@@ -150,6 +150,7 @@ fn answer() -> AnalyzeResponse {
             attack_ids: vec!["T1204".into()],
         }],
         duration_ms: 7,
+        detected_type: String::new(),
         version: VERSION,
     }
 }
@@ -175,7 +176,9 @@ fn assert_synthesised(done: &WorkerRun, status: Status, failure: &Failure, elaps
         score: None,
         findings: vec![],
         duration_ms: done.response.duration_ms,
-        version: VERSION,
+        detected_type: String::new(),
+        // The host writes the contract version it speaks.
+        version: Some(ContractVersion { major: 1, minor: 1 }),
     };
     assert_eq!(done.failure.as_ref(), Some(failure));
     assert_eq!(done.response, expected);
