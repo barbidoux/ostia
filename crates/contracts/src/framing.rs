@@ -12,8 +12,8 @@ pub const DEFAULT_MAX_FRAME: usize = 16 * 1024 * 1024;
 /// Contract major version this crate speaks.
 pub const MAJOR: u32 = 1;
 
-/// Contract minor version this crate writes.
-pub const MINOR: u32 = 0;
+/// Contract minor version this crate writes (1: `AnalyzeResponse.detected_type`).
+pub const MINOR: u32 = 1;
 
 /// Highest finding severity (4, critical).
 const MAX_SEVERITY: u32 = 4;
