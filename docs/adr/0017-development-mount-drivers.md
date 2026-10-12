@@ -60,6 +60,12 @@ the orchestrator.
 - Known P1 limit: the layer waits for the helper without a deadline (a driver hanging on a crafted image hangs
   the scan); a killed `sudo` cannot stop the root helper it started, so the deadline belongs to the privileged
   helper of WP-4.5, which owns the mount namespace.
+- Inventory limits that follow from these drivers (WP-1.5): ntfs-3g shows a stream through one extended
+  attribute, and the kernel caps an attribute value at 64 KiB, so a stream larger than that is listed as
+  unreadable (UNSCANNABLE, fail closed). Only the `user.*` namespace is listed (report.md, XATTR); `trusted.*` and
+  `security.*` values, which only a privileged process can set, are neither listed nor scanned, and never copied.
+  FAT attributes come from the vfat driver's `FAT_IOCTL_GET_ATTRIBUTES` (Q-48); exFAT ones from the image, in
+  WP-1.13 (Q-49).
 
 ## Links
 

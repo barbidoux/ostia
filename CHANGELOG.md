@@ -96,5 +96,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   modification time and attributes (dot names; NTFS through ntfs-3g; FAT through the new `ostia-fat-attributes`,
   the one crate on the unsafe allowlist, Q-48). Each object is read once into SHA-256, SHA-1 and a read-only
   copy in a new or empty workspace, the only copy used afterwards (SEC-10). Anything it cannot list or read is
-  recorded, never dropped. exFAT attributes move to WP-1.13 (Q-49); generated ext images give `lost+found` to the
-  invoking user (Q-51). New dependencies (Q-50): `rustix` 1.1.5, `sha1` 0.11.0.
+  recorded, never dropped: unreadable or too deep directories, streams on directories or the root, attributes that
+  cannot be read. The walk reaches every child from its directory's descriptor, never through a path, and the
+  workspace is private (0700, this user, copies created from its descriptor). exFAT attributes move to WP-1.13
+  (Q-49); generated ext images give `lost+found` to the invoking user (Q-51). New dependencies (Q-50): `rustix`
+  1.1.5, `sha1` 0.11.0.

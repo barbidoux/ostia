@@ -71,6 +71,28 @@ Recommendation: (a). Every one of them needs a deliberate weakening to slip thro
 reads each diff.
 Blocking: no.
 
+### Q-52 · WP-4.5 (from WP-1.5) · FR-04, SEC-10 · reading ext content owned by other users
+Context: the inventory runs unprivileged on the read-only mount. FAT, exFAT and NTFS are mounted with the
+orchestrator's uid; ext keeps the on-disk owners and modes, so a real medium from a Linux machine (root's
+`lost+found` 0700, other users' files 0600) has content the inventory cannot read. It is recorded as unlisted or
+unreadable and the medium is UNSCANNABLE (fail closed). Generated images avoid it (Q-51).
+Options: (a) the privileged helper mounts ext through an idmapped read-only mount mapping the on-disk owners to
+the orchestrator (b) unreadable objects are read through the raw-read helper (c) keep refusing such media.
+Recommendation: decide with the privileged helper in WP-4.5; (a) if the target kernel supports idmapped mounts
+for every FR-03 file system there.
+Blocking: no (P4).
+
+### Q-53 · WP-1.10, WP-1.11 (from WP-1.5) · FR-14, NFR-05 · bounding and stopping the inventory
+Context: `take_inventory` is synchronous, with no deadline, no byte limit and no way to cancel it. A few-MiB
+ext4 or NTFS image can hold a sparse file of terabytes: the single read copies zeros until the workspace disk is
+full, and a hung FUSE read blocks for ever. The locked `test_scan_time.py` counts mount and inventory in the
+FR-14 budget.
+Options: (a) WP-1.10/1.11 give the inventory a cancel token and a deadline, checked per chunk and per entry,
+and a byte limit (per object and per medium, from the policy's limits) whose breach makes the object
+UNSCANNABLE with the limit named (b) run the inventory in a killable process.
+Recommendation: (a), designed with the pipeline in WP-1.10 and the scan time in WP-1.11.
+Blocking: no.
+
 ## Answered
 
 ### Q-51 · WP-1.5 · FR-04, SEC-10 · ext content the unprivileged orchestrator cannot read
