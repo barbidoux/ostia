@@ -53,6 +53,7 @@ fn response() -> AnalyzeResponse {
             attack_ids: vec!["T1204.002".into()],
         }],
         duration_ms: 840,
+        detected_type: String::new(),
         version: Some(version(1, 0)),
     }
 }

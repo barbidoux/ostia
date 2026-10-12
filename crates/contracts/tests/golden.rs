@@ -52,6 +52,7 @@ fn response_clean(minor: u32) -> AnalyzeResponse {
         score: None,
         findings: vec![],
         duration_ms: 12,
+        detected_type: String::new(),
         version: Some(ContractVersion { major: 1, minor }),
     }
 }
@@ -72,6 +73,7 @@ fn response_scored() -> AnalyzeResponse {
             attack_ids: vec!["T1204.002".into()],
         }],
         duration_ms: 840,
+        detected_type: String::new(),
         version: Some(ContractVersion { major: 1, minor: 0 }),
     }
 }
@@ -169,7 +171,7 @@ fn rust_decodes_the_python_bytes_of_the_valid_vectors() {
         ("response_clean", response_clean(0)),
         ("response_scored", response_scored()),
         ("response_newer_minor", response_clean(7)),
-        // Minor 1 with a field this decoder does not know (field 9): ignored, not refused.
+        // Minor 1 with a field this decoder does not know (field 13): ignored, not refused.
         ("response_minor_1_extra_field", response_clean(1)),
         // Nested unknown groups (field 100) are skipped like any unknown field.
         ("response_unknown_group", response_clean(0)),

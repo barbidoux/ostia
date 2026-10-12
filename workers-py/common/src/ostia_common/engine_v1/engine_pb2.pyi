@@ -292,6 +292,7 @@ class AnalyzeResponse(_message.Message):
     SCORE_FIELD_NUMBER: _builtins.int
     FINDINGS_FIELD_NUMBER: _builtins.int
     DURATION_MS_FIELD_NUMBER: _builtins.int
+    DETECTED_TYPE_FIELD_NUMBER: _builtins.int
     VERSION_FIELD_NUMBER: _builtins.int
     engine_id: _builtins.str
     """Engine identifier."""
@@ -307,6 +308,10 @@ class AnalyzeResponse(_message.Message):
     """Score in [0, 1] for scoring engines."""
     duration_ms: _builtins.int
     """Time the analysis took, in milliseconds."""
+    detected_type: _builtins.str
+    """Type identified from the content (report.md "Types"), set by the triage worker; empty for engines
+    (minor 1, Q-54).
+    """
     @_builtins.property
     def findings(self) -> _containers.RepeatedCompositeFieldContainer[Global___Finding]:
         """What the engine found."""
@@ -326,11 +331,12 @@ class AnalyzeResponse(_message.Message):
         score: _builtins.float | None = ...,
         findings: _abc.Iterable[Global___Finding] | None = ...,
         duration_ms: _builtins.int = ...,
+        detected_type: _builtins.str = ...,
         version: Global___ContractVersion | None = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _typing.Literal["_score", b"_score", "score", b"score", "version", b"version"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["_score", b"_score", "content_version", b"content_version", "duration_ms", b"duration_ms", "engine_id", b"engine_id", "engine_version", b"engine_version", "findings", b"findings", "hint", b"hint", "score", b"score", "status", b"status", "version", b"version"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_score", b"_score", "content_version", b"content_version", "detected_type", b"detected_type", "duration_ms", b"duration_ms", "engine_id", b"engine_id", "engine_version", b"engine_version", "findings", b"findings", "hint", b"hint", "score", b"score", "status", b"status", "version", b"version"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     _WhichOneofReturnType__score: _TypeAlias = _typing.Literal["score"]  # noqa: Y015
     _WhichOneofArgType__score: _TypeAlias = _typing.Literal["_score", b"_score"]  # noqa: Y015

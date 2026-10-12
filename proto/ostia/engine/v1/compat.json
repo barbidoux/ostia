@@ -37,6 +37,7 @@
       "6": ["score", "double", "optional"],
       "7": ["findings", "message Finding", "repeated"],
       "8": ["duration_ms", "uint32", ""],
+      "9": ["detected_type", "string", ""],
       "15": ["version", "message ContractVersion", ""]
     }
   },

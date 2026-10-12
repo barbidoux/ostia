@@ -256,8 +256,8 @@ def vectors() -> list[Vector]:
         body_vector(
             "response_minor_1_extra_field",
             "ok",
-            "minor 1 with field 9 (unknown to this decoder) appended: ignored",
-            changed(response_clean(), version=minor_1).SerializeToString() + b"\x4a\x01x",
+            "minor 1 with field 13 (unknown to this decoder) appended: ignored",
+            changed(response_clean(), version=minor_1).SerializeToString() + b"\x6a\x01x",
         ),
     ]
 

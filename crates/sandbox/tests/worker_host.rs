@@ -150,6 +150,7 @@ fn answer() -> AnalyzeResponse {
             attack_ids: vec!["T1204".into()],
         }],
         duration_ms: 7,
+        detected_type: String::new(),
         version: VERSION,
     }
 }
@@ -175,6 +176,7 @@ fn assert_synthesised(done: &WorkerRun, status: Status, failure: &Failure, elaps
         score: None,
         findings: vec![],
         duration_ms: done.response.duration_ms,
+        detected_type: String::new(),
         version: VERSION,
     };
     assert_eq!(done.failure.as_ref(), Some(failure));
