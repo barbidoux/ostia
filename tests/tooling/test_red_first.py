@@ -92,6 +92,18 @@ def test_red_test_then_feat_passes(repo: Repo) -> None:
 
 
 @pytest.mark.req("TOOLING")
+def test_binary_files_in_a_commit_are_read_without_failing(repo: Repo) -> None:
+    # A golden vector holding bytes that are not UTF-8 (0x9a starts the tag of field 99) beside a red test.
+    (repo.root / "testdata").mkdir()
+    (repo.root / "testdata" / "vector.bin").write_bytes(b"\x08\x01\x9a\x06\x01x")
+    repo.commit("test(FR-01): the answer", {"tests/test_feature.py": TEST_ANSWER})
+    repo.commit("feat(FR-01): the answer", {"feature.py": FEATURE_DONE})
+    result = red_first(repo)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "red-first OK: 1 test commit checked" in result.stdout
+
+
+@pytest.mark.req("TOOLING")
 def test_nothing_to_check_passes(repo: Repo) -> None:
     repo.commit("docs: readme", {"README.md": "more\n"})
     result = red_first(repo)
