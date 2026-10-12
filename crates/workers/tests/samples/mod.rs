@@ -193,7 +193,7 @@ pub fn polyglots() -> Vec<(&'static str, Vec<u8>, Vec<&'static str>)> {
         (
             "MSI with CD001 at 32769",
             with(compound_file(9, 0, MSI_CLSID), 32769, b"CD001"),
-            vec!["msi", "iso9660"],
+            vec!["iso9660", "msi"],
         ),
     ]
 }
