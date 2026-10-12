@@ -5,4 +5,4 @@ listed here by the owner, with the reason, the reviewer and the date. The guard 
 
 | Crate | Reason | Reviewed by | Date |
 |---|---|---|---|
-| (none yet) | | | |
+| ostia-fat-attributes | One `ioctl(FAT_IOCTL_GET_ATTRIBUTES)` on a descriptor the inventory opened on a vfat mount: the kernel returns the FAT attribute byte it already parsed for the mount (Q-48) | Matthias Vaytet | 2026-10-12 |

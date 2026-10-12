@@ -38,6 +38,7 @@ Gate P0 (owner): [x] evidence in `docs/gates/P0.md` reviewed; `tests/acceptance/
 - [ ] WP-1.10 Orchestrator pipeline: session lifecycle, bounded queues, dispatch to the fake engine, medium verdict, JSON... (after: 1.2, 1.5, 1.7)
 - [ ] WP-1.11 Maximum scan time and configurable expiry action (after: 1.10)
 - [ ] WP-1.12 Lock: write P2 acceptance tests, review, lock (after: 1.10)
+- [ ] WP-1.13 exFAT attribute worker: attributes read from the image in a sandboxed worker, new contract message (after: 1.5, 1.6)
 
 Gate P1 (owner): [ ] evidence in `docs/gates/P1.md` reviewed; `tests/acceptance/p2` locked and tagged `lock-p2`; retrospective written
 
