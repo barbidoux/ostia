@@ -4,6 +4,8 @@
 //! the privileged helper of P4 replaces it behind the same trait. The orchestrator never reads the image to
 //! find its file system (SEC-05): the helper's blkid does, and this crate only reads the helper's answer.
 
+pub mod inventory;
+
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::path::{Path, PathBuf};
