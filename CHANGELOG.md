@@ -101,3 +101,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   workspace is private (0700, this user, copies created from its descriptor). exFAT attributes move to WP-1.13
   (Q-49); generated ext images give `lost+found` to the invoking user (Q-51). New dependencies (Q-50): `rustix`
   1.1.5, `sha1` 0.11.0.
+- Triage worker (WP-1.7, `crates/workers`): `ostia-triage` identifies the type of an object from its content by
+  report.md's "Types" table (pe, elf, pdf, png, zip, gzip, tar, 7z, rar, cab, iso9660, msi, unknown), reading
+  only the bytes the rules need, and answers it in `AnalyzeResponse.detected_type`. That field is new in
+  `ostia.engine.v1` (Q-54), and messages now carry contract version 1.1. `ostia_core_domain::types` names the
+  types and computes the name flags `extension_mismatch` and `double_extension`. A structural test on `cargo
+  metadata` proves SEC-05: no orchestrator-side crate links the workers or any type-detection, archive or document
+  parser.
