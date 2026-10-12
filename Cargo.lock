@@ -472,6 +472,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ostia-fat-attributes"
+version = "0.0.0"
+dependencies = [
+ "nix",
+ "ostia-traceability",
+]
+
+[[package]]
 name = "ostia-media"
 version = "0.0.0"
 dependencies = [

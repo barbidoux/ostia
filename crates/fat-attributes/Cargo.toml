@@ -1,0 +1,28 @@
+[package]
+name = "ostia-fat-attributes"
+description = "FAT attribute byte of a file open on a vfat mount (FAT_IOCTL_GET_ATTRIBUTES), the only unsafe call of Ostia"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+nix = { version = "=0.31.3", features = ["ioctl"] }
+
+[dev-dependencies]
+ostia-traceability = { path = "../traceability" }
+
+# Listed in docs/unsafe-allowlist.md (Q-48): the workspace's `unsafe_code = "forbid"` cannot be relaxed by a local
+# allow, so this crate declares the workspace lints itself, with `unsafe_code` at deny and the one call allowed
+# where it is made.
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "deny"
