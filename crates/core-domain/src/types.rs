@@ -113,10 +113,11 @@ const EXECUTABLE: [&str; 19] = [
     "ps1", "msi", "hta", "lnk", "jar", "dll",
 ];
 
-/// The stem and the extensions of a name, in lower case. The first character of a dot name belongs to the stem:
-/// `.profile` has no extension, `.bashrc.exe` one.
+/// The stem and the extensions of a name, in ASCII lower case (no other character folds: the lists are ASCII).
+/// Trailing dots and spaces are dropped first, as Windows drops them when it opens a file (Q-56); the first
+/// character of a dot name belongs to the stem: `.profile` has no extension, `.bashrc.exe` one.
 fn split(file_name: &str) -> (String, Vec<String>) {
-    let lower = file_name.to_lowercase();
+    let lower = file_name.trim_end_matches(['.', ' ']).to_ascii_lowercase();
     let (lead, rest) = match lower.strip_prefix('.') {
         Some(rest) => (".", rest),
         None => ("", lower.as_str()),

@@ -40,73 +40,69 @@ const AT_START: [(&[u8], DetectedType); 9] = [
 /// # Errors
 /// Reading or seeking the object failed.
 pub fn matching_types(object: &mut (impl Read + Seek)) -> std::io::Result<Vec<DetectedType>> {
-    let _ = object;
-    todo!("WP-1.7: every rule, no early return")
-}
-
-/// The type of the object read from `object`; `unknown` when no rule matches. Reads only the bytes the rules
-/// look at.
-///
-/// # Errors
-/// Reading or seeking the object failed.
-pub fn identify(object: &mut (impl Read + Seek)) -> std::io::Result<DetectedType> {
-    let head = read_at(object, 0, HEAD)?;
-    if head.starts_with(b"MZ") {
-        return pe(object, &head);
-    }
-    if head.starts_with(&COMPOUND_FILE) {
-        return compound_file(object, &head);
+    // Offsets past the end are never sought: a file system may refuse a seek that far (ext4 above 16 TiB).
+    let end = object.seek(SeekFrom::End(0))?;
+    let head = read_at(object, end, 0, HEAD)?;
+    let mut matched = Vec::new();
+    // Every rule is tried: a failed rule never stops the others, and a polyglot shows all its types.
+    if head.starts_with(b"MZ") && is_pe(object, end, &head)? {
+        matched.push(DetectedType::Pe);
     }
     if let Some((_, detected)) = AT_START.iter().find(|(magic, _)| head.starts_with(magic)) {
-        return Ok(*detected);
+        matched.push(*detected);
     }
     if head.get(257..262) == Some(b"ustar".as_slice()) {
-        return Ok(DetectedType::Tar);
+        matched.push(DetectedType::Tar);
     }
-    if read_at(object, ISO_MAGIC_AT, 5)? == b"CD001" {
-        return Ok(DetectedType::Iso9660);
+    if read_at(object, end, ISO_MAGIC_AT, 5)? == b"CD001" {
+        matched.push(DetectedType::Iso9660);
     }
-    Ok(DetectedType::Unknown)
+    if head.starts_with(&COMPOUND_FILE) && is_msi(object, end, &head)? {
+        matched.push(DetectedType::Msi);
+    }
+    matched.sort_by_key(|detected| DetectedType::ALL.iter().position(|t| t == detected));
+    Ok(matched)
 }
 
-/// `MZ` whose `e_lfanew` (offset 0x3C) points to `PE\0\0`; any other `MZ` is unknown.
-fn pe(object: &mut (impl Read + Seek), head: &[u8]) -> std::io::Result<DetectedType> {
+/// `MZ` whose `e_lfanew` (offset 0x3C) points to `PE\0\0`.
+fn is_pe(object: &mut (impl Read + Seek), end: u64, head: &[u8]) -> std::io::Result<bool> {
     let Some(lfanew) = le_u32(head, 0x3C) else {
-        return Ok(DetectedType::Unknown);
+        return Ok(false);
     };
-    if read_at(object, u64::from(lfanew), 4)? == b"PE\0\0" {
-        Ok(DetectedType::Pe)
-    } else {
-        Ok(DetectedType::Unknown)
-    }
+    Ok(read_at(object, end, u64::from(lfanew), 4)? == b"PE\0\0")
 }
 
 /// A compound file whose root directory entry (the first entry of the first directory sector) carries the
-/// Windows Installer package CLSID; any other compound file is unknown.
-fn compound_file(object: &mut (impl Read + Seek), head: &[u8]) -> std::io::Result<DetectedType> {
+/// Windows Installer package CLSID.
+fn is_msi(object: &mut (impl Read + Seek), end: u64, head: &[u8]) -> std::io::Result<bool> {
     let (Some(shift), Some(first_directory)) = (le_u16(head, 0x1E), le_u32(head, 0x30)) else {
-        return Ok(DetectedType::Unknown);
+        return Ok(false);
     };
     // Version 3 files use 512-byte sectors, version 4 files 4096-byte ones: nothing else is valid.
     if shift != 9 && shift != 12 {
-        return Ok(DetectedType::Unknown);
+        return Ok(false);
     }
     let sector = 1_u64 << shift;
     let Some(root) = (u64::from(first_directory) + 1)
         .checked_mul(sector)
         .and_then(|offset| offset.checked_add(0x50))
     else {
-        return Ok(DetectedType::Unknown);
+        return Ok(false);
     };
-    if read_at(object, root, MSI_CLSID.len())? == MSI_CLSID {
-        Ok(DetectedType::Msi)
-    } else {
-        Ok(DetectedType::Unknown)
-    }
+    Ok(read_at(object, end, root, MSI_CLSID.len())? == MSI_CLSID)
 }
 
-/// Up to `len` bytes at `offset`: fewer at the end of the object, none past it.
-fn read_at(object: &mut (impl Read + Seek), offset: u64, len: usize) -> std::io::Result<Vec<u8>> {
+/// Up to `len` bytes at `offset` of an object of `end` bytes: fewer at its end, none past it (no seek then).
+fn read_at(
+    object: &mut (impl Read + Seek),
+    end: u64,
+    offset: u64,
+    len: usize,
+) -> std::io::Result<Vec<u8>> {
+    if offset >= end {
+        return Ok(Vec::new());
+    }
+    let len = len.min(usize::try_from(end - offset).unwrap_or(usize::MAX));
     object.seek(SeekFrom::Start(offset))?;
     let mut bytes = vec![0_u8; len];
     let mut filled = 0;
