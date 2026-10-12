@@ -514,6 +514,39 @@ impl Walk<'_> {
 /// Hashes and copies one read of `source`; a read failure leaves no copy behind.
 fn read_once(source: &mut File, workspace: &mut Workspace) -> Result<Content, InventoryError> {
     let (path, mut copy) = workspace.new_copy()?;
+    match hash_and_copy(source, &mut copy) {
+        Ok((size, sha256, sha1)) => {
+            seal(&path, &copy)?;
+            Ok(Content::Read {
+                size,
+                sha256,
+                sha1,
+                copy: path,
+            })
+        }
+        Err(CopyError::Read(error)) => {
+            drop(copy);
+            std::fs::remove_file(&path).map_err(|removal| workspace_error(&path, &removal))?;
+            Ok(Content::Unreadable(format!("cannot read: {error}")))
+        }
+        Err(CopyError::Write(error)) => Err(workspace_error(&path, &error)),
+    }
+}
+
+/// Why [`hash_and_copy`] stopped.
+#[derive(Debug)]
+enum CopyError {
+    /// The source failed: the object is unreadable.
+    Read(std::io::Error),
+    /// The copy failed: the inventory cannot go on.
+    Write(std::io::Error),
+}
+
+/// One pass over `source` to its end: each chunk feeds SHA-256, SHA-1 and `copy`; returns the size and hashes.
+fn hash_and_copy(
+    source: &mut impl Read,
+    copy: &mut impl Write,
+) -> Result<(u64, [u8; 32], [u8; 20]), CopyError> {
     let mut sha256 = Sha256::new();
     let mut sha1 = Sha1::new();
     let mut size: u64 = 0;
@@ -523,26 +556,15 @@ fn read_once(source: &mut File, workspace: &mut Workspace) -> Result<Content, In
             Ok(0) => break,
             Ok(read) => read,
             Err(error) if error.kind() == ErrorKind::Interrupted => continue,
-            Err(error) => {
-                drop(copy);
-                let _ = std::fs::remove_file(&path);
-                return Ok(Content::Unreadable(format!("cannot read: {error}")));
-            }
+            Err(error) => return Err(CopyError::Read(error)),
         };
         let bytes = chunk.get(..read).unwrap_or_default();
         sha256.update(bytes);
         sha1.update(bytes);
-        copy.write_all(bytes)
-            .map_err(|error| workspace_error(&path, &error))?;
+        copy.write_all(bytes).map_err(CopyError::Write)?;
         size += u64::try_from(read).unwrap_or(u64::MAX);
     }
-    seal(&path, &copy)?;
-    Ok(Content::Read {
-        size,
-        sha256: sha256.finalize().into(),
-        sha1: sha1.finalize().into(),
-        copy: path,
-    })
+    Ok((size, sha256.finalize().into(), sha1.finalize().into()))
 }
 
 /// Hashes and copies bytes already read (a stream or attribute value).
