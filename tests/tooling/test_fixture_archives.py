@@ -83,6 +83,22 @@ def test_seven_zip_stream_decodes_to_the_entries() -> None:
 
 
 @pytest.mark.req("TOOLING")
+def test_seven_zip_not_solid_has_a_folder_per_entry() -> None:
+    data = BUILDER.seven_zip(ENTRIES, solid=False)
+    offset, size, _ = struct.unpack_from("<QQI", data, 12)
+    header = data[32 + offset : 32 + offset + size]
+    # Header, MainStreamsInfo, PackInfo: packed streams from position 0, two of them.
+    assert header[:5] == b"\x01\x04\x06\x00\x02"
+    filters = [{"id": lzma.FILTER_LZMA2, "dict_size": 1 << 20}]
+    first = lzma.LZMADecompressor(lzma.FORMAT_RAW, filters=filters)
+    assert first.decompress(data[32 : 32 + offset]) == A
+    assert first.eof
+    second = lzma.LZMADecompressor(lzma.FORMAT_RAW, filters=filters)
+    assert second.decompress(first.unused_data) == B
+    assert second.eof and second.unused_data == b""
+
+
+@pytest.mark.req("TOOLING")
 def test_cab_blocks_inflate_to_the_entries() -> None:
     data = build_archive("cab", ENTRIES)
     total, files_at = struct.unpack_from("<I", data, 8)[0], struct.unpack_from("<I", data, 16)[0]
