@@ -288,16 +288,15 @@ def _check_response(response: engine_pb2.AnalyzeResponse) -> None:
 
 def decode_extract_frame(body: bytes) -> engine_pb2.ExtractFrame:
     """Decode and validate one frame of the extraction worker's output (ADR-18): major; exactly one of
-    entry, data or done; an entry with a path, a known kind and no size unless it is a regular file;
-    data that is not empty; a done that is a valid response."""
+    entry, data or done; an entry with a known kind and no size unless it is a regular file (an empty
+    path is an entry its container does not name); data that is not empty; a done that is a valid
+    response."""
     frame = _parse(engine_pb2.ExtractFrame(), engine_pb2.ExtractFrame.DESCRIPTOR, body)
     _check_version(frame)
     which = frame.WhichOneof("frame")
     if which is None:
         raise ContractError("invalid_response", "frame")
     if which == "entry":
-        if not frame.entry.path:
-            raise ContractError("invalid_response", "entry path")
         if frame.entry.kind not in _KNOWN_ENTRY_KINDS:
             raise ContractError("invalid_response", "entry kind")
         if frame.entry.kind != engine_pb2.REGULAR and frame.entry.size != 0:

@@ -431,7 +431,9 @@ class Entry(_message.Message):
     SIZE_FIELD_NUMBER: _builtins.int
     MODIFIED_FIELD_NUMBER: _builtins.int
     path: _builtins.bytes
-    """The entry's path inside its container, as stored (`/`-separated, not necessarily UTF-8)."""
+    """The entry's path inside its container, as stored (`/`-separated, not necessarily UTF-8); empty when the
+    container does not name it (a gzip member without a name: the host names it after the container).
+    """
     kind: Global___EntryKind.ValueType
     """What the entry is."""
     size: _builtins.int

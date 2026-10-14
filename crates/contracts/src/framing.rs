@@ -282,8 +282,8 @@ fn check_response(response: AnalyzeResponse) -> Result<AnalyzeResponse, Contract
 }
 
 /// Decodes and validates one frame of the extraction worker's output (ADR-18): contract major; exactly one of
-/// entry, data or done; an entry with a path, a known kind and no size unless it is a regular file; data that
-/// is not empty; a done that is a valid response.
+/// entry, data or done; an entry with a known kind and no size unless it is a regular file (an empty path is
+/// an entry its container does not name); data that is not empty; a done that is a valid response.
 ///
 /// # Errors
 /// Malformed message, unsupported major, invalid fields, or the errors of [`decode_response`] for a done.
@@ -292,21 +292,16 @@ pub fn decode_extract_frame(body: &[u8]) -> Result<ExtractFrame, ContractError> 
     check_version(frame.version.as_ref())?;
     match frame.frame {
         None => Err(ContractError::InvalidResponse("frame")),
-        Some(Frame::Entry(ref entry)) => {
-            if entry.path.is_empty() {
-                return Err(ContractError::InvalidResponse("entry path"));
+        Some(Frame::Entry(ref entry)) => match EntryKind::try_from(entry.kind) {
+            Ok(EntryKind::Regular) => Ok(frame),
+            Ok(EntryKind::Link | EntryKind::Special) if entry.size == 0 => Ok(frame),
+            Ok(EntryKind::Link | EntryKind::Special) => {
+                Err(ContractError::InvalidResponse("entry size"))
             }
-            match EntryKind::try_from(entry.kind) {
-                Ok(EntryKind::Regular) => Ok(frame),
-                Ok(EntryKind::Link | EntryKind::Special) if entry.size == 0 => Ok(frame),
-                Ok(EntryKind::Link | EntryKind::Special) => {
-                    Err(ContractError::InvalidResponse("entry size"))
-                }
-                Ok(EntryKind::Unspecified) | Err(_) => {
-                    Err(ContractError::InvalidResponse("entry kind"))
-                }
+            Ok(EntryKind::Unspecified) | Err(_) => {
+                Err(ContractError::InvalidResponse("entry kind"))
             }
-        }
+        },
         Some(Frame::Data(ref data)) if data.is_empty() => {
             Err(ContractError::InvalidResponse("data"))
         }

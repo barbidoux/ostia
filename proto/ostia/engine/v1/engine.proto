@@ -163,7 +163,8 @@ enum EntryKind {
 
 // One entry of a container, announced before its bytes.
 message Entry {
-  // The entry's path inside its container, as stored (`/`-separated, not necessarily UTF-8).
+  // The entry's path inside its container, as stored (`/`-separated, not necessarily UTF-8); empty when the
+  // container does not name it (a gzip member without a name: the host names it after the container).
   bytes path = 1;
   // What the entry is.
   EntryKind kind = 2;
