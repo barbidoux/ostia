@@ -26,9 +26,9 @@ use ostia_contracts::{
 use ostia_core_domain::types::DetectedType;
 use ostia_workers::extract::{Budget, Format, Header, Kind, Malformed, Sink, Stop, extract};
 
-/// Identity of this worker (CTR-03): zip, tar and gzip, version 1.
+/// Identity of this worker (CTR-03): zip, tar and gzip (version 1), then 7z, rar, cab, iso and msi (version 2).
 const ENGINE_ID: &str = "ostia-extract";
-const CONTENT_VERSION: &str = "formats-1";
+const CONTENT_VERSION: &str = "formats-2";
 
 /// The object's descriptor (ADR-03).
 const OBJECT: &str = "/proc/self/fd/3";
