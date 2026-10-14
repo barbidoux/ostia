@@ -1,6 +1,6 @@
 # ADR-18: Extraction worker — extracted objects streamed back over the worker's standard output
 
-- Status: proposed (2026-10-14; the owner chose option 1 in Q-57, the crates in Q-58, the tree driver in Q-59, the literal ratio in Q-60 and the Windows path forms in Q-61; for WP-1.9, `rars` in Q-62, the crates in Q-63 and the shared-stream ratio in Q-64)
+- Status: proposed (2026-10-14; the owner chose option 1 in Q-57, the crates in Q-58, the tree driver in Q-59, the literal ratio in Q-60 and the Windows path forms in Q-61; for WP-1.9, `rars` in Q-62, the crates in Q-63, the shared-stream ratio in Q-64, the iso rules in Q-65, the rar services in Q-66, the dictionary cap in Q-67 and the cabinet reader in Q-68)
 - Date: 2026-10-14
 - Deciders: Matthias Vaytet (owner)
 - Source: FR-06, FR-08, SEC-05, SEC-10, CTR-04; prompts/P1.md WP-1.8, WP-1.9; `docs/contracts/policy.md`
@@ -97,25 +97,38 @@ The worker's identity becomes `formats-2`. Each format keeps the rules above; wh
   cabinet folder, a solid run of rar members), each entry's ratio is the ratio of that stream: the bytes decoded
   from it so far over its packed size, checked per chunk. The container's ratio is unchanged. A bomb that
   shares a folder with incompressible bytes is diluted by them; in a folder of its own it is not.
-- **7z** (`sevenz-rust2`, Q-63): each folder is decoded once, front to back. An AES coder or an encrypted header
-  is malformed as encrypted; a coder this build lacks (PPMd, bzip2, zstd and others) as an unsupported method.
-  Empty files are entries without bytes; directories and anti-items are not entries, their paths are checked.
+- **Decoder dictionaries** (Q-67): a 7z folder or a rar member asking for a dictionary over 256 MiB is an
+  unsupported method, refused before anything is allocated.
+- **7z** (`sevenz-rust2`, Q-63): the start header's checksum is present and right and the next header ends the
+  object; each folder has one packed stream, all of them before the header; every file with bytes belongs to
+  exactly one folder, in folder order (the crate pairs a folder's sub-streams with files by position, so the
+  worker puts the files in that order before decoding). Each folder is decoded once, front to back. An AES coder
+  or an encrypted header is malformed as encrypted; a coder this build lacks (PPMd, bzip2, zstd, BCJ2 and others)
+  as an unsupported method. Empty files are entries without bytes; directories and anti-items are not entries,
+  their paths are checked, and one carrying bytes is malformed.
 - **rar** (`rars`, Q-62), one volume: its extraction writes into `'static` writers, so it runs on a helper
   thread handing each member header and chunk over a rendezvous channel; the worker's thread checks every
   limit before the sink, answers each member before it is decoded (a member larger than the remaining bytes is
-  refused then) and stops the decoder by closing the channel. Encrypted members are encrypted; a member
-  continued in another volume is malformed; a member asking for a dictionary over 1 GiB is an unsupported
-  method; redirections are `LINK` entries.
-- **cab**, read by this code (Q-63; MSZIP through `flate2`, LZX through `lzxd`): the object is the whole
-  cabinet (`cbCabinet` equals its size); a cabinet continued from or into another one is malformed; every data
-  block lies in the cabinet, decodes to at most 32 KiB and passes its checksum when it has one; the files of a
-  folder cover its decoded bytes exactly, in order (no bytes outside a file, no shared bytes). Quantum is an
-  unsupported method. `\` in names becomes `/`.
-- **iso**, read by this code (Q-63): the Joliet tree when a supplementary descriptor carries a Joliet escape,
-  else the primary tree; names lose their `;<version>` (and a primary file name its trailing dot). A both-endian
-  value whose two halves disagree, an extent outside the image or a directory reached twice is malformed;
-  multi-extent and interleaved files and extended attribute records are unsupported methods. Rock Ridge names,
-  El Torito boot images and UDF trees are not read.
+  refused then, before it is announced) and stops the decoder by closing the channel. Encrypted members are
+  encrypted; a member continued in another volume, an end block announcing one, or bytes after the end block
+  are malformed; redirections are `LINK` entries, and a directory or a link carrying bytes is malformed.
+  Service headers (Q-66): the archive comment is an entry, `[comment]`, after the members; quick-open and
+  recovery data are kept out (the crate checks them); any other service or unknown block carrying data (an
+  NTFS alternate stream, a comment attached to a file) is an unsupported method.
+- **cab**, read by this code (Q-63, Q-68; MSZIP through `flate2`, LZX through `lzxd`): the object is the whole
+  cabinet (`cbCabinet` equals its size), its header and tables followed by the folders' data blocks back to back
+  to its end; a cabinet continued from or into another one is malformed; every data block decodes to at most
+  32 KiB and passes its checksum when it has one; the files of a folder cover its decoded bytes exactly, in
+  order (no bytes outside a file, no shared bytes). Quantum is an unsupported method. `\` in names becomes `/`.
+- **iso**, read by this code (Q-63, Q-65): every tree is walked, the primary one and each supplementary one,
+  and they must list the same files (extent and size), else malformed; the entries are those of the Joliet tree
+  when there is one, else of the primary tree; names lose their `;<version>` (and a primary file name its
+  trailing dot). What this code does not read is refused (Q-65): a boot record (El Torito), a volume partition
+  descriptor or a UDF volume recognition sequence after the terminator is an unsupported method, and bytes past
+  the volume size are malformed; so bootable and UDF-bridge images are UNSCANNABLE until a reader exists. A
+  both-endian value whose two halves disagree, an extent outside the image, a directory reached twice, or more
+  directory sectors than the volume holds is malformed; multi-extent and interleaved files and extended
+  attribute records are unsupported methods. Rock Ridge names are not read (the files are those of the trees).
 - **msi** (`cfb`, Q-63): every stream of the compound file is an entry, under its storages' path and its name
   decoded from the MSI stream-name encoding, a table name shown as `!<table>`. An embedded cabinet is an entry
   the tree extracts one level deeper; cabinets outside the package are not reachable.
@@ -133,4 +146,5 @@ The worker's identity becomes `formats-2`. Each format keeps the rules above; wh
 ## Links
 
 - Q-57 (channel), Q-58 (archive crates), Q-59 (tree driver in WP-1.8), Q-60 (ratio floor), Q-61 (Windows path
-  forms), Q-62 (rar), Q-63 (crates of part 2), Q-64 (ratio of a shared stream).
+  forms), Q-62 (rar), Q-63 (crates of part 2), Q-64 (ratio of a shared stream), Q-65 (iso content), Q-66 (rar
+  services), Q-67 (dictionary cap), Q-68 (cabinet reader).

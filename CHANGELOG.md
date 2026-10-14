@@ -123,7 +123,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Extraction, part 2 (WP-1.9, ADR-18, proposed): `ostia-extract` (identity `formats-2`) also extracts 7z, rar
   (RAR 1.3 to 7, one volume), cab (stored, MSZIP, LZX), iso (Joliet, else primary names) and msi (every stream
   of the compound file; an embedded cabinet is extracted one level deeper). Entries decoded from one compressed
-  stream share its ratio (Q-64). Encrypted entries, unsupported methods, cabinet sets, cabinet files that do not
-  cover their folder, iso loops and disagreeing both-endian values are malformed. The archive builder
+  stream share its ratio (Q-64); decoder dictionaries are capped at 256 MiB (Q-67). Fail closed on what is not
+  extracted: encrypted entries, unsupported methods, bytes outside any entry (cabinet gaps, data after a 7z, rar
+  or iso), rar services other than the comment (Q-66, the comment is an entry), iso trees that disagree, boot
+  records and UDF volumes (Q-65), cabinet sets, iso loops and disagreeing both-endian values. The archive builder
   `tests/fixtures/archives.py` (standard library only) writes these formats for the tests. New dependencies
-  (Q-62, Q-63), in `ostia-workers` only: `sevenz-rust2` 0.23.0, `rars` 0.10.2, `cfb` 0.15.0, `lzxd` 0.2.7.
+  (Q-62, Q-63, Q-68), in `ostia-workers` only: `sevenz-rust2` 0.23.0, `rars` 0.10.2, `cfb` 0.15.0, `lzxd` 0.2.7.
