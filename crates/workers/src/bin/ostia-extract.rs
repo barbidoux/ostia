@@ -125,9 +125,7 @@ fn main() -> ExitCode {
         Some(format) => {
             let extracted = File::open(OBJECT)
                 .map_err(|_| Stop::Malformed(Malformed::Archive))
-                .and_then(|object| {
-                    extract(format, &mut BufReader::new(object), &limits, &mut frames)
-                });
+                .and_then(|object| extract(format, BufReader::new(object), &limits, &mut frames));
             match extracted {
                 Ok(()) => (Status::Ok, String::new(), Vec::new()),
                 Err(Stop::Limit(limit)) => (Status::Error, limit.code().to_owned(), Vec::new()),

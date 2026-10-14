@@ -3,6 +3,7 @@
 //! limit named or a finding saying why.
 
 mod archives;
+mod built;
 
 use std::io::Write as _;
 use std::path::PathBuf;
@@ -11,6 +12,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use archives::{EPOCH_1980, Member, Method, encrypted, gzip, tar, with_method, zip};
+use built::build;
 use ostia_contracts::v1::{
     AnalyzeRequest, AnalyzeResponse, ContractVersion, Entry, EntryKind, ExtractionBudget, Finding,
     Hint, Origin, Status,
@@ -36,7 +38,7 @@ fn identity() -> EngineIdentity {
     EngineIdentity {
         id: "ostia-extract".into(),
         version: "0.0.0".into(),
-        content_version: "formats-1".into(),
+        content_version: "formats-2".into(),
     }
 }
 
@@ -137,7 +139,7 @@ fn answer(
     AnalyzeResponse {
         engine_id: "ostia-extract".into(),
         engine_version: env!("CARGO_PKG_VERSION").into(),
-        content_version: "formats-1".into(),
+        content_version: "formats-2".into(),
         status: status.into(),
         hint: Hint::None.into(),
         score: None,
@@ -325,7 +327,8 @@ fn a_malformed_container_ends_the_stream_with_a_finding() {
 #[req("FR-06")]
 #[test]
 fn a_type_this_worker_does_not_extract_is_unsupported() {
-    for detected in ["pdf", "7z", "unknown", "not-a-type"] {
+    // 7z, rar, cab, iso9660 and msi are extracted since WP-1.9 (the test below).
+    for detected in ["pdf", "pe", "unknown", "not-a-type"] {
         let (run, entries) = extract(detected, b"%PDF-1.4\n", OPEN);
         assert_eq!(run.failure, None, "{detected}");
         assert_eq!(
@@ -334,6 +337,47 @@ fn a_type_this_worker_does_not_extract_is_unsupported() {
             "{detected}"
         );
         assert_eq!(entries, vec![], "{detected}");
+    }
+}
+
+#[req("FR-06", "CTR-01")]
+#[test]
+fn the_formats_of_part_two_are_streamed_through_the_host() {
+    let b = vec![0x5A; 3000];
+    let planted: [(&str, &[u8]); 2] = [("a.txt", b"alpha"), ("dir/b.bin", &b)];
+    let cabinet = build("cab", &planted, "");
+    let files = vec![("a.txt", b"alpha".to_vec()), ("dir/b.bin", b.clone())];
+    for (detected, builder, expected) in [
+        ("7z", "seven_zip", files.clone()),
+        ("rar", "rar", files.clone()),
+        ("cab", "cab", files.clone()),
+        ("iso9660", "iso", files.clone()),
+        (
+            "msi",
+            "msi",
+            vec![
+                ("product.cab", cabinet.clone()),
+                ("!_StringData", vec![]),
+                ("!_StringPool", vec![0xE4, 0x04, 0x00, 0x00]),
+            ],
+        ),
+    ] {
+        let (run, entries) = extract(detected, &build(builder, &planted, ""), OPEN);
+        assert_eq!(run.failure, None, "{detected}");
+        assert_eq!(
+            run.response,
+            answer(Status::Ok, "", vec![], &run),
+            "{detected}"
+        );
+        let got: Vec<_> = entries
+            .iter()
+            .map(|(e, bytes, complete)| (e.path.clone(), e.size, bytes.clone(), *complete))
+            .collect();
+        let expected: Vec<_> = expected
+            .into_iter()
+            .map(|(path, bytes)| (path.as_bytes().to_vec(), bytes.len() as u64, bytes, true))
+            .collect();
+        assert_eq!(got, expected, "{detected}");
     }
 }
 

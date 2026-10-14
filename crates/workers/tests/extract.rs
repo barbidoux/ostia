@@ -147,7 +147,7 @@ impl Collect {
 
 fn run(format: Format, archive: &[u8], budget: &Budget) -> (Result<(), Stop>, Collect) {
     let mut sink = Collect::default();
-    let result = extract(format, &mut Cursor::new(archive), budget, &mut sink);
+    let result = extract(format, Cursor::new(archive.to_vec()), budget, &mut sink);
     (result, sink)
 }
 
@@ -189,18 +189,20 @@ fn zeros(len: usize) -> Vec<u8> {
 
 #[req("FR-06")]
 #[test]
-fn the_formats_are_zip_tar_and_gzip() {
+fn the_formats_are_the_eight_containers_of_fr_06() {
     assert_eq!(Format::of(DetectedType::Zip), Some(Format::Zip));
     assert_eq!(Format::of(DetectedType::Tar), Some(Format::Tar));
     assert_eq!(Format::of(DetectedType::Gzip), Some(Format::Gzip));
+    assert_eq!(Format::of(DetectedType::SevenZip), Some(Format::SevenZip));
+    assert_eq!(Format::of(DetectedType::Rar), Some(Format::Rar));
+    assert_eq!(Format::of(DetectedType::Cab), Some(Format::Cab));
+    assert_eq!(Format::of(DetectedType::Iso9660), Some(Format::Iso));
+    assert_eq!(Format::of(DetectedType::Msi), Some(Format::Msi));
     for other in [
         DetectedType::Pe,
+        DetectedType::Elf,
         DetectedType::Pdf,
-        DetectedType::SevenZip,
-        DetectedType::Rar,
-        DetectedType::Cab,
-        DetectedType::Iso9660,
-        DetectedType::Msi,
+        DetectedType::Png,
         DetectedType::Unknown,
     ] {
         assert_eq!(Format::of(other), None, "{other:?}");
@@ -599,7 +601,7 @@ fn a_sink_error_stops_the_extraction() {
         refuse_data: true,
         ..Collect::default()
     };
-    let result = extract(Format::Zip, &mut Cursor::new(&archive), &OPEN, &mut sink);
+    let result = extract(Format::Zip, Cursor::new(archive), &OPEN, &mut sink);
     assert!(matches!(result, Err(Stop::Sink(_))), "{result:?}");
 }
 

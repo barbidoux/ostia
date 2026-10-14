@@ -1,4 +1,5 @@
-//! Fuzz target: the extraction worker's formats, zip, tar and gzip, under a small budget (FR-06).
+//! Fuzz target: the extraction worker's formats (zip, tar, gzip, 7z, rar, cab, iso, msi) under a small budget
+//! (FR-06).
 #![no_main]
 
 // Included by path, not through the crate's library: `crates/contracts/tests/fuzz_regressions.rs` includes

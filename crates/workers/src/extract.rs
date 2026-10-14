@@ -24,6 +24,16 @@ pub enum Format {
     Tar,
     /// `gzip` (one entry: every member, concatenated).
     Gzip,
+    /// `7z` (not extracted yet).
+    SevenZip,
+    /// `rar` (not extracted yet).
+    Rar,
+    /// `cab` (not extracted yet).
+    Cab,
+    /// `iso9660` (not extracted yet).
+    Iso,
+    /// `msi` (not extracted yet).
+    Msi,
 }
 
 impl Format {
@@ -121,9 +131,9 @@ pub enum Stop {
 ///
 /// # Errors
 /// The first limit reached, the first malformation found, or the sink's error.
-pub fn extract<R: Read + Seek>(
+pub fn extract<R: Read + Seek + Send + 'static>(
     format: Format,
-    object: &mut R,
+    mut object: R,
     budget: &Budget,
     sink: &mut dyn Sink,
 ) -> Result<(), Stop> {
@@ -139,9 +149,12 @@ pub fn extract<R: Read + Seek>(
         entries: 0,
     };
     match format {
-        Format::Zip => zip(object, &mut run),
-        Format::Tar => tar(object, &mut run),
-        Format::Gzip => gzip(object, &mut run),
+        Format::Zip => zip(&mut object, &mut run),
+        Format::Tar => tar(&mut object, &mut run),
+        Format::Gzip => gzip(&mut object, &mut run),
+        Format::SevenZip | Format::Rar | Format::Cab | Format::Iso | Format::Msi => {
+            todo!("{format:?} extraction (WP-1.9)")
+        }
     }
 }
 

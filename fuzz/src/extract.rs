@@ -13,14 +13,23 @@ const BUDGET: Budget = Budget {
     max_path_length: 256,
 };
 
-/// Extracts `data` as a zip, a tar and a gzip file.
+/// Extracts `data` as each format: zip, tar, gzip, 7z, rar, cab, iso and msi.
 ///
 /// # Panics
 /// When a property breaks: that is what the fuzzer looks for.
 pub fn exercise_extract(data: &[u8]) {
-    for format in [Format::Zip, Format::Tar, Format::Gzip] {
+    for format in [
+        Format::Zip,
+        Format::Tar,
+        Format::Gzip,
+        Format::SevenZip,
+        Format::Rar,
+        Format::Cab,
+        Format::Iso,
+        Format::Msi,
+    ] {
         let mut sink = Check::default();
-        let result = extract(format, &mut Cursor::new(data), &BUDGET, &mut sink);
+        let result = extract(format, Cursor::new(data.to_vec()), &BUDGET, &mut sink);
         assert!(
             !matches!(result, Err(Stop::Sink(_))),
             "this sink never refuses"

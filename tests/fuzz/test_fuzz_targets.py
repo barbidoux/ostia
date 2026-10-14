@@ -11,6 +11,7 @@ crash and timeout inputs (the nightly workflow uploads it on failure).
 """
 
 import gzip
+import importlib
 import io
 import os
 import re
@@ -141,7 +142,19 @@ def test_the_triage_target_runs_the_type_rules_without_crashing(tmp_path: Path) 
 
 
 def extraction_seeds() -> dict[str, bytes]:
-    """A zip (stored, deflated, a directory), a tar (file, directory, link) and a gzip member."""
+    """A zip (stored, deflated, a directory), a tar (file, directory, link), a gzip member, and a 7z, rar,
+    cab (MSZIP and LZX), iso and msi from the archive builder tests/fixtures/archives.py (WP-1.9)."""
+    builder = importlib.import_module("tests.fixtures.archives")
+    entries = [("a.txt", b"alpha" * 20), ("dir/b.bin", bytes(range(256)) * 4)]
+    built = {
+        "seed.7z": builder.seven_zip(entries),
+        "seed-folders.7z": builder.seven_zip(entries, solid=False),
+        "seed.rar": builder.rar(entries),
+        "seed.cab": builder.cab(entries),
+        "seed-lzx.cab": builder.cab(entries, compression="lzx"),
+        "seed.iso": builder.iso(entries),
+        "seed.msi": builder.msi(entries),
+    }
     zipped = io.BytesIO()
     with zipfile.ZipFile(zipped, "w") as archive:
         archive.writestr(zipfile.ZipInfo("a.txt", (1980, 1, 1, 0, 0, 0)), b"alpha" * 20)
@@ -164,6 +177,7 @@ def extraction_seeds() -> dict[str, bytes]:
         "seed.zip": zipped.getvalue(),
         "seed.tar": tarred.getvalue(),
         "seed.gz": gzip.compress(b"gzip member " * 30, mtime=0),
+        **{name: bytes(data) for name, data in built.items()},
     }
 
 
