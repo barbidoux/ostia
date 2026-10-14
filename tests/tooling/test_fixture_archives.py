@@ -280,3 +280,60 @@ def test_msi_root_carries_the_installer_class_and_its_streams() -> None:
     assert set(by_name) == {string_pool, string_data, cabinet}
     assert (by_name[string_pool]["size"], by_name[string_data]["size"]) == (4, 0)
     assert by_name[cabinet]["size"] == len(build_archive("cab", ENTRIES))
+
+
+# --- options planting what an archiver never writes (the extraction worker's malformed cases) ---------
+
+
+@pytest.mark.req("TOOLING")
+def test_seven_zip_declares_extra_sub_streams_and_a_dictionary() -> None:
+    data = BUILDER.seven_zip(ENTRIES, extra_substreams=1, lzma2_property=34)
+    offset, size, _ = struct.unpack_from("<QQI", data, 12)
+    header = data[32 + offset : 32 + offset + size]
+    assert b"\x21\x21\x01\x22" in header  # the LZMA2 coder, one property byte: 34
+    assert b"\x08\x0d\x03" in header  # three sub-streams for two files
+
+
+@pytest.mark.req("TOOLING")
+def test_rar_writes_services_directory_bytes_links_and_a_split_file() -> None:
+    headers = rar_headers(
+        BUILDER.rar(
+            ENTRIES,
+            directory_data=b"hidden",
+            links=[("soft", "a.txt")],
+            services=[("CMT", b"comment")],
+            file_services=[("STM", b"stream")],
+            split=True,
+        )
+    )
+    # Main, CMT service, dir, soft, a.txt, STM service, dir/b.bin, end.
+    assert [kind for kind, _, _ in headers] == [1, 3, 2, 2, 2, 3, 2, 5]
+    assert headers[1][1].endswith(b"CMT") and headers[1][2] == b"comment"
+    assert headers[2][1].endswith(b"dir") and headers[2][2] == b"hidden"
+    # A redirection record (size 9, type 5): Unix symbolic link, no flags, the 5-byte target.
+    assert headers[3][1].endswith(b"\x09\x05\x01\x00\x05a.txt")
+    assert headers[5][1].endswith(b"STM") and headers[5][2] == b"stream"
+    # Type 2, flags: data area (0x02) and data continuing in the next volume (0x10).
+    assert headers[6][1][:2] == b"\x02\x12"
+
+
+@pytest.mark.req("TOOLING")
+def test_cab_puts_each_entry_in_a_folder_of_its_own() -> None:
+    data = BUILDER.cab(ENTRIES, folder_per_entry=True)
+    assert struct.unpack_from("<HH", data, 26) == (2, 2)
+    assert struct.unpack_from("<I", data, 16)[0] == 36 + 2 * 8
+    # The second file: 4096 bytes at offset 0 of folder 1.
+    assert struct.unpack_from("<IIH", data, 52 + 16 + 6) == (len(B), 0, 1)
+    first, second = struct.unpack_from("<I", data, 36)[0], struct.unpack_from("<I", data, 44)[0]
+    (packed,) = struct.unpack_from("<H", data, first + 4)
+    assert second == first + 8 + packed
+
+
+@pytest.mark.req("TOOLING")
+def test_iso_writes_a_boot_record_and_a_udf_recognition_sequence() -> None:
+    data = BUILDER.iso(ENTRIES, boot_record=True, udf=True)
+    assert data[18 * 2048 : 18 * 2048 + 30] == b"\x00CD001\x01EL TORITO SPECIFICATION"
+    assert data[19 * 2048 : 19 * 2048 + 6] == b"\xffCD001"
+    ids = [data[s * 2048 + 1 : s * 2048 + 6] for s in (20, 21, 22)]
+    assert ids == [b"BEA01", b"NSR02", b"TEA01"]
+    assert iso_tree(data, 16) == {b"A.TXT;1": A, b"DIR/B.BIN;1": B}
