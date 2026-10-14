@@ -5,8 +5,8 @@
 use std::io::{self, BufReader, ErrorKind, Read, Seek, SeekFrom};
 
 use flate2::Crc;
-use flate2::bufread::MultiGzDecoder;
-use flate2::read::DeflateDecoder;
+use flate2::bufread::{DeflateDecoder, MultiGzDecoder};
+use ostia_core_domain::entry::{EntryPathError, check_entry_path};
 use ostia_core_domain::types::DetectedType;
 use ostia_core_domain::verdict::Limit;
 use tar::EntryType;
@@ -162,16 +162,14 @@ struct Run<'a> {
 impl Run<'_> {
     /// Checks a path (`unnamed`: an empty path is allowed) against the rules and the length limit.
     fn check_path(&self, path: &[u8], unnamed: bool) -> Result<(), Stop> {
-        let leaves = path.first() == Some(&b'/')
-            || path.contains(&0)
-            || path.split(|&b| b == b'/').any(|part| part == b"..");
-        if leaves || (path.is_empty() && !unnamed) {
-            return Err(Stop::Malformed(Malformed::Path));
+        match check_entry_path(path, self.budget.max_path_length) {
+            Ok(()) => Ok(()),
+            Err(EntryPathError::Empty) if unnamed => Ok(()),
+            Err(EntryPathError::Empty | EntryPathError::Leaves) => {
+                Err(Stop::Malformed(Malformed::Path))
+            }
+            Err(EntryPathError::TooLong) => Err(Stop::Limit(Limit::PathLength)),
         }
-        if path.len() > usize::try_from(self.budget.max_path_length).unwrap_or(usize::MAX) {
-            return Err(Stop::Limit(Limit::PathLength));
-        }
-        Ok(())
     }
 
     /// Announces an entry once its path, the path length and the entry count allow it.
@@ -238,12 +236,18 @@ fn over_ratio(produced: u64, compressed: u64, max_ratio: u64) -> bool {
 }
 
 fn zip<R: Read + Seek>(object: &mut R, run: &mut Run<'_>) -> Result<(), Stop> {
+    check_zip_layout(object)?;
+    object.seek(SeekFrom::Start(0)).map_err(|_| ARCHIVE)?;
     let mut archive = ZipArchive::new(object).map_err(|_| ARCHIVE)?;
     for index in 0..archive.len() {
         let (header, compressed, crc, deflated) = {
             let entry = archive.by_index_raw(index).map_err(|_| ARCHIVE)?;
             let path = entry.name_raw().to_vec();
             if entry.is_dir() {
+                // A directory has no bytes (a deflated empty stream is 2): any more is hidden data.
+                if entry.size() > 0 || entry.compressed_size() > 2 {
+                    return Err(ARCHIVE);
+                }
                 run.check_path(&path, false)?;
                 continue;
             }
@@ -255,6 +259,9 @@ fn zip<R: Read + Seek>(object: &mut R, run: &mut Run<'_>) -> Result<(), Stop> {
                 CompressionMethod::Deflated => true,
                 _ => return Err(Stop::Malformed(Malformed::Method)),
             };
+            if !deflated && entry.compressed_size() != entry.size() {
+                return Err(Stop::Malformed(Malformed::Size));
+            }
             let kind = if entry.is_symlink() {
                 Kind::Link
             } else {
@@ -285,24 +292,122 @@ fn zip<R: Read + Seek>(object: &mut R, run: &mut Run<'_>) -> Result<(), Stop> {
         };
         run.begin(&header, false)?;
         if header.kind == Kind::Regular {
-            // The raw bytes, decoded here: the size and the CRC are checked by this code, not the crate.
+            // The raw bytes, decoded here: the sizes and the CRC are checked by this code, not the crate.
             let raw = archive.by_index_raw(index).map_err(|_| ARCHIVE)?;
-            let decoded: Box<dyn Read + '_> = if deflated {
-                Box::new(DeflateDecoder::new(raw))
+            let sum = if deflated {
+                let mut decoder = DeflateDecoder::new(BufReader::new(raw));
+                let mut checked = Checked {
+                    inner: &mut decoder,
+                    crc: Crc::new(),
+                };
+                run.stream(&mut checked, compressed, header.size, Malformed::Size)?;
+                let sum = checked.crc.sum();
+                // Every declared compressed byte belongs to the stream.
+                let mut rest = decoder.into_inner();
+                let mut byte = [0_u8; 1];
+                if rest.read(&mut byte).map_err(|_| ARCHIVE)? != 0 {
+                    return Err(Stop::Malformed(Malformed::Size));
+                }
+                sum
             } else {
-                Box::new(raw)
+                let mut checked = Checked {
+                    inner: raw,
+                    crc: Crc::new(),
+                };
+                run.stream(&mut checked, compressed, header.size, Malformed::Size)?;
+                checked.crc.sum()
             };
-            let mut checked = Checked {
-                inner: decoded,
-                crc: Crc::new(),
-            };
-            run.stream(&mut checked, compressed, header.size, Malformed::Size)?;
-            if checked.crc.sum() != crc {
+            if sum != crc {
                 return Err(ARCHIVE);
             }
         }
     }
     Ok(())
+}
+
+/// One entry's place in a zip: where its local header starts, where its bytes end, what a data descriptor
+/// after them must hold.
+struct Placed {
+    start: u64,
+    end: u64,
+    crc: u32,
+    compressed: u64,
+    size: u64,
+}
+
+/// Every byte before the central directory belongs to exactly one entry: its local header, its bytes and an
+/// optional data descriptor. A name listed twice (a reader keeps one record per name), an entry listed only by
+/// its local header, bytes between entries, entries sharing bytes, a compressed size that lies: malformed.
+fn check_zip_layout<R: Read + Seek>(object: &mut R) -> Result<(), Stop> {
+    let mut archive = ZipArchive::new(&mut *object).map_err(|_| ARCHIVE)?;
+    if archive.offset() != 0 {
+        return Err(ARCHIVE);
+    }
+    let directory = archive.central_directory_start();
+    let mut placed = Vec::with_capacity(archive.len());
+    for index in 0..archive.len() {
+        let entry = archive.by_index_raw(index).map_err(|_| ARCHIVE)?;
+        let data = entry.data_start().ok_or(ARCHIVE)?;
+        placed.push(Placed {
+            start: entry.header_start(),
+            end: data.checked_add(entry.compressed_size()).ok_or(ARCHIVE)?,
+            crc: entry.crc32(),
+            compressed: entry.compressed_size(),
+            size: entry.size(),
+        });
+    }
+    drop(archive);
+    placed.sort_by_key(|entry| entry.start);
+    let mut expected = 0;
+    for (index, entry) in placed.iter().enumerate() {
+        if entry.start != expected || entry.end < entry.start {
+            return Err(ARCHIVE);
+        }
+        let next = placed.get(index + 1).map_or(directory, |next| next.start);
+        let gap = next.checked_sub(entry.end).ok_or(ARCHIVE)?;
+        if gap != 0 {
+            check_descriptor(object, entry, gap)?;
+        }
+        expected = next;
+    }
+    if expected != directory {
+        return Err(ARCHIVE);
+    }
+    Ok(())
+}
+
+/// The `gap` bytes after an entry are its data descriptor: an optional signature, its CRC, then its sizes in 32
+/// or 64 bits.
+fn check_descriptor<R: Read + Seek>(object: &mut R, entry: &Placed, gap: u64) -> Result<(), Stop> {
+    if !matches!(gap, 12 | 16 | 20 | 24) {
+        return Err(ARCHIVE);
+    }
+    let mut bytes = [0_u8; 24];
+    let bytes = bytes
+        .get_mut(..usize::try_from(gap).map_err(|_| ARCHIVE)?)
+        .ok_or(ARCHIVE)?;
+    object
+        .seek(SeekFrom::Start(entry.end))
+        .and_then(|_| object.read_exact(bytes))
+        .map_err(|_| ARCHIVE)?;
+    let body = match bytes.strip_prefix(b"PK\x07\x08") {
+        Some(body) if gap == 16 || gap == 24 => body,
+        _ if gap == 12 || gap == 20 => &bytes[..],
+        _ => return Err(ARCHIVE),
+    };
+    let field = |at: usize, len: usize| -> Option<u64> {
+        let raw = body.get(at..at + len)?;
+        Some(
+            raw.iter()
+                .rev()
+                .fold(0_u64, |value, &byte| (value << 8) | u64::from(byte)),
+        )
+    };
+    let width = if body.len() == 12 { 4 } else { 8 };
+    let matches = field(0, 4) == Some(u64::from(entry.crc))
+        && field(4, width) == Some(entry.compressed)
+        && field(4 + width, width) == Some(entry.size);
+    if matches { Ok(()) } else { Err(ARCHIVE) }
 }
 
 /// A reader computing the CRC-32 of the bytes it hands out.
@@ -335,11 +440,20 @@ fn epoch_seconds(year: u16, month: u8, day: u8, hour: u8, minute: u8, second: u8
 }
 
 fn tar<R: Read>(object: &mut R, run: &mut Run<'_>) -> Result<(), Stop> {
-    let mut archive = tar::Archive::new(object);
+    let mut archive = tar::Archive::new(&mut *object);
     for entry in archive.entries().map_err(|_| ARCHIVE)? {
         let mut entry = entry.map_err(|_| ARCHIVE)?;
         let path = entry.path_bytes().into_owned();
-        let kind = match entry.header().entry_type() {
+        let entry_type = entry.header().entry_type();
+        // Only a regular member carries bytes: any in a directory, link or special member is hidden data.
+        let regular = matches!(
+            entry_type,
+            EntryType::Regular | EntryType::Continuous | EntryType::GNUSparse
+        );
+        if !regular && entry_type != EntryType::XGlobalHeader && entry.size() > 0 {
+            return Err(ARCHIVE);
+        }
+        let kind = match entry_type {
             EntryType::Regular | EntryType::Continuous | EntryType::GNUSparse => Kind::Regular,
             EntryType::Symlink | EntryType::Link => Kind::Link,
             EntryType::Char | EntryType::Block | EntryType::Fifo => Kind::Special,
@@ -373,7 +487,21 @@ fn tar<R: Read>(object: &mut R, run: &mut Run<'_>) -> Result<(), Stop> {
             run.stream(&mut entry, compressed, size, Malformed::Archive)?;
         }
     }
-    Ok(())
+    // After the end marker, only zeros (the second zero block, record padding).
+    let object = archive.into_inner();
+    let mut rest = vec![0_u8; CHUNK];
+    loop {
+        match object.read(&mut rest) {
+            Ok(0) => return Ok(()),
+            Ok(read) => {
+                if rest.get(..read).unwrap_or_default().iter().any(|&b| b != 0) {
+                    return Err(ARCHIVE);
+                }
+            }
+            Err(error) if error.kind() == ErrorKind::Interrupted => {}
+            Err(_) => return Err(ARCHIVE),
+        }
+    }
 }
 
 /// A gzip file is one entry: every member, concatenated, as gunzip reads them. Its size is not recorded

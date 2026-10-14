@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use ostia_contracts::current_version;
 use ostia_contracts::v1::{AnalyzeRequest, Entry, EntryKind, ExtractionBudget, Origin, Status};
+use ostia_core_domain::entry::{EntryPathError, check_entry_path};
 use ostia_core_domain::object::Kind;
 use ostia_core_domain::policy::{Failure, Limits};
 use ostia_core_domain::types::DetectedType;
@@ -241,10 +242,12 @@ impl<L: Launcher> Run<'_, '_, L> {
         });
         let mut sink = Collect {
             workspace,
+            max_path_length: limits.max_path_length,
             received: Vec::new(),
             current: None,
             entries: 0,
             bytes: 0,
+            refused: None,
         };
         let extract = self.workers.extract;
         let run = self.workers.host.extract(
@@ -257,6 +260,9 @@ impl<L: Launcher> Run<'_, '_, L> {
         // What the host received counts, kept or not.
         self.used_entries = self.used_entries.saturating_add(sink.entries);
         self.used_bytes = self.used_bytes.saturating_add(sink.bytes);
+        if let Some(failure) = sink.refused {
+            return Err(failure);
+        }
         match run.failure {
             Some(RunFailure::Stream(StreamFault::TooManyEntries)) => {
                 Err(Failure::Limit(Limit::EntryCount))
@@ -265,7 +271,13 @@ impl<L: Launcher> Run<'_, '_, L> {
                 Err(Failure::Limit(Limit::TotalSize))
             }
             Some(_) => Err(Failure::Malformed),
-            None if run.response.status == i32::from(Status::Ok) => Ok(sink.received),
+            // An OK that names a limit contradicts itself.
+            None if run.response.status == i32::from(Status::Ok)
+                && run.response.limit.is_empty() =>
+            {
+                Ok(sink.received)
+            }
+            None if run.response.status == i32::from(Status::Ok) => Err(Failure::Malformed),
             None => Err(limit(&run.response.limit).map_or(Failure::Malformed, Failure::Limit)),
         }
     }
@@ -349,16 +361,30 @@ fn without_extension(name: &[u8]) -> &[u8] {
 /// Receives the entries of one extraction, copying regular files into the workspace as they stream.
 struct Collect<'a> {
     workspace: &'a mut Workspace,
+    /// The policy's limit on entry paths: the worker is not trusted to have applied it.
+    max_path_length: u32,
     received: Vec<Received>,
     /// The entry being received and its copy, if it is a regular file.
     current: Option<(Received, Option<Copy>)>,
     entries: u64,
     bytes: u64,
+    /// Why this sink stopped the extraction, when a path broke the rules (Q-61) or the length limit.
+    refused: Option<Failure>,
 }
 
 impl EntrySink for Collect<'_> {
     fn entry(&mut self, entry: &Entry) -> std::io::Result<()> {
         self.entries += 1;
+        // Empty: a member its container does not name (gzip), named after the container.
+        let refused = match check_entry_path(&entry.path, self.max_path_length) {
+            Ok(()) | Err(EntryPathError::Empty) => None,
+            Err(EntryPathError::Leaves) => Some(Failure::Malformed),
+            Err(EntryPathError::TooLong) => Some(Failure::Limit(Limit::PathLength)),
+        };
+        if let Some(failure) = refused {
+            self.refused = Some(failure);
+            return Err(std::io::Error::other("entry path refused"));
+        }
         let kind = match EntryKind::try_from(entry.kind) {
             Ok(EntryKind::Regular) => Kind::File,
             Ok(EntryKind::Link) => Kind::Symlink,
