@@ -104,12 +104,22 @@ def _seven_zip_pack(data: bytes, coder: str) -> bytes:
     return data
 
 
-def seven_zip(entries: Entries, *, coder: str = "lzma2", solid: bool = True) -> bytes:
+def seven_zip(
+    entries: Entries,
+    *,
+    coder: str = "lzma2",
+    solid: bool = True,
+    extra_substreams: int = 0,
+    lzma2_property: int | None = None,
+) -> bytes:
     """A 7z archive of `entries`, one folder for all (`solid`) or one per non-empty entry (see the module
-    docstring)."""
+    docstring). Also: the last folder declaring `extra_substreams` empty sub-streams no file takes; the LZMA2
+    dictionary property byte declared as `lzma2_property` (the stream is still coded with 1 MiB)."""
     if coder not in SEVEN_ZIP_CODERS:
         raise ArchiveRequestError(f"unknown 7z coder {coder!r}")
     coder_id, properties = SEVEN_ZIP_CODERS[coder]
+    if lzma2_property is not None:
+        properties = bytes([lzma2_property])
     items: list[tuple[str, bytes | None]] = [(d, None) for d in _directories(entries)]
     items += [(path, content) for path, content in entries]
     streams = [content for _, content in items if content]
@@ -128,10 +138,19 @@ def seven_zip(entries: Entries, *, coder: str = "lzma2", solid: bool = True) -> 
             folder += _number(len(properties)) + properties
         header += b"\x07\x0b" + _number(len(folders)) + b"\x00" + folder * len(folders)
         header += b"\x0c" + b"".join(_number(sum(map(len, f))) for f in folders) + b"\x00"
-        header += b"\x08\x0d" + b"".join(_number(len(f)) for f in folders)
-        if any(len(f) > 1 for f in folders):
-            header += b"\x09" + b"".join(_number(len(s)) for f in folders for s in f[:-1])
-        header += b"\x0a\x01" + b"".join(struct.pack("<I", zlib.crc32(s)) for s in streams)
+        counts = [len(f) for f in folders]
+        counts[-1] += extra_substreams
+        header += b"\x08\x0d" + b"".join(_number(c) for c in counts)
+        # Each folder lists all its sub-stream sizes but the last, which is what remains.
+        listed = [
+            size
+            for f, c in zip(folders, counts, strict=True)
+            for size in ([len(s) for s in f] + [0] * (c - len(f)))[:-1]
+        ]
+        if listed:
+            header += b"\x09" + b"".join(_number(size) for size in listed)
+        crcs = [zlib.crc32(s) for s in streams] + [0] * extra_substreams
+        header += b"\x0a\x01" + b"".join(struct.pack("<I", crc) for crc in crcs)
         header += b"\x00\x00"  # end of SubStreamsInfo, of MainStreamsInfo
     header += b"\x05" + _number(len(items))  # FilesInfo
     empty = [not content for _, content in items]
@@ -172,9 +191,11 @@ def _vint(value: int) -> bytes:
             return bytes(out)
 
 
-def _rar_header(kind: int, body: bytes, *, extra: bytes = b"", data: int | None = None) -> bytes:
+def _rar_header(
+    kind: int, body: bytes, *, extra: bytes = b"", data: int | None = None, flags: int = 0
+) -> bytes:
     """A RAR5 header block: CRC32, size, type, flags, extra area size, data size, body, extra area."""
-    flags = (0x01 if extra else 0) | (0x02 if data is not None else 0)
+    flags |= (0x01 if extra else 0) | (0x02 if data is not None else 0)
     fields = _vint(kind) + _vint(flags)
     if extra:
         fields += _vint(len(extra))
@@ -185,17 +206,52 @@ def _rar_header(kind: int, body: bytes, *, extra: bytes = b"", data: int | None 
     return struct.pack("<I", zlib.crc32(sized)) + sized
 
 
-def rar(entries: Entries, *, encrypted: bool = False) -> bytes:
-    """A RAR5 archive of `entries`, stored (see the module docstring)."""
+def _rar_stored(kind: int, name: bytes, content: bytes, *, flags: int = 0) -> bytes:
+    """A stored file (2) or service (3) header with its CRC and its data."""
+    body = _vint(0x04) + _vint(len(content)) + _vint(0o100644)
+    body += struct.pack("<I", zlib.crc32(content))
+    body += _vint(0) + _vint(1) + _vint(len(name)) + name
+    return _rar_header(kind, body, data=len(content), flags=flags) + content
+
+
+def rar(
+    entries: Entries,
+    *,
+    encrypted: bool = False,
+    directory_data: bytes = b"",
+    links: Sequence[tuple[str, str]] = (),
+    link_data: bytes = b"",
+    services: Sequence[tuple[str, bytes]] = (),
+    file_services: Sequence[tuple[str, bytes]] = (),
+    split: bool = False,
+) -> bytes:
+    """A RAR5 archive of `entries`, stored (see the module docstring). Also: `directory_data` in each
+    directory header's data area; `links` (name, target) as Unix symbolic link members (redirection records),
+    carrying `link_data`; `services` (name, data) as service headers before the files, `file_services` after
+    the first file; with `split`, the last file continues in a next volume."""
     out = bytearray(RAR5_SIGNATURE)
     out += _rar_header(1, _vint(0))  # main archive header
     unix = 1
+    for service, data in services:
+        out += _rar_stored(3, service.encode(), data)
     for directory in _directories(entries):
         name = directory.encode()
         body = _vint(0x01 | 0x02) + _vint(0) + _vint(0o40755) + struct.pack("<I", EPOCH_1980)
         body += _vint(0) + _vint(unix) + _vint(len(name)) + name
-        out += _rar_header(2, body)
-    for path, content in entries:
+        out += _rar_header(2, body, data=len(directory_data) if directory_data else None)
+        out += directory_data
+    for link, target in links:
+        name = link.encode()
+        body = _vint(0) + _vint(0) + _vint(0o120777) + _vint(0) + _vint(unix)
+        body += _vint(len(name)) + name
+        record = _vint(0x05) + _vint(1) + _vint(0) + _vint(len(target.encode())) + target.encode()
+        extra = _vint(len(record)) + record
+        out += _rar_header(2, body, extra=extra, data=len(link_data) if link_data else None)
+        out += link_data
+    for index, (path, content) in enumerate(entries):
+        if split and index == len(entries) - 1:
+            out += _rar_stored(2, path.encode(), content, flags=0x10)
+            continue
         name = path.encode()
         body = _vint(0x02 | 0x04) + _vint(len(content)) + _vint(0o100644)
         body += struct.pack("<II", EPOCH_1980, zlib.crc32(content))
@@ -207,6 +263,9 @@ def rar(entries: Entries, *, encrypted: bool = False) -> bytes:
             extra = _vint(len(record)) + record
             payload = content + bytes(-len(content) % 16)
         out += _rar_header(2, body, extra=extra, data=len(payload)) + payload
+        if index == 0:
+            for service, data in file_services:
+                out += _rar_stored(3, service.encode(), data)
     out += _rar_header(5, _vint(0))  # end of archive
     return bytes(out)
 
@@ -251,36 +310,43 @@ def _cab_block(chunk: bytes, compression: str, first: bool) -> bytes:
     return chunk
 
 
-def cab(entries: Entries, *, compression: str = "mszip") -> bytes:
-    """A cabinet of `entries` in one folder (see the module docstring)."""
+def cab(entries: Entries, *, compression: str = "mszip", folder_per_entry: bool = False) -> bytes:
+    """A cabinet of `entries` in one folder, or one folder per entry (see the module docstring)."""
     if compression not in CAB_COMPRESSION:
         raise ArchiveRequestError(f"unknown cab compression {compression!r}")
+    groups = [[entry] for entry in entries] if folder_per_entry else [list(entries)]
     files = bytearray()
-    offset = 0
-    for path, content in entries:
-        name = path.replace("/", "\\").encode()
-        attributes = 0x20 | (0x80 if not name.isascii() else 0)
-        files += struct.pack("<IIHHHH", len(content), offset, 0, DOS_DATE_1980, 0, attributes)
-        files += name + b"\x00"
-        offset += len(content)
-    data = b"".join(content for _, content in entries)
-    blocks = bytearray()
-    count = 0
-    for start in range(0, len(data), CAB_FRAME):
-        chunk = data[start : start + CAB_FRAME]
-        packed = _cab_block(chunk, compression, start == 0)
-        sizes = struct.pack("<HH", len(packed), len(chunk))
-        checksum = cab_checksum(sizes, cab_checksum(packed))
-        blocks += struct.pack("<I", checksum) + sizes + packed
-        count += 1
-    files_at = 36 + 8
+    for index, group in enumerate(groups):
+        offset = 0
+        for path, content in group:
+            name = path.replace("/", "\\").encode()
+            attributes = 0x20 | (0x80 if not name.isascii() else 0)
+            files += struct.pack(
+                "<IIHHHH", len(content), offset, index, DOS_DATE_1980, 0, attributes
+            )
+            files += name + b"\x00"
+            offset += len(content)
+    files_at = 36 + 8 * len(groups)
     data_at = files_at + len(files)
+    folders = bytearray()
+    blocks = bytearray()
+    for group in groups:
+        data = b"".join(content for _, content in group)
+        count = 0
+        first = data_at + len(blocks)
+        for start in range(0, len(data), CAB_FRAME):
+            chunk = data[start : start + CAB_FRAME]
+            packed = _cab_block(chunk, compression, start == 0)
+            sizes = struct.pack("<HH", len(packed), len(chunk))
+            checksum = cab_checksum(sizes, cab_checksum(packed))
+            blocks += struct.pack("<I", checksum) + sizes + packed
+            count += 1
+        folders += struct.pack("<IHH", first, count, CAB_COMPRESSION[compression])
     total = data_at + len(blocks)
     header = b"MSCF" + struct.pack(
-        "<IIIIIBBHHHHH", 0, total, 0, files_at, 0, 3, 1, 1, len(entries), 0, 0x05A1, 0
+        "<IIIIIBBHHHHH", 0, total, 0, files_at, 0, 3, 1, len(groups), len(entries), 0, 0x05A1, 0
     )
-    folder = struct.pack("<IHH", data_at, count, CAB_COMPRESSION[compression])
-    return header + folder + bytes(files) + bytes(blocks)
+    return header + bytes(folders) + bytes(files) + bytes(blocks)
 
 
 # --- ISO 9660 ----------------------------------------------------------------------------------------
@@ -429,8 +495,11 @@ def _padded(value: str, size: int, joliet: bool) -> bytes:
     return value.encode().ljust(size, b" ")
 
 
-def iso(entries: Entries, *, joliet: bool = True) -> bytes:
-    """An ISO 9660 image of `entries` (see the module docstring)."""
+def iso(
+    entries: Entries, *, joliet: bool = True, boot_record: bool = False, udf: bool = False
+) -> bytes:
+    """An ISO 9660 image of `entries` (see the module docstring); `boot_record` adds an El Torito boot record
+    descriptor, `udf` a UDF volume recognition sequence (BEA01, NSR02, TEA01) after the terminator."""
     root = _Node("")
     for path, content in entries:
         node = root
@@ -441,8 +510,9 @@ def iso(entries: Entries, *, joliet: bool = True) -> bytes:
     order = _walk(root)
     trees = [False, True] if joliet else [False]
 
-    descriptors = 1 + len(trees)  # PVD, SVD, terminator
-    cursor = 16 + descriptors
+    descriptors = 1 + len(trees) + boot_record  # PVD, SVD, boot record, terminator
+    recognition = [b"BEA01", b"NSR02", b"TEA01"] if udf else []
+    cursor = 16 + descriptors + len(recognition)
     tables: dict[bool, tuple[int, int, int]] = {}
     for tree in trees:
         for node in order:
@@ -468,7 +538,12 @@ def iso(entries: Entries, *, joliet: bool = True) -> bytes:
     image += _descriptor(1, root, False, tables[False], total)
     if joliet:
         image += _descriptor(2, root, True, tables[True], total)
+    if boot_record:
+        system = b"EL TORITO SPECIFICATION".ljust(32, b"\x00")
+        image += (bytes([0]) + b"CD001\x01" + system + bytes(32)).ljust(SECTOR, b"\x00")
     image += bytes([255]) + b"CD001\x01" + bytes(SECTOR - 7)
+    for identifier in recognition:
+        image += (bytes([0]) + identifier + b"\x01").ljust(SECTOR, b"\x00")
     for tree in trees:
         size = tables[tree][0]
         image += _path_table(order, tree, False).ljust(_sectors(size) * SECTOR, b"\x00")
