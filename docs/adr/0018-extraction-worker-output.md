@@ -1,6 +1,6 @@
 # ADR-18: Extraction worker — extracted objects streamed back over the worker's standard output
 
-- Status: proposed (2026-10-14; the owner chose option 1 in Q-57, the crates in Q-58, the tree driver in Q-59 and the literal ratio in Q-60)
+- Status: proposed (2026-10-14; the owner chose option 1 in Q-57, the crates in Q-58, the tree driver in Q-59, the literal ratio in Q-60 and the Windows path forms in Q-61)
 - Date: 2026-10-14
 - Deciders: Matthias Vaytet (owner)
 - Source: FR-06, FR-08, SEC-05, SEC-10, CTR-04; prompts/P1.md WP-1.8, WP-1.9; `docs/contracts/policy.md`
@@ -66,10 +66,18 @@ the total size and entry count whatever the worker claims.
     with its limit, or as malformed: a worker `ERROR` without a known limit name, `UNSUPPORTED` (a container
     type without an extractor yet, 7z to msi before WP-1.9), a crash, a timeout or a protocol fault.
   - What it received counts against the tree's budget, kept or not.
+  - It checks every entry path again with the same rule (a compromised worker is not trusted with them), and
+    refuses a final `OK` that names a limit.
 - **Worker**: it enforces the ratio per entry and per container, the path length, the remaining budget, and
   the declared sizes. It refuses as malformed:
   - an encrypted entry, or one compressed with another method than stored or deflated (zip);
-  - an entry path that is absolute, has a `..` component or holds a NUL byte;
+  - an entry path that leaves its container: absolute, with a `..` component, a NUL byte, in Unix or Windows
+    form, or naming a Windows device (Q-61, `ostia_core_domain::entry::check_entry_path`);
+  - a zip whose bytes before the central directory do not each belong to exactly one entry (its local header,
+    its bytes, an optional data descriptor): a name listed twice, an entry listed only by its local header,
+    bytes between entries, entries sharing bytes, a compressed size that lies; a deflate stream that does not
+    consume every declared byte;
+  - a directory, link or special entry carrying bytes; anything but zeros after a tar's end marker;
   - sizes that do not match the declared ones;
   - a truncated or corrupt stream.
 
