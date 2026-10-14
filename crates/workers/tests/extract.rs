@@ -360,13 +360,9 @@ fn an_entry_over_the_ratio_is_stopped_while_streaming() {
         matches!(result, Err(Stop::Limit(Limit::Ratio))),
         "{result:?}"
     );
-    // Never more than the limit allows, plus one chunk.
+    // A chunk that would breach the limit never reaches the sink: no slack.
     let compressed = archive.len();
-    assert!(
-        sink.produced() <= 100 * compressed + CHUNK,
-        "{}",
-        sink.produced()
-    );
+    assert!(sink.produced() <= 100 * compressed, "{}", sink.produced());
 }
 
 #[req("FR-06")]
@@ -396,18 +392,23 @@ fn gzip_over_the_ratio_is_stopped() {
         matches!(result, Err(Stop::Limit(Limit::Ratio))),
         "{result:?}"
     );
-    assert!(sink.produced() <= 100 * archive.len() + CHUNK);
+    // The first pass counts under the limits: nothing reaches the sink.
+    assert_eq!(sink.entries.len(), 0);
 }
 
 #[req("FR-06")]
 #[test]
-fn overlapping_entries_breach_the_container_ratio() {
-    // Each entry: 64 KiB from about 90 bytes (under 1000); the container: 200 times that from a few kB.
+fn overlapping_entries_are_malformed() {
+    // Each entry: 64 KiB from about 90 bytes (under 1000); together, 200 times that from a few kB. Entries
+    // sharing their bytes are refused before any ratio is reached, whatever the budget.
     let archive = overlapping(&zeros(64 * 1024), 200);
-    let found = limit(Format::Zip, &archive, &budget(|b| b.max_ratio = 1000));
-    assert_eq!(found, Some(Limit::Ratio));
-    // The same archive under an open budget is extracted whole: the entries are readable.
-    assert_eq!(entries(Format::Zip, &archive).len(), 200);
+    assert_eq!(malformed(Format::Zip, &archive), Some(Malformed::Archive));
+    let (result, sink) = run(Format::Zip, &archive, &budget(|b| b.max_ratio = 1000));
+    assert!(
+        matches!(result, Err(Stop::Malformed(Malformed::Archive))),
+        "{result:?}"
+    );
+    assert_eq!(sink.entries.len(), 0);
 }
 
 #[req("FR-06")]
@@ -600,4 +601,381 @@ fn a_sink_error_stops_the_extraction() {
     };
     let result = extract(Format::Zip, &mut Cursor::new(&archive), &OPEN, &mut sink);
     assert!(matches!(result, Err(Stop::Sink(_))), "{result:?}");
+}
+
+// --- zip layouts the writer refuses to produce (review of WP-1.8) ------------------------------------
+
+/// One entry of a hand-written zip.
+struct Raw {
+    name: Vec<u8>,
+    /// 0 stored, 8 deflated.
+    method: u16,
+    /// The bytes as stored in the archive.
+    stored: Vec<u8>,
+    /// CRC-32 and size of the content.
+    crc: u32,
+    size: u32,
+    /// The compressed size the headers declare (normally `stored.len()`).
+    declared: u32,
+    /// A data descriptor (with its signature) follows the bytes.
+    descriptor: bool,
+    /// The central directory lists the entry.
+    listed: bool,
+    /// Bytes after the entry (and its descriptor), before the next one.
+    gap: Vec<u8>,
+}
+
+impl Raw {
+    fn stored(name: &[u8], content: &[u8]) -> Self {
+        let mut crc = Crc::new();
+        crc.update(content);
+        let size = u32::try_from(content.len()).expect("size");
+        Self {
+            name: name.to_vec(),
+            method: 0,
+            stored: content.to_vec(),
+            crc: crc.sum(),
+            size,
+            declared: size,
+            descriptor: false,
+            listed: true,
+            gap: Vec::new(),
+        }
+    }
+
+    fn deflated(name: &[u8], content: &[u8]) -> Self {
+        let mut encoder = DeflateEncoder::new(Vec::new(), Compression::best());
+        encoder.write_all(content).expect("deflate");
+        let stored = encoder.finish().expect("deflate");
+        let declared = u32::try_from(stored.len()).expect("size");
+        Self {
+            method: 8,
+            stored,
+            declared,
+            ..Self::stored(name, content)
+        }
+    }
+}
+
+fn u16le(out: &mut Vec<u8>, value: u16) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn u32le(out: &mut Vec<u8>, value: u32) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+/// The zip of `entries`, laid out as described, with a central directory for the listed ones.
+fn raw_zip(entries: &[Raw]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut offsets = Vec::new();
+    for entry in entries {
+        offsets.push(u32::try_from(out.len()).expect("offset"));
+        out.extend_from_slice(b"PK\x03\x04");
+        u16le(&mut out, 20);
+        u16le(&mut out, if entry.descriptor { 8 } else { 0 });
+        u16le(&mut out, entry.method);
+        u16le(&mut out, 0);
+        u16le(&mut out, 0x21);
+        u32le(&mut out, entry.crc);
+        u32le(&mut out, entry.declared);
+        u32le(&mut out, entry.size);
+        u16le(&mut out, u16::try_from(entry.name.len()).expect("name"));
+        u16le(&mut out, 0);
+        out.extend_from_slice(&entry.name);
+        out.extend_from_slice(&entry.stored);
+        if entry.descriptor {
+            out.extend_from_slice(b"PK\x07\x08");
+            u32le(&mut out, entry.crc);
+            u32le(&mut out, entry.declared);
+            u32le(&mut out, entry.size);
+        }
+        out.extend_from_slice(&entry.gap);
+    }
+    let directory = u32::try_from(out.len()).expect("offset");
+    let mut listed: u16 = 0;
+    for (entry, offset) in entries.iter().zip(offsets) {
+        if !entry.listed {
+            continue;
+        }
+        listed += 1;
+        out.extend_from_slice(b"PK\x01\x02");
+        u16le(&mut out, 20);
+        u16le(&mut out, 20);
+        u16le(&mut out, if entry.descriptor { 8 } else { 0 });
+        u16le(&mut out, entry.method);
+        u16le(&mut out, 0);
+        u16le(&mut out, 0x21);
+        u32le(&mut out, entry.crc);
+        u32le(&mut out, entry.declared);
+        u32le(&mut out, entry.size);
+        u16le(&mut out, u16::try_from(entry.name.len()).expect("name"));
+        out.extend_from_slice(&[0; 8]); // extra, comment, disk, internal attributes
+        u32le(&mut out, 0); // external attributes
+        u32le(&mut out, offset);
+        out.extend_from_slice(&entry.name);
+    }
+    let length = u32::try_from(out.len()).expect("size") - directory;
+    out.extend_from_slice(b"PK\x05\x06");
+    out.extend_from_slice(&[0; 4]);
+    u16le(&mut out, listed);
+    u16le(&mut out, listed);
+    u32le(&mut out, length);
+    u32le(&mut out, directory);
+    u16le(&mut out, 0);
+    out
+}
+
+#[req("FR-06")]
+#[test]
+fn a_hand_written_zip_with_a_data_descriptor_is_extracted() {
+    // The control for the layout checks below: every byte belongs to an entry, a descriptor or the directory.
+    let archive = raw_zip(&[
+        Raw {
+            descriptor: true,
+            ..Raw::deflated(b"a.txt", &b"alpha ".repeat(50))
+        },
+        Raw::stored(b"b.txt", b"beta"),
+    ]);
+    let found = entries(Format::Zip, &archive);
+    assert_eq!(found.len(), 2);
+    assert_eq!(found[0].1, b"alpha ".repeat(50));
+    assert_eq!(found[1].1, b"beta");
+}
+
+#[req("FR-06")]
+#[test]
+fn a_name_listed_twice_is_malformed() {
+    // A reader keeping one record per name would scan only the second; desktop tools show both.
+    let archive = raw_zip(&[
+        Raw::stored(b"a.txt", b"MALICIOUS-FIRST"),
+        Raw::stored(b"a.txt", b"benign-second"),
+    ]);
+    assert_eq!(malformed(Format::Zip, &archive), Some(Malformed::Archive));
+}
+
+#[req("FR-06")]
+#[test]
+fn bytes_no_central_record_accounts_for_are_malformed() {
+    // An entry with a local header only: streaming readers extract it.
+    let unlisted = raw_zip(&[
+        Raw::stored(b"seen.txt", b"seen"),
+        Raw {
+            listed: false,
+            ..Raw::stored(b"hidden.exe", b"MZ hidden")
+        },
+    ]);
+    assert_eq!(malformed(Format::Zip, &unlisted), Some(Malformed::Archive));
+    // Bytes between two entries, even descriptor-sized ones that are not a descriptor.
+    for gap in [b"hidden payload between entries".to_vec(), vec![0x41; 16]] {
+        let gapped = raw_zip(&[
+            Raw {
+                gap,
+                ..Raw::stored(b"a.txt", b"a")
+            },
+            Raw::stored(b"b.txt", b"b"),
+        ]);
+        assert_eq!(malformed(Format::Zip, &gapped), Some(Malformed::Archive));
+    }
+}
+
+#[req("FR-06")]
+#[test]
+fn a_lying_compressed_size_is_malformed() {
+    // Larger than the bytes (the entry would swallow the next one), then smaller (a gap left behind).
+    let zeros = zeros(1 << 20);
+    for delta in [200_000_i64, -40] {
+        let mut bomb = Raw::deflated(b"zeros.bin", &zeros);
+        bomb.declared = u32::try_from(i64::from(bomb.declared) + delta).expect("size");
+        let archive = raw_zip(&[bomb, Raw::stored(b"pad.bin", &vec![9; 300_000])]);
+        assert_eq!(
+            malformed(Format::Zip, &archive),
+            Some(Malformed::Archive),
+            "{delta}"
+        );
+    }
+}
+
+#[req("FR-06")]
+#[test]
+fn a_deflate_stream_ending_before_its_compressed_size_is_malformed() {
+    // The sizes and the layout agree, but the stream's last block comes before its last declared byte.
+    let mut entry = Raw::deflated(b"a.txt", &b"text ".repeat(100));
+    entry.stored.extend_from_slice(&[0x55; 100]);
+    entry.declared = u32::try_from(entry.stored.len()).expect("size");
+    assert_eq!(
+        malformed(Format::Zip, &raw_zip(&[entry])),
+        Some(Malformed::Size)
+    );
+}
+
+#[req("FR-06")]
+#[test]
+fn a_stored_entry_whose_sizes_differ_is_malformed() {
+    let mut entry = Raw::stored(b"a.txt", b"abcdef");
+    entry.size = 4;
+    assert_eq!(
+        malformed(Format::Zip, &raw_zip(&[entry])),
+        Some(Malformed::Size)
+    );
+}
+
+#[req("FR-06")]
+#[test]
+fn a_bad_crc_alone_is_malformed() {
+    // A stored entry with one byte changed: sizes and layout intact, only the CRC tells.
+    let mut entry = Raw::stored(b"a.txt", b"original content");
+    entry.stored[3] ^= 0x20;
+    assert_eq!(
+        malformed(Format::Zip, &raw_zip(&[entry])),
+        Some(Malformed::Archive)
+    );
+}
+
+#[req("FR-06")]
+#[test]
+fn a_directory_entry_carrying_bytes_is_malformed() {
+    // A name ending in `\` reads as a directory, yet Unix extractors write it as a file.
+    let zipped = raw_zip(&[Raw::stored(b"payload.exe\\", b"MZ payload")]);
+    assert_eq!(malformed(Format::Zip, &zipped), Some(Malformed::Archive));
+    let zipped = raw_zip(&[Raw::stored(b"dir/", b"32 bytes hidden in a directory..")]);
+    assert_eq!(malformed(Format::Zip, &zipped), Some(Malformed::Archive));
+    let member = Member {
+        flag: b'5',
+        ..Member::file(b"dir/", b"bytes in a directory member")
+    };
+    assert_eq!(
+        malformed(Format::Tar, &tar(&[member])),
+        Some(Malformed::Archive)
+    );
+}
+
+#[req("FR-06")]
+#[test]
+fn an_empty_entry_name_is_malformed() {
+    let zipped = raw_zip(&[Raw::stored(b"", b"no name")]);
+    assert_eq!(malformed(Format::Zip, &zipped), Some(Malformed::Path));
+    assert_eq!(
+        malformed(Format::Tar, &tar(&[Member::file(b"", b"no name")])),
+        Some(Malformed::Path)
+    );
+}
+
+#[req("FR-06")]
+#[test]
+fn windows_forms_of_paths_and_device_names_are_malformed() {
+    // Q-61: `\` separates components too; drive letters, UNC prefixes and device names are refused.
+    for name in [
+        "..\\..\\evil.exe",
+        "C:\\evil.exe",
+        "c:evil.exe",
+        "\\\\host\\share\\evil.exe",
+        "dir\\..\\..\\evil.exe",
+        "CON",
+        "aux.txt",
+    ] {
+        let zipped = raw_zip(&[Raw::stored(name.as_bytes(), b"x")]);
+        assert_eq!(
+            malformed(Format::Zip, &zipped),
+            Some(Malformed::Path),
+            "{name}"
+        );
+        let member = tar(&[Member::file(name.as_bytes(), b"x")]);
+        assert_eq!(
+            malformed(Format::Tar, &member),
+            Some(Malformed::Path),
+            "tar {name}"
+        );
+    }
+}
+
+#[req("FR-06")]
+#[test]
+fn directory_paths_are_held_to_the_rules_too() {
+    let leaving = tar(&[Member::bare(b"../dir/", b'5', b"")]);
+    assert_eq!(malformed(Format::Tar, &leaving), Some(Malformed::Path));
+    let long = tar(&[Member::bare(b"abcdefghij/", b'5', b"")]);
+    assert_eq!(
+        limit(Format::Tar, &long, &budget(|b| b.max_path_length = 8)),
+        Some(Limit::PathLength)
+    );
+}
+
+#[req("FR-06")]
+#[test]
+fn a_pax_path_leaving_the_container_is_malformed() {
+    let mut builder = tar::Builder::new(Vec::new());
+    builder
+        .append_pax_extensions([("path", b"../evil.txt".as_slice())])
+        .expect("pax");
+    let mut header = tar::Header::new_ustar();
+    header.set_size(1);
+    header.set_mode(0o644);
+    header.set_entry_type(tar::EntryType::Regular);
+    builder
+        .append_data(&mut header, "harmless.txt", b"x".as_slice())
+        .expect("member");
+    let archive = builder.into_inner().expect("archive");
+    assert_eq!(malformed(Format::Tar, &archive), Some(Malformed::Path));
+}
+
+#[req("FR-06")]
+#[test]
+fn bytes_after_the_tar_end_are_malformed_unless_zero() {
+    let hidden = tar_header(&Member::file(b"hidden.exe", b"MZ"));
+    // After the two zero blocks.
+    let mut after_end = tar(&[Member::file(b"a.txt", b"a")]);
+    after_end.extend_from_slice(&hidden);
+    assert_eq!(malformed(Format::Tar, &after_end), Some(Malformed::Archive));
+    // After a lone zero block.
+    let mut lone = tar(&[Member::file(b"a.txt", b"a")]);
+    lone.truncate(lone.len() - 512);
+    lone.extend_from_slice(&hidden);
+    lone.resize(lone.len() + 1024, 0);
+    assert_eq!(malformed(Format::Tar, &lone), Some(Malformed::Archive));
+    // Zero padding to a 10240-byte record is normal.
+    let mut padded = tar(&[Member::file(b"a.txt", b"a")]);
+    padded.resize(10_240, 0);
+    assert_eq!(entries(Format::Tar, &padded).len(), 1);
+}
+
+#[req("FR-06")]
+#[test]
+fn an_unknown_tar_member_type_is_malformed() {
+    let member = Member::bare(b"volume", b'V', b"");
+    assert_eq!(
+        malformed(Format::Tar, &tar(&[member])),
+        Some(Malformed::Archive)
+    );
+}
+
+#[req("FR-06")]
+#[test]
+fn gzip_is_held_to_every_limit_and_rule() {
+    let archive = gzip(Some(b"a.txt"), &[b'a'; 1000], 0);
+    assert_eq!(
+        limit(Format::Gzip, &archive, &budget(|b| b.remaining_bytes = 999)),
+        Some(Limit::TotalSize)
+    );
+    assert_eq!(
+        limit(Format::Gzip, &archive, &budget(|b| b.remaining_entries = 0)),
+        Some(Limit::EntryCount)
+    );
+    assert_eq!(
+        limit(Format::Gzip, &archive, &budget(|b| b.max_path_length = 4)),
+        Some(Limit::PathLength)
+    );
+    assert_eq!(
+        malformed(Format::Gzip, &gzip(Some(b"/etc/passwd"), b"x", 0)),
+        Some(Malformed::Path)
+    );
+    assert_eq!(
+        malformed(Format::Gzip, b"not a gzip member"),
+        Some(Malformed::Archive)
+    );
+    // ISIZE changed, CRC intact.
+    let mut size = archive.clone();
+    let at = size.len() - 4;
+    size[at] ^= 0x01;
+    assert_eq!(malformed(Format::Gzip, &size), Some(Malformed::Archive));
 }

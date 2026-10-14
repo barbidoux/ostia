@@ -12,6 +12,11 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use archives::{EPOCH_1980, Member, Method, declaring, encrypted, gzip, tar, with_method, zip};
+use ostia_contracts::v1::extract_frame::Frame;
+use ostia_contracts::v1::{
+    AnalyzeResponse, ContractVersion, Entry, EntryKind, ExtractFrame, Hint, Status,
+};
+use ostia_contracts::{DEFAULT_MAX_FRAME, encode_frame};
 use ostia_core_domain::object::Kind;
 use ostia_core_domain::policy::{Failure, Limits};
 use ostia_core_domain::types::DetectedType;
@@ -94,7 +99,48 @@ fn worker(program: &str, id: &str, content_version: &str) -> Worker {
 
 /// The tree of a medium file named `name` holding `bytes`, under `limits`.
 fn grow(name: &str, bytes: &[u8], limits: &Limits) -> (Tree, Scratch) {
+    let extract = worker(
+        env!("CARGO_BIN_EXE_ostia-extract"),
+        "ostia-extract",
+        "formats-1",
+    );
+    grow_with(name, bytes, limits, &extract, Scratch::new())
+}
+
+/// The tree of a zip root whose extraction worker is a script sending `frames` whatever it gets.
+fn grow_faked(frames: &[ExtractFrame], limits: &Limits) -> Tree {
     let scratch = Scratch::new();
+    let mut output = Vec::new();
+    for frame in frames {
+        output.extend(encode_frame(frame, DEFAULT_MAX_FRAME).expect("frame"));
+    }
+    let out = scratch.dir.join("out.bin");
+    std::fs::write(&out, output).expect("frames");
+    let script = scratch.dir.join("extract.sh");
+    std::fs::write(
+        &script,
+        format!("cat > /dev/null; cat '{}'\n", out.display()),
+    )
+    .expect("script");
+    let fake = Worker {
+        command: WorkerCommand::new("/bin/sh", [script]),
+        identity: EngineIdentity {
+            id: "ostia-extract".into(),
+            version: "0.0.0".into(),
+            content_version: "formats-1".into(),
+        },
+    };
+    let root = stored(&[("a.txt", b"a")]);
+    grow_with("fake.zip", &root, limits, &fake, scratch).0
+}
+
+fn grow_with(
+    name: &str,
+    bytes: &[u8],
+    limits: &Limits,
+    extract: &Worker,
+    scratch: Scratch,
+) -> (Tree, Scratch) {
     let file = scratch.dir.join("root");
     std::fs::write(&file, bytes).expect("root");
     let mut workspace = Workspace::create(&scratch.dir.join("workspace")).expect("workspace");
@@ -104,15 +150,10 @@ fn grow(name: &str, bytes: &[u8], limits: &Limits) -> (Tree, Scratch) {
         "ostia-triage",
         "magic-1",
     );
-    let extract = worker(
-        env!("CARGO_BIN_EXE_ostia-extract"),
-        "ostia-extract",
-        "formats-1",
-    );
     let workers = Workers {
         host: &host,
         triage: &triage,
-        extract: &extract,
+        extract,
     };
     let root = Root {
         copy: &file,
@@ -583,5 +624,141 @@ fn an_entry_that_cannot_be_typed_is_a_failure() {
             detected: None,
             failure: Some(Failure::Malformed),
         }
+    );
+}
+
+#[req("FR-06")]
+#[test]
+fn entries_a_failed_container_streamed_still_count() {
+    // bad.zip streams 12 entries, then refuses `../x`; they are not kept, but they count: with the root's 2,
+    // 14 of the 20 entries are used, and good.zip's 8 breach the limit. Without counting them, 10 would fit.
+    let twelve: Vec<(String, Vec<u8>)> = (0..12)
+        .map(|i| (format!("f{i:02}.txt"), b"x".to_vec()))
+        .collect();
+    let mut bad: Vec<(&str, &[u8])> = twelve
+        .iter()
+        .map(|(n, c)| (n.as_str(), c.as_slice()))
+        .collect();
+    bad.push(("../x", b"x"));
+    let eight: Vec<(String, Vec<u8>)> = (0..8)
+        .map(|i| (format!("g{i}.txt"), b"y".to_vec()))
+        .collect();
+    let good: Vec<(&str, &[u8])> = eight
+        .iter()
+        .map(|(n, c)| (n.as_str(), c.as_slice()))
+        .collect();
+    let root = stored(&[("bad.zip", &stored(&bad)), ("good.zip", &stored(&good))]);
+    let (tree, _scratch) = grow("pair.zip", &root, &TIGHT);
+    assert_eq!(
+        named(&tree, "bad.zip").analysis,
+        failed(DetectedType::Zip, Failure::Malformed)
+    );
+    assert_eq!(
+        named(&tree, "good.zip").analysis,
+        failed(DetectedType::Zip, Failure::Limit(Limit::EntryCount))
+    );
+    assert_eq!(tree.extracted.len(), 2);
+}
+
+const MINOR_2: Option<ContractVersion> = Some(ContractVersion { major: 1, minor: 2 });
+
+fn link(path: &[u8]) -> ExtractFrame {
+    ExtractFrame {
+        frame: Some(Frame::Entry(Entry {
+            path: path.to_vec(),
+            kind: EntryKind::Link.into(),
+            size: 0,
+            modified: None,
+        })),
+        version: MINOR_2,
+    }
+}
+
+fn done(status: Status, limit: &str) -> ExtractFrame {
+    ExtractFrame {
+        frame: Some(Frame::Done(AnalyzeResponse {
+            engine_id: "ostia-extract".into(),
+            engine_version: "0.0.0".into(),
+            content_version: "formats-1".into(),
+            status: status.into(),
+            hint: Hint::None.into(),
+            score: None,
+            findings: vec![],
+            duration_ms: 1,
+            detected_type: String::new(),
+            limit: limit.into(),
+            version: MINOR_2,
+        })),
+        version: MINOR_2,
+    }
+}
+
+#[req("FR-06")]
+#[test]
+fn a_lying_extraction_worker_is_held_to_the_trees_limits() {
+    // 21 entries against 20: the host stops it, the driver names the limit.
+    let mut many: Vec<ExtractFrame> = (0..21).map(|i| link(format!("l{i}").as_bytes())).collect();
+    many.push(done(Status::Ok, ""));
+    assert_eq!(
+        grow_faked(&many, &TIGHT).root,
+        failed(DetectedType::Zip, Failure::Limit(Limit::EntryCount))
+    );
+    // 2 MiB announced and sent against 1 MiB.
+    let chunk = ExtractFrame {
+        frame: Some(Frame::Data(vec![0x41; 64 * 1024])),
+        version: MINOR_2,
+    };
+    let mut big = vec![ExtractFrame {
+        frame: Some(Frame::Entry(Entry {
+            path: b"big.bin".to_vec(),
+            kind: EntryKind::Regular.into(),
+            size: 2 * 1024 * 1024,
+            modified: None,
+        })),
+        version: MINOR_2,
+    }];
+    big.extend((0..32).map(|_| chunk.clone()));
+    big.push(done(Status::Ok, ""));
+    assert_eq!(
+        grow_faked(&big, &TIGHT).root,
+        failed(DetectedType::Zip, Failure::Limit(Limit::TotalSize))
+    );
+}
+
+#[req("FR-06")]
+#[test]
+fn a_worker_answer_that_names_no_known_limit_is_malformed() {
+    for (status, limit) in [
+        (Status::Error, "depth"),
+        (Status::Error, "bogus"),
+        (Status::Error, ""),
+        // An answer that contradicts itself.
+        (Status::Ok, "ratio"),
+        (Status::Unsupported, ""),
+    ] {
+        assert_eq!(
+            grow_faked(&[done(status, limit)], &TIGHT).root,
+            failed(DetectedType::Zip, Failure::Malformed),
+            "{status:?} {limit}"
+        );
+    }
+}
+
+#[req("FR-06")]
+#[test]
+fn the_driver_checks_the_paths_a_worker_sends() {
+    // A worker the host trusts for its frames, not for its paths (Q-61 rules, max_path_length).
+    for path in [b"../x".as_slice(), b"C:\\x", b"CON", b"a\0b"] {
+        assert_eq!(
+            grow_faked(&[link(path), done(Status::Ok, "")], &TIGHT).root,
+            failed(DetectedType::Zip, Failure::Malformed),
+            "{}",
+            String::from_utf8_lossy(path)
+        );
+    }
+    let long = vec![b'n'; 65];
+    assert_eq!(
+        grow_faked(&[link(&long), done(Status::Ok, "")], &TIGHT).root,
+        failed(DetectedType::Zip, Failure::Limit(Limit::PathLength))
     );
 }

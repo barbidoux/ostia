@@ -95,6 +95,17 @@ Blocking: no.
 
 ## Answered
 
+### Q-61 · WP-1.8 · FR-06 · Windows forms of entry paths and device names
+Context: the extraction worker refused only `/`-absolute paths, `..` components split on `/`, and NUL. Windows
+extractors also honour `..\..\evil.exe`, `\x`, `C:\x`, `C:x` and `\\host\share\x` once a container is transferred,
+and the P1 brief lists "devices" among the names to sanitise (`CON`, `aux.txt`, `COM1`). report.md defines only
+`/` as a separator.
+Options: (a) `\` also separates components for the `..` and absolute checks, a drive letter or a UNC prefix is
+absolute, and a component named after a Windows device (CON, PRN, AUX, NUL, COM1-9, LPT1-9, CONIN$, CONOUT$, any
+extension, any case) is refused (b) the Windows forms only (c) `/` only, as written.
+Recommendation: (a), one sentence in report.md.
+Answer (owner, 2026-10-14): (a).
+
 ### Q-60 · WP-1.8 · FR-06 · compression ratio on small entries
 Context: policy.md checks the ratio per entry and per container while streaming. A small sparse file breaches it:
 10 KiB of zeros deflate to about 30 bytes (340:1, over the default 200). ClamAV-style scanners only judge the
