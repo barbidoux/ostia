@@ -24,6 +24,13 @@ ostia-core-domain = { path = "../core-domain" }
 flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
 tar = { version = "=0.4.46", default-features = false }
 zip = { version = "=9.0.3", default-features = false, features = ["deflate-flate2"] }
+# Q-62, Q-63 (WP-1.9), same rule. 7z without its default features: LZMA, LZMA2, BCJ, delta and copy only (no
+# AES, bzip2, PPMd, zstd: such entries are malformed). rar without its writer, encryption, recovery or threads.
+# The compound file under an msi. LZX for cabinets (the cabinet container and MSZIP are read by our code).
+cfb = { version = "=0.15.0", default-features = false }
+lzxd = { version = "=0.2.7", default-features = false }
+rars = { version = "=0.10.2", default-features = false }
+sevenz-rust2 = { version = "=0.23.0", default-features = false }
 
 [dev-dependencies]
 ostia-media = { path = "../media" }

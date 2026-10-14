@@ -1,6 +1,13 @@
-//! The extraction worker's formats (FR-06, ADR-18): zip, tar and gzip (WP-1.8). Entries go to a [`Sink`] as
-//! they stream: a header, then the entry's bytes in chunks of at most [`CHUNK`] bytes. The policy's limits
-//! are checked while streaming, never after: an extraction stops at the first byte or entry beyond them.
+//! The extraction worker's formats (FR-06, ADR-18): zip, tar and gzip (WP-1.8); 7z, rar, cab, iso and msi
+//! (WP-1.9). Entries go to a [`Sink`] as they stream: a header, then the entry's bytes in chunks of at most
+//! [`CHUNK`] bytes. The policy's limits are checked while streaming, never after: an extraction stops at the
+//! first byte or entry beyond them.
+
+mod cab;
+mod iso;
+mod msi;
+mod rar;
+mod seven_zip;
 
 use std::io::{self, BufReader, ErrorKind, Read, Seek, SeekFrom};
 
@@ -24,6 +31,16 @@ pub enum Format {
     Tar,
     /// `gzip` (one entry: every member, concatenated).
     Gzip,
+    /// `7z` (LZMA, LZMA2, BCJ, delta and copy coders).
+    SevenZip,
+    /// `rar` (RAR 1.3 to RAR 7, one volume).
+    Rar,
+    /// `cab` (stored, MSZIP and LZX folders).
+    Cab,
+    /// `iso9660` (the Joliet tree when there is one, else the primary one).
+    Iso,
+    /// `msi` (every stream of its compound file).
+    Msi,
 }
 
 impl Format {
@@ -34,6 +51,11 @@ impl Format {
             DetectedType::Zip => Some(Self::Zip),
             DetectedType::Tar => Some(Self::Tar),
             DetectedType::Gzip => Some(Self::Gzip),
+            DetectedType::SevenZip => Some(Self::SevenZip),
+            DetectedType::Rar => Some(Self::Rar),
+            DetectedType::Cab => Some(Self::Cab),
+            DetectedType::Iso9660 => Some(Self::Iso),
+            DetectedType::Msi => Some(Self::Msi),
             _ => None,
         }
     }
@@ -117,13 +139,14 @@ pub enum Stop {
     Sink(io::Error),
 }
 
-/// Extracts `object`, a container of `format`, into `sink` under `budget`.
+/// Extracts `object`, a container of `format`, into `sink` under `budget`. The object is owned: the rar
+/// reader keeps its source.
 ///
 /// # Errors
 /// The first limit reached, the first malformation found, or the sink's error.
-pub fn extract<R: Read + Seek>(
+pub fn extract<R: Read + Seek + Send + 'static>(
     format: Format,
-    object: &mut R,
+    mut object: R,
     budget: &Budget,
     sink: &mut dyn Sink,
 ) -> Result<(), Stop> {
@@ -139,13 +162,38 @@ pub fn extract<R: Read + Seek>(
         entries: 0,
     };
     match format {
-        Format::Zip => zip(object, &mut run),
-        Format::Tar => tar(object, &mut run),
-        Format::Gzip => gzip(object, &mut run),
+        Format::Zip => zip(&mut object, &mut run),
+        Format::Tar => tar(&mut object, &mut run),
+        Format::Gzip => gzip(&mut object, &mut run),
+        Format::SevenZip => seven_zip::extract(&mut object, &mut run),
+        Format::Rar => rar::extract(object, &mut run),
+        Format::Cab => cab::extract(&mut object, &mut run),
+        Format::Iso => iso::extract(&mut object, &mut run),
+        Format::Msi => msi::extract(object, &mut run),
     }
 }
 
 const ARCHIVE: Stop = Stop::Malformed(Malformed::Archive);
+
+/// The largest decoder dictionary a 7z folder or a rar member may ask for (Q-67): larger is an unsupported
+/// method, refused before anything is allocated.
+const DICTIONARY: u64 = 256 << 20;
+
+/// The compressed bytes entries are decoded from, and how much was decoded from them so far: one entry's own
+/// (zip, tar, gzip, iso, msi), or one stream several entries share (a 7z folder, a cabinet folder, a solid
+/// run of rar members), whose ratio is then the ratio of every entry decoded from it (Q-64).
+struct Packed {
+    /// Compressed bytes in the container.
+    size: u64,
+    /// Bytes decoded from them so far.
+    decoded: u64,
+}
+
+impl Packed {
+    fn new(size: u64) -> Self {
+        Self { size, decoded: 0 }
+    }
+}
 
 /// One extraction's running totals against its budget.
 struct Run<'a> {
@@ -192,6 +240,17 @@ impl Run<'_> {
         declared: u64,
         short: Malformed,
     ) -> Result<(), Stop> {
+        self.stream_from(reader, &mut Packed::new(compressed), declared, short)
+    }
+
+    /// As [`Run::stream`], the entry's ratio being the ratio of `packed`, which it may share (Q-64).
+    fn stream_from(
+        &mut self,
+        reader: &mut dyn Read,
+        packed: &mut Packed,
+        declared: u64,
+        short: Malformed,
+    ) -> Result<(), Stop> {
         let mut buffer = vec![0_u8; CHUNK];
         let mut got: u64 = 0;
         loop {
@@ -204,29 +263,45 @@ impl Run<'_> {
                 Err(error) if error.kind() == ErrorKind::Interrupted => continue,
                 Err(_) => return Err(ARCHIVE),
             };
-            let count = u64::try_from(read).unwrap_or(u64::MAX);
-            got = got.saturating_add(count);
-            if got > declared {
-                return Err(Stop::Malformed(Malformed::Size));
-            }
-            self.produced = self.produced.saturating_add(count);
-            if self.produced > self.budget.remaining_bytes {
-                return Err(Stop::Limit(Limit::TotalSize));
-            }
-            if over_ratio(got, compressed, self.budget.max_ratio)
-                || over_ratio(self.produced, self.container, self.budget.max_ratio)
-            {
-                return Err(Stop::Limit(Limit::Ratio));
-            }
-            self.sink
-                .data(buffer.get(..read).unwrap_or_default())
-                .map_err(Stop::Sink)?;
+            self.accept(
+                packed,
+                &mut got,
+                declared,
+                buffer.get(..read).unwrap_or_default(),
+            )?;
         }
         if got == declared {
             Ok(())
         } else {
             Err(Stop::Malformed(short))
         }
+    }
+
+    /// Hands `bytes` (at most [`CHUNK`]) of the current entry to the sink once the limits allow them: `got`
+    /// bytes of the entry so far, of `declared`, decoded from `packed`.
+    fn accept(
+        &mut self,
+        packed: &mut Packed,
+        got: &mut u64,
+        declared: u64,
+        bytes: &[u8],
+    ) -> Result<(), Stop> {
+        let count = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        *got = got.saturating_add(count);
+        if *got > declared {
+            return Err(Stop::Malformed(Malformed::Size));
+        }
+        self.produced = self.produced.saturating_add(count);
+        if self.produced > self.budget.remaining_bytes {
+            return Err(Stop::Limit(Limit::TotalSize));
+        }
+        packed.decoded = packed.decoded.saturating_add(count);
+        if over_ratio(packed.decoded, packed.size, self.budget.max_ratio)
+            || over_ratio(self.produced, self.container, self.budget.max_ratio)
+        {
+            return Err(Stop::Limit(Limit::Ratio));
+        }
+        self.sink.data(bytes).map_err(Stop::Sink)
     }
 }
 
@@ -482,6 +557,19 @@ fn epoch_seconds(year: u16, month: u8, day: u8, hour: u8, minute: u8, second: u8
     let of_cycle = of_era * 365 + of_era / 4 - of_era / 100 + day_of_year;
     let days = era * 146_097 + of_cycle - 719_468;
     Some(days * 86_400 + i64::from(hour) * 3600 + i64::from(minute) * 60 + i64::from(second))
+}
+
+/// Seconds since the Unix epoch of a DOS date and time, read as UTC.
+fn dos_time(date: u16, time: u16) -> Option<i64> {
+    let field = |value: u16, shift: u16, mask: u16| u8::try_from((value >> shift) & mask).ok();
+    epoch_seconds(
+        1980 + (date >> 9),
+        field(date, 5, 0x0F)?,
+        field(date, 0, 0x1F)?,
+        field(time, 11, 0x1F)?,
+        field(time, 5, 0x3F)?,
+        field(time, 0, 0x1F)? * 2,
+    )
 }
 
 fn tar<R: Read>(object: &mut R, run: &mut Run<'_>) -> Result<(), Stop> {

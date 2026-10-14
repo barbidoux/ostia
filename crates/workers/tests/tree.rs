@@ -6,12 +6,14 @@
 //! the worker binaries are built.
 
 mod archives;
+mod built;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use archives::{EPOCH_1980, Member, Method, declaring, encrypted, gzip, tar, with_method, zip};
+use built::build;
 use ostia_contracts::v1::extract_frame::Frame;
 use ostia_contracts::v1::{
     AnalyzeResponse, ContractVersion, Entry, EntryKind, ExtractFrame, Hint, Status,
@@ -102,7 +104,7 @@ fn grow(name: &str, bytes: &[u8], limits: &Limits) -> (Tree, Scratch) {
     let extract = worker(
         env!("CARGO_BIN_EXE_ostia-extract"),
         "ostia-extract",
-        "formats-1",
+        "formats-2",
     );
     grow_with(name, bytes, limits, &extract, Scratch::new())
 }
@@ -521,7 +523,7 @@ fn a_container_that_cannot_be_extracted_keeps_no_entry() {
             ),
             DetectedType::Zip,
         ),
-        // A 7z container: not extracted before WP-1.9, so its content cannot be scanned.
+        // A 7z container cut after its signature.
         (
             "bundle.7z",
             b"7z\xbc\xaf\x27\x1c\x00\x04".to_vec(),
@@ -532,6 +534,55 @@ fn a_container_that_cannot_be_extracted_keeps_no_entry() {
         let (tree, _scratch) = grow(name, &archive, &DEFAULTS);
         assert_eq!(tree.root, failed(detected, Failure::Malformed), "{name}");
         assert_eq!(tree.extracted, vec![], "{name}");
+    }
+}
+
+#[req("FR-06")]
+#[test]
+fn an_msi_gives_its_streams_and_its_cabinet_its_files() {
+    let planted: [(&str, &[u8]); 2] = [("one.txt", ONE), ("dir/two.txt", TWO)];
+    let (tree, _scratch) = grow("setup.msi", &build("msi", &planted, ""), &DEFAULTS);
+    assert_eq!(tree.root, typed(DetectedType::Msi));
+    let unknown = typed(DetectedType::Unknown);
+    assert_eq!(
+        shape(&tree),
+        vec![
+            (
+                None,
+                1,
+                "product.cab".into(),
+                Kind::File,
+                typed(DetectedType::Cab)
+            ),
+            (None, 1, "!_StringData".into(), Kind::File, unknown.clone()),
+            (None, 1, "!_StringPool".into(), Kind::File, unknown.clone()),
+            (Some(0), 2, "one.txt".into(), Kind::File, unknown.clone()),
+            (Some(0), 2, "dir/two.txt".into(), Kind::File, unknown),
+        ]
+    );
+}
+
+#[req("FR-06")]
+#[test]
+fn every_format_of_part_two_is_typed_and_extracted() {
+    let planted: [(&str, &[u8]); 2] = [("one.txt", ONE), ("dir/two.txt", TWO)];
+    for (name, builder, detected) in [
+        ("bundle.7z", "seven_zip", DetectedType::SevenZip),
+        ("bundle.rar", "rar", DetectedType::Rar),
+        ("bundle.cab", "cab", DetectedType::Cab),
+        ("bundle.iso", "iso", DetectedType::Iso9660),
+    ] {
+        let (tree, _scratch) = grow(name, &build(builder, &planted, ""), &DEFAULTS);
+        assert_eq!(tree.root, typed(detected), "{name}");
+        let unknown = typed(DetectedType::Unknown);
+        assert_eq!(
+            shape(&tree),
+            vec![
+                (None, 1, "one.txt".into(), Kind::File, unknown.clone()),
+                (None, 1, "dir/two.txt".into(), Kind::File, unknown),
+            ],
+            "{name}"
+        );
     }
 }
 

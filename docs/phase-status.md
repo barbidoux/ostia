@@ -34,7 +34,7 @@ Gate P0 (owner): [x] evidence in `docs/gates/P0.md` reviewed; `tests/acceptance/
 - [x] WP-1.6 Worker host v0: spawn a worker, pass the object as descriptor 3, framed exchange, timeout and crash handling (after: 1.1) — wp/1.6-worker-host
 - [x] WP-1.7 Triage worker (Rust): type from content, extension mismatch flag (after: 1.6) — wp/1.7-triage-worker
 - [x] WP-1.8 Extraction worker, part 1: zip, tar, gz; limits on depth, ratio, total size, count; children returned as ob... (after: 1.6) — wp/1.8-extraction-zip-tar
-- [ ] WP-1.9 Extraction worker, part 2: 7z, rar, cab, iso, msi (after: 1.8)
+- [x] WP-1.9 Extraction worker, part 2: 7z, rar, cab, iso, msi (after: 1.8) — wp/1.9-extraction-7z-rar-cab
 - [ ] WP-1.10 Orchestrator pipeline: session lifecycle, bounded queues, dispatch to the fake engine, medium verdict, JSON... (after: 1.2, 1.5, 1.7)
 - [ ] WP-1.11 Maximum scan time and configurable expiry action (after: 1.10)
 - [ ] WP-1.12 Lock: write P2 acceptance tests, review, lock (after: 1.10)

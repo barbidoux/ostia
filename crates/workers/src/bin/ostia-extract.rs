@@ -26,9 +26,9 @@ use ostia_contracts::{
 use ostia_core_domain::types::DetectedType;
 use ostia_workers::extract::{Budget, Format, Header, Kind, Malformed, Sink, Stop, extract};
 
-/// Identity of this worker (CTR-03): zip, tar and gzip, version 1.
+/// Identity of this worker (CTR-03): zip, tar and gzip (version 1), then 7z, rar, cab, iso and msi (version 2).
 const ENGINE_ID: &str = "ostia-extract";
-const CONTENT_VERSION: &str = "formats-1";
+const CONTENT_VERSION: &str = "formats-2";
 
 /// The object's descriptor (ADR-03).
 const OBJECT: &str = "/proc/self/fd/3";
@@ -125,9 +125,7 @@ fn main() -> ExitCode {
         Some(format) => {
             let extracted = File::open(OBJECT)
                 .map_err(|_| Stop::Malformed(Malformed::Archive))
-                .and_then(|object| {
-                    extract(format, &mut BufReader::new(object), &limits, &mut frames)
-                });
+                .and_then(|object| extract(format, BufReader::new(object), &limits, &mut frames));
             match extracted {
                 Ok(()) => (Status::Ok, String::new(), Vec::new()),
                 Err(Stop::Limit(limit)) => (Status::Error, limit.code().to_owned(), Vec::new()),
