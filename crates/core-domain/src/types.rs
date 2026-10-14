@@ -84,8 +84,17 @@ impl DetectedType {
     /// The type is a container FR-06 extracts (zip, gzip, tar, 7z, rar, cab, iso9660, msi).
     #[must_use]
     pub fn is_container(self) -> bool {
-        let _ = self;
-        todo!("WP-1.8: is_container")
+        matches!(
+            self,
+            Self::Zip
+                | Self::Gzip
+                | Self::Tar
+                | Self::SevenZip
+                | Self::Rar
+                | Self::Cab
+                | Self::Iso9660
+                | Self::Msi
+        )
     }
 
     /// The extensions of the type (lower case, without the dot); none for `unknown`.
