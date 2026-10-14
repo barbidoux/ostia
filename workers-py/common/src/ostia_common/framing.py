@@ -16,8 +16,9 @@ from ostia_common.engine_v1 import engine_pb2
 
 DEFAULT_MAX_FRAME = 16 * 1024 * 1024
 MAJOR = 1
-# Minor 1: AnalyzeResponse.detected_type.
-MINOR = 1
+# Minor 1: AnalyzeResponse.detected_type; minor 2: the extraction budget, the limit name and ExtractFrame
+# (ADR-18).
+MINOR = 2
 
 
 class ByteReader(Protocol):
@@ -134,7 +135,9 @@ def write_frame(stream: ByteWriter, message: Message, cap: int = DEFAULT_MAX_FRA
         raise ContractError("io", str(error)) from error
 
 
-def _check_version(message: engine_pb2.AnalyzeRequest | engine_pb2.AnalyzeResponse) -> None:
+def _check_version(
+    message: engine_pb2.AnalyzeRequest | engine_pb2.AnalyzeResponse | engine_pb2.ExtractFrame,
+) -> None:
     """A missing version reads as major 0; any major other than MAJOR is refused."""
     major = message.version.major if message.HasField("version") else 0
     if major != MAJOR:
@@ -260,6 +263,11 @@ def decode_response(body: bytes) -> engine_pb2.AnalyzeResponse:
     """Decode and validate a response: major, engine identity, known status and hint, severity up to
     4, score in [0, 1]."""
     response = _parse(engine_pb2.AnalyzeResponse(), engine_pb2.AnalyzeResponse.DESCRIPTOR, body)
+    _check_response(response)
+    return response
+
+
+def _check_response(response: engine_pb2.AnalyzeResponse) -> None:
     _check_version(response)
     for field, value in (
         ("engine_id", response.engine_id),
@@ -276,17 +284,34 @@ def decode_response(body: bytes) -> engine_pb2.AnalyzeResponse:
         raise ContractError("invalid_response", "severity")
     if response.HasField("score") and not 0.0 <= response.score <= 1.0:
         raise ContractError("invalid_score", str(response.score))
-    return response
 
 
 def decode_extract_frame(body: bytes) -> engine_pb2.ExtractFrame:
     """Decode and validate one frame of the extraction worker's output (ADR-18): major; exactly one of
     entry, data or done; an entry with a path, a known kind and no size unless it is a regular file;
     data that is not empty; a done that is a valid response."""
-    raise NotImplementedError("WP-1.8: decode_extract_frame")
+    frame = _parse(engine_pb2.ExtractFrame(), engine_pb2.ExtractFrame.DESCRIPTOR, body)
+    _check_version(frame)
+    which = frame.WhichOneof("frame")
+    if which is None:
+        raise ContractError("invalid_response", "frame")
+    if which == "entry":
+        if not frame.entry.path:
+            raise ContractError("invalid_response", "entry path")
+        if frame.entry.kind not in _KNOWN_ENTRY_KINDS:
+            raise ContractError("invalid_response", "entry kind")
+        if frame.entry.kind != engine_pb2.REGULAR and frame.entry.size != 0:
+            raise ContractError("invalid_response", "entry size")
+    elif which == "data":
+        if not frame.data:
+            raise ContractError("invalid_response", "data")
+    else:
+        _check_response(frame.done)
+    return frame
 
 
 _KNOWN_ORIGINS = frozenset(engine_pb2.Origin.values()) - {engine_pb2.ORIGIN_UNSPECIFIED}
 _KNOWN_STATUSES = frozenset(engine_pb2.Status.values()) - {engine_pb2.STATUS_UNSPECIFIED}
 _KNOWN_HINTS = frozenset(engine_pb2.Hint.values())
+_KNOWN_ENTRY_KINDS = frozenset(engine_pb2.EntryKind.values()) - {engine_pb2.ENTRY_KIND_UNSPECIFIED}
 _MAX_SEVERITY = 4
