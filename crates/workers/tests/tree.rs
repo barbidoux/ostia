@@ -417,7 +417,16 @@ fn archives_at_the_limits_are_extracted() {
         .iter()
         .map(|(n, c)| (n.as_str(), c.as_slice()))
         .collect();
-    let mut dense = vec![0x5a_u8; 1024];
+    // About 50:1 once deflated: a kibibyte that does not compress (xorshift), then zeros.
+    let mut state: u32 = 0x9e37_79b9;
+    let mut dense: Vec<u8> = (0..1024)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state.to_le_bytes()[0]
+        })
+        .collect();
     dense.extend(vec![0; 54_000]);
     for (name, archive, count) in [
         ("twenty.zip", stored(&twenty), 20),
