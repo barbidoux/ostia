@@ -538,6 +538,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ostia-orchestrator"
+version = "0.0.0"
+dependencies = [
+ "ostia-contracts",
+ "ostia-core-domain",
+ "ostia-media",
+ "ostia-sandbox",
+]
+
+[[package]]
 name = "ostia-sandbox"
 version = "0.0.0"
 dependencies = [
@@ -558,6 +568,8 @@ dependencies = [
  "flate2",
  "ostia-contracts",
  "ostia-core-domain",
+ "ostia-media",
+ "ostia-orchestrator",
  "ostia-sandbox",
  "ostia-traceability",
  "tar",

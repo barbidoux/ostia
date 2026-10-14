@@ -121,6 +121,56 @@ impl Workspace {
     }
 }
 
+/// A copy written as its bytes arrive (an extracted object): hashed as written, sealed by [`Copy::finish`].
+#[derive(Debug)]
+pub struct Copy {
+    path: PathBuf,
+    file: File,
+}
+
+/// A sealed copy: its size, its hashes and its path in the workspace.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Copied {
+    /// Bytes written.
+    pub size: u64,
+    /// SHA-256 of the bytes written.
+    pub sha256: [u8; 32],
+    /// SHA-1 of the bytes written.
+    pub sha1: [u8; 20],
+    /// The copy: the only one used afterwards.
+    pub copy: PathBuf,
+}
+
+impl Workspace {
+    /// A new, empty copy to write an object into as its bytes arrive.
+    ///
+    /// # Errors
+    /// [`InventoryError::Workspace`] when the copy cannot be created.
+    pub fn begin_copy(&mut self) -> Result<Copy, InventoryError> {
+        let _ = self;
+        todo!("WP-1.8: begin_copy")
+    }
+}
+
+impl Copy {
+    /// Appends `bytes` to the copy.
+    ///
+    /// # Errors
+    /// [`InventoryError::Workspace`] when they cannot be written.
+    pub fn write(&mut self, bytes: &[u8]) -> Result<(), InventoryError> {
+        let _ = (&self.path, &self.file, bytes);
+        todo!("WP-1.8: Copy::write")
+    }
+
+    /// Flushes the copy, makes it read-only and returns its size and hashes.
+    ///
+    /// # Errors
+    /// [`InventoryError::Workspace`] when it cannot be sealed.
+    pub fn finish(self) -> Result<Copied, InventoryError> {
+        todo!("WP-1.8: Copy::finish")
+    }
+}
+
 fn workspace_error(path: &Path, error: &std::io::Error) -> InventoryError {
     InventoryError::Workspace(format!("cannot write the copy {}: {error}", path.display()))
 }

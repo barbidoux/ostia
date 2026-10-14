@@ -26,6 +26,8 @@ tar = { version = "=0.4.46", default-features = false }
 zip = { version = "=9.0.3", default-features = false, features = ["deflate-flate2"] }
 
 [dev-dependencies]
+ostia-media = { path = "../media" }
+ostia-orchestrator = { path = "../orchestrator" }
 ostia-sandbox = { path = "../sandbox" }
 ostia-traceability = { path = "../traceability" }
 

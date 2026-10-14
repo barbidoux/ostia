@@ -81,6 +81,13 @@ impl DetectedType {
             .find(|detected| detected.name() == name)
     }
 
+    /// The type is a container FR-06 extracts (zip, gzip, tar, 7z, rar, cab, iso9660, msi).
+    #[must_use]
+    pub fn is_container(self) -> bool {
+        let _ = self;
+        todo!("WP-1.8: is_container")
+    }
+
     /// The extensions of the type (lower case, without the dot); none for `unknown`.
     #[must_use]
     pub fn extensions(self) -> &'static [&'static str] {
