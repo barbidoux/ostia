@@ -95,6 +95,51 @@ Blocking: no.
 
 ## Answered
 
+### Q-64 · WP-1.9 · FR-06 · ratio when entries share a compressed stream
+Context: Q-60 fixed the ratio literally, per entry and per container. In a 7z folder, a cab folder or a solid
+rar, entries share one compressed stream: one entry has no compressed size of its own.
+Options: (a) the per-entry ratio becomes the ratio of the shared stream: bytes decoded from it so far over its
+packed size, checked per chunk; the container ratio is unchanged (b) spread the packed size over entries in
+proportion to their declared sizes (c) check only the container ratio for these formats.
+Recommendation: (a): it holds while streaming and a compressed bomb in a shared stream is still caught at the
+first chunk past the ratio. Recorded in ADR-18.
+Answer (owner, 2026-10-14): (a).
+
+### Q-63 · WP-1.9 · FR-06 · crates for 7z, cab and msi; iso and msi read by our code
+Context: prompts/P1.md prefers pure-Rust crates. Proposed, all in `ostia-workers` only: `sevenz-rust2` 0.23.0
+(Apache-2.0; default features off: LZMA, LZMA2, BCJ, delta and copy; no AES, bzip2, PPMd, zstd, so such entries
+are malformed), `cab` 0.6.0 (MIT; stored, MSZIP, LZX; Quantum is malformed), `cfb` 0.15.0 (MIT; the compound
+file under an msi). New transitive crates: lzma-rust2 0.21 (Apache-2.0), lzxd 0.2 (MIT OR Apache-2.0),
+byteorder 1.5 (Unlicense OR MIT), time 0.3 (MIT OR Apache-2.0), uuid 1 (Apache-2.0 OR MIT), web-time 1 (MIT OR
+Apache-2.0). Not proposed: `cdfs` (ISO 9660) pulls `fuser`, `clap` and `libc` as normal dependencies; `msi`
+only adds table parsing on top of `cfb`. So iso (ISO 9660 with Joliet names) is read by our own code, and an msi
+yields every stream of its compound file (tables, embedded cabinets) under its decoded MSI stream name; an
+embedded cabinet is then extracted as a cab one level deeper. Test archives are built by hand-written
+standard-library builders in `tests/fixtures/archives.py` (7z with LZMA2 through `lzma`, RAR5 stored, cab
+MSZIP, ISO 9660, msi as a compound file with the MSI class id): no new Python dependency (py7zr and pycdlib are
+LGPL and py7zr brings eight more packages, several compiled).
+Options: (a) these three crates, iso and msi streams by our code (b) also `cdfs` for iso (c) also `msi`.
+Recommendation: (a).
+Answer (owner, 2026-10-14): (a).
+Implementation note (WP-1.9): the `cab` crate is not used after all. Its file reader decodes a folder from its
+start again for every file (quadratic on a cabinet of many files) and its decoders are private, so the
+cabinet container is read by our code, MSZIP through `flate2` (already in use) and LZX through `lzxd` 0.2.7,
+one of the transitive crates listed above, now a direct dependency. `byteorder` and `time` are then not needed.
+
+### Q-62 · WP-1.9 · FR-06 · rar extraction
+Context: prompts/P1.md: `unrar` is non-free. The locked p1 tests `test_archive_format_is_extracted[rar]` and
+`test_archive_format_tree_is_clean[rar]` need a rar's entries extracted and CLEAN, so "listing only" (every rar
+UNSCANNABLE) cannot make them pass. A new pure-Rust crate exists: `rars` 0.10.2 (Apache-2.0, crates.io
+2026-10-13; first releases 2026-08; one maintainer; about 110,000 lines; `#![forbid(unsafe_code)]`; reads RAR 1.3
+to RAR 7, solid and multi-volume; with default features off it adds only `aho-corasick`, already in the lock).
+Options: (a) `rars` =0.10.2, default features off (no writer, no encryption: an encrypted rar is malformed), in
+`ostia-workers` only (b) libarchive (BSD-2-Clause, C) through `compress-tools` (MIT OR Apache-2.0): FFI, a C
+parser of hostile input inside the worker, `libarchive-dev` on every build host (c) our own reader for RAR5
+stored entries only: any compressed rar is malformed, so nearly every real rar is UNSCANNABLE.
+Recommendation: (a): pure Rust with no unsafe code, permissive licence, fail-closed through our limits and the P2
+sandbox; its youth is the risk, so it is fuzzed by our extraction target and pinned exactly.
+Answer (owner, 2026-10-14): (a).
+
 ### Q-61 · WP-1.8 · FR-06 · Windows forms of entry paths and device names
 Context: the extraction worker refused only `/`-absolute paths, `..` components split on `/`, and NUL. Windows
 extractors also honour `..\..\evil.exe`, `\x`, `C:\x`, `C:x` and `\\host\share\x` once a container is transferred,

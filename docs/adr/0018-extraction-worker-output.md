@@ -1,6 +1,6 @@
 # ADR-18: Extraction worker — extracted objects streamed back over the worker's standard output
 
-- Status: proposed (2026-10-14; the owner chose option 1 in Q-57, the crates in Q-58, the tree driver in Q-59, the literal ratio in Q-60 and the Windows path forms in Q-61)
+- Status: proposed (2026-10-14; the owner chose option 1 in Q-57, the crates in Q-58, the tree driver in Q-59, the literal ratio in Q-60 and the Windows path forms in Q-61; for WP-1.9, `rars` in Q-62, the crates in Q-63 and the shared-stream ratio in Q-64)
 - Date: 2026-10-14
 - Deciders: Matthias Vaytet (owner)
 - Source: FR-06, FR-08, SEC-05, SEC-10, CTR-04; prompts/P1.md WP-1.8, WP-1.9; `docs/contracts/policy.md`
@@ -89,6 +89,37 @@ the total size and entry count whatever the worker claims.
   cannot type (an `ERROR`, a polyglot, a type name the domain does not know) is malformed. Links and special
   entries are objects that are never read or typed.
 
+### Formats of part 2 (WP-1.9)
+
+The worker's identity becomes `formats-2`. Each format keeps the rules above; what is particular to each:
+
+- **Ratio of a shared stream** (Q-64): where entries are decoded from one compressed stream (a 7z folder, a
+  cabinet folder, a solid run of rar members), each entry's ratio is the ratio of that stream: the bytes decoded
+  from it so far over its packed size, checked per chunk. The container's ratio is unchanged. A bomb that
+  shares a folder with incompressible bytes is diluted by them; in a folder of its own it is not.
+- **7z** (`sevenz-rust2`, Q-63): each folder is decoded once, front to back. An AES coder or an encrypted header
+  is malformed as encrypted; a coder this build lacks (PPMd, bzip2, zstd and others) as an unsupported method.
+  Empty files are entries without bytes; directories and anti-items are not entries, their paths are checked.
+- **rar** (`rars`, Q-62), one volume: its extraction writes into `'static` writers, so it runs on a helper
+  thread handing each member header and chunk over a rendezvous channel; the worker's thread checks every
+  limit before the sink, answers each member before it is decoded (a member larger than the remaining bytes is
+  refused then) and stops the decoder by closing the channel. Encrypted members are encrypted; a member
+  continued in another volume is malformed; a member asking for a dictionary over 1 GiB is an unsupported
+  method; redirections are `LINK` entries.
+- **cab**, read by this code (Q-63; MSZIP through `flate2`, LZX through `lzxd`): the object is the whole
+  cabinet (`cbCabinet` equals its size); a cabinet continued from or into another one is malformed; every data
+  block lies in the cabinet, decodes to at most 32 KiB and passes its checksum when it has one; the files of a
+  folder cover its decoded bytes exactly, in order (no bytes outside a file, no shared bytes). Quantum is an
+  unsupported method. `\` in names becomes `/`.
+- **iso**, read by this code (Q-63): the Joliet tree when a supplementary descriptor carries a Joliet escape,
+  else the primary tree; names lose their `;<version>` (and a primary file name its trailing dot). A both-endian
+  value whose two halves disagree, an extent outside the image or a directory reached twice is malformed;
+  multi-extent and interleaved files and extended attribute records are unsupported methods. Rock Ridge names,
+  El Torito boot images and UDF trees are not read.
+- **msi** (`cfb`, Q-63): every stream of the compound file is an entry, under its storages' path and its name
+  decoded from the MSI stream-name encoding, a table name shown as `!<table>`. An embedded cabinet is an entry
+  the tree extracts one level deeper; cabinets outside the package are not reachable.
+
 ### Consequences
 
 - Good: no shared writable storage in the sandbox; limits are double-checked; bounded memory on both sides.
@@ -101,4 +132,5 @@ the total size and entry count whatever the worker claims.
 
 ## Links
 
-- Q-57 (channel), Q-58 (archive crates), Q-59 (tree driver in WP-1.8), Q-60 (ratio floor).
+- Q-57 (channel), Q-58 (archive crates), Q-59 (tree driver in WP-1.8), Q-60 (ratio floor), Q-61 (Windows path
+  forms), Q-62 (rar), Q-63 (crates of part 2), Q-64 (ratio of a shared stream).
