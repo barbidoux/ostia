@@ -33,6 +33,7 @@ fn request() -> AnalyzeRequest {
             duration_ms: 30_000,
             write_bytes: 0,
         }),
+        extraction: None,
         version: Some(version(1, 0)),
     }
 }
@@ -54,6 +55,7 @@ fn response() -> AnalyzeResponse {
         }],
         duration_ms: 840,
         detected_type: String::new(),
+        limit: String::new(),
         version: Some(version(1, 0)),
     }
 }
@@ -68,10 +70,11 @@ fn decode_response_frame(frame: &[u8]) -> Result<AnalyzeResponse, ContractError>
 
 #[req("CTR-04")]
 #[test]
-fn messages_carry_contract_version_one_one() {
-    // Minor 1 added AnalyzeResponse.detected_type (Q-54).
-    assert_eq!((MAJOR, MINOR), (1, 1));
-    assert_eq!(current_version(), ContractVersion { major: 1, minor: 1 });
+fn messages_carry_contract_version_one_two() {
+    // Minor 1 added AnalyzeResponse.detected_type (Q-54); minor 2 the extraction budget, the limit name and
+    // ExtractFrame (ADR-18).
+    assert_eq!((MAJOR, MINOR), (1, 2));
+    assert_eq!(current_version(), ContractVersion { major: 1, minor: 2 });
 }
 
 #[req("CTR-01")]

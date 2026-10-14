@@ -126,6 +126,34 @@ MALICIOUS: Hint.ValueType  # 4
 """Something malicious was found."""
 Global___Hint: _TypeAlias = Hint  # noqa: Y015
 
+class _EntryKind:
+    ValueType = _typing.NewType("ValueType", _builtins.int)
+    V: _TypeAlias = ValueType  # noqa: Y015
+
+class _EntryKindEnumTypeWrapper(_enum_type_wrapper._EnumTypeWrapper[_EntryKind.ValueType], _builtins.type):
+    DESCRIPTOR: _descriptor.EnumDescriptor
+    ENTRY_KIND_UNSPECIFIED: _EntryKind.ValueType  # 0
+    """Not set: refused."""
+    REGULAR: _EntryKind.ValueType  # 1
+    """A regular file: its bytes follow."""
+    LINK: _EntryKind.ValueType  # 2
+    """A symbolic or hard link: never followed, no bytes."""
+    SPECIAL: _EntryKind.ValueType  # 3
+    """A device, FIFO or socket: no bytes."""
+
+class EntryKind(_EntryKind, metaclass=_EntryKindEnumTypeWrapper):
+    """What an extracted entry is."""
+
+ENTRY_KIND_UNSPECIFIED: EntryKind.ValueType  # 0
+"""Not set: refused."""
+REGULAR: EntryKind.ValueType  # 1
+"""A regular file: its bytes follow."""
+LINK: EntryKind.ValueType  # 2
+"""A symbolic or hard link: never followed, no bytes."""
+SPECIAL: EntryKind.ValueType  # 3
+"""A device, FIFO or socket: no bytes."""
+Global___EntryKind: _TypeAlias = EntryKind  # noqa: Y015
+
 @_typing.final
 class ContractVersion(_message.Message):
     """Version of the contract a message was written against. A decoder refuses any major other than its
@@ -197,6 +225,7 @@ class AnalyzeRequest(_message.Message):
     SIZE_FIELD_NUMBER: _builtins.int
     ORIGIN_FIELD_NUMBER: _builtins.int
     LIMITS_FIELD_NUMBER: _builtins.int
+    EXTRACTION_FIELD_NUMBER: _builtins.int
     VERSION_FIELD_NUMBER: _builtins.int
     session_id: _builtins.str
     """Session the object belongs to."""
@@ -215,6 +244,10 @@ class AnalyzeRequest(_message.Message):
         """Limits the engine runs under."""
 
     @_builtins.property
+    def extraction(self) -> Global___ExtractionBudget:
+        """What is left of the policy's extraction limits; set only for the extraction worker (minor 2, ADR-18)."""
+
+    @_builtins.property
     def version(self) -> Global___ContractVersion:
         """Contract version of this message."""
 
@@ -228,15 +261,52 @@ class AnalyzeRequest(_message.Message):
         size: _builtins.int = ...,
         origin: Global___Origin.ValueType = ...,
         limits: Global___Limits | None = ...,
+        extraction: Global___ExtractionBudget | None = ...,
         version: Global___ContractVersion | None = ...,
     ) -> None: ...
-    _HasFieldArgType: _TypeAlias = _typing.Literal["limits", b"limits", "version", b"version"]  # noqa: Y015
+    _HasFieldArgType: _TypeAlias = _typing.Literal["extraction", b"extraction", "limits", b"limits", "version", b"version"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["detected_type", b"detected_type", "limits", b"limits", "object_id", b"object_id", "origin", b"origin", "session_id", b"session_id", "sha256", b"sha256", "size", b"size", "version", b"version"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["detected_type", b"detected_type", "extraction", b"extraction", "limits", b"limits", "object_id", b"object_id", "origin", b"origin", "session_id", b"session_id", "sha256", b"sha256", "size", b"size", "version", b"version"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     def WhichOneof(self, oneof_group: _Never) -> None: ...
 
 Global___AnalyzeRequest: _TypeAlias = AnalyzeRequest  # noqa: Y015
+
+@_typing.final
+class ExtractionBudget(_message.Message):
+    """What an extraction may still produce: the policy's limits less what the tree of the medium file already
+    used (minor 2, ADR-18).
+    """
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    MAX_RATIO_FIELD_NUMBER: _builtins.int
+    REMAINING_BYTES_FIELD_NUMBER: _builtins.int
+    REMAINING_ENTRIES_FIELD_NUMBER: _builtins.int
+    MAX_PATH_LENGTH_FIELD_NUMBER: _builtins.int
+    max_ratio: _builtins.int
+    """Largest uncompressed / compressed ratio, per entry and for the whole container."""
+    remaining_bytes: _builtins.int
+    """Bytes the extraction may still produce."""
+    remaining_entries: _builtins.int
+    """Entries the extraction may still produce."""
+    max_path_length: _builtins.int
+    """Largest entry path inside the container, in bytes."""
+    def __init__(
+        self,
+        *,
+        max_ratio: _builtins.int = ...,
+        remaining_bytes: _builtins.int = ...,
+        remaining_entries: _builtins.int = ...,
+        max_path_length: _builtins.int = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _Never  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["max_path_length", b"max_path_length", "max_ratio", b"max_ratio", "remaining_bytes", b"remaining_bytes", "remaining_entries", b"remaining_entries"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    def WhichOneof(self, oneof_group: _Never) -> None: ...
+
+Global___ExtractionBudget: _TypeAlias = ExtractionBudget  # noqa: Y015
 
 @_typing.final
 class Finding(_message.Message):
@@ -293,6 +363,7 @@ class AnalyzeResponse(_message.Message):
     FINDINGS_FIELD_NUMBER: _builtins.int
     DURATION_MS_FIELD_NUMBER: _builtins.int
     DETECTED_TYPE_FIELD_NUMBER: _builtins.int
+    LIMIT_FIELD_NUMBER: _builtins.int
     VERSION_FIELD_NUMBER: _builtins.int
     engine_id: _builtins.str
     """Engine identifier."""
@@ -311,6 +382,10 @@ class AnalyzeResponse(_message.Message):
     detected_type: _builtins.str
     """Type identified from the content (report.md "Types"), set by the triage worker; empty for engines
     (minor 1, Q-54).
+    """
+    limit: _builtins.str
+    """The policy limit that stopped an extraction (report.md: `ratio`, `total_size`, `entry_count`,
+    `path_length`), set by the extraction worker; empty otherwise (minor 2, ADR-18).
     """
     @_builtins.property
     def findings(self) -> _containers.RepeatedCompositeFieldContainer[Global___Finding]:
@@ -332,14 +407,97 @@ class AnalyzeResponse(_message.Message):
         findings: _abc.Iterable[Global___Finding] | None = ...,
         duration_ms: _builtins.int = ...,
         detected_type: _builtins.str = ...,
+        limit: _builtins.str = ...,
         version: Global___ContractVersion | None = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _typing.Literal["_score", b"_score", "score", b"score", "version", b"version"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["_score", b"_score", "content_version", b"content_version", "detected_type", b"detected_type", "duration_ms", b"duration_ms", "engine_id", b"engine_id", "engine_version", b"engine_version", "findings", b"findings", "hint", b"hint", "score", b"score", "status", b"status", "version", b"version"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_score", b"_score", "content_version", b"content_version", "detected_type", b"detected_type", "duration_ms", b"duration_ms", "engine_id", b"engine_id", "engine_version", b"engine_version", "findings", b"findings", "hint", b"hint", "limit", b"limit", "score", b"score", "status", b"status", "version", b"version"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     _WhichOneofReturnType__score: _TypeAlias = _typing.Literal["score"]  # noqa: Y015
     _WhichOneofArgType__score: _TypeAlias = _typing.Literal["_score", b"_score"]  # noqa: Y015
     def WhichOneof(self, oneof_group: _WhichOneofArgType__score) -> _WhichOneofReturnType__score | None: ...
 
 Global___AnalyzeResponse: _TypeAlias = AnalyzeResponse  # noqa: Y015
+
+@_typing.final
+class Entry(_message.Message):
+    """One entry of a container, announced before its bytes."""
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    PATH_FIELD_NUMBER: _builtins.int
+    KIND_FIELD_NUMBER: _builtins.int
+    SIZE_FIELD_NUMBER: _builtins.int
+    MODIFIED_FIELD_NUMBER: _builtins.int
+    path: _builtins.bytes
+    """The entry's path inside its container, as stored (`/`-separated, not necessarily UTF-8); empty when the
+    container does not name it (a gzip member without a name: the host names it after the container).
+    """
+    kind: Global___EntryKind.ValueType
+    """What the entry is."""
+    size: _builtins.int
+    """Bytes that follow in `data` frames: 0 for a link or a special entry."""
+    modified: _builtins.int
+    """Modification time in seconds since the Unix epoch (UTC), when the container records one."""
+    def __init__(
+        self,
+        *,
+        path: _builtins.bytes = ...,
+        kind: Global___EntryKind.ValueType = ...,
+        size: _builtins.int = ...,
+        modified: _builtins.int | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["_modified", b"_modified", "modified", b"modified"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_modified", b"_modified", "kind", b"kind", "modified", b"modified", "path", b"path", "size", b"size"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    _WhichOneofReturnType__modified: _TypeAlias = _typing.Literal["modified"]  # noqa: Y015
+    _WhichOneofArgType__modified: _TypeAlias = _typing.Literal["_modified", b"_modified"]  # noqa: Y015
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__modified) -> _WhichOneofReturnType__modified | None: ...
+
+Global___Entry: _TypeAlias = Entry  # noqa: Y015
+
+@_typing.final
+class ExtractFrame(_message.Message):
+    """One frame of the extraction worker's output (minor 2, ADR-18): for each entry an `entry`, then its bytes
+    in `data` frames adding up to its size; then exactly one `done`, the worker's response.
+    """
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    ENTRY_FIELD_NUMBER: _builtins.int
+    DATA_FIELD_NUMBER: _builtins.int
+    DONE_FIELD_NUMBER: _builtins.int
+    VERSION_FIELD_NUMBER: _builtins.int
+    data: _builtins.bytes
+    """The next bytes of the current entry (never empty)."""
+    @_builtins.property
+    def entry(self) -> Global___Entry:
+        """The next entry."""
+
+    @_builtins.property
+    def done(self) -> Global___AnalyzeResponse:
+        """The end of the extraction."""
+
+    @_builtins.property
+    def version(self) -> Global___ContractVersion:
+        """Contract version of this message."""
+
+    def __init__(
+        self,
+        *,
+        entry: Global___Entry | None = ...,
+        data: _builtins.bytes = ...,
+        done: Global___AnalyzeResponse | None = ...,
+        version: Global___ContractVersion | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["data", b"data", "done", b"done", "entry", b"entry", "frame", b"frame", "version", b"version"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["data", b"data", "done", b"done", "entry", b"entry", "frame", b"frame", "version", b"version"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    _WhichOneofReturnType_frame: _TypeAlias = _typing.Literal["entry", "data", "done"]  # noqa: Y015
+    _WhichOneofArgType_frame: _TypeAlias = _typing.Literal["frame", b"frame"]  # noqa: Y015
+    def WhichOneof(self, oneof_group: _WhichOneofArgType_frame) -> _WhichOneofReturnType_frame | None: ...
+
+Global___ExtractFrame: _TypeAlias = ExtractFrame  # noqa: Y015

@@ -89,6 +89,59 @@ def response_typed() -> engine_pb2.AnalyzeResponse:
     )
 
 
+def request_extract() -> engine_pb2.AnalyzeRequest:
+    """A request to the extraction worker, with the tree's remaining budget (minor 2, ADR-18)."""
+    return engine_pb2.AnalyzeRequest(
+        session_id="session-0001",
+        object_id="object-0002",
+        sha256=bytes.fromhex("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
+        detected_type="zip",
+        size=22,
+        origin=engine_pb2.FILE,
+        limits=engine_pb2.Limits(memory_bytes=268_435_456, duration_ms=30_000, write_bytes=0),
+        extraction=engine_pb2.ExtractionBudget(
+            max_ratio=200,
+            remaining_bytes=4_294_967_296,
+            remaining_entries=100_000,
+            max_path_length=4096,
+        ),
+        version=engine_pb2.ContractVersion(major=1, minor=2),
+    )
+
+
+def extract_entry(
+    path: bytes = b"dir/b.bin",
+    kind: engine_pb2.EntryKind.ValueType = engine_pb2.REGULAR,
+    size: int = 3,
+    major: int = 1,
+) -> engine_pb2.ExtractFrame:
+    return engine_pb2.ExtractFrame(
+        entry=engine_pb2.Entry(path=path, kind=kind, size=size, modified=315_532_800),
+        version=engine_pb2.ContractVersion(major=major, minor=2),
+    )
+
+
+def extract_data(data: bytes = b"abc") -> engine_pb2.ExtractFrame:
+    return engine_pb2.ExtractFrame(data=data, version=engine_pb2.ContractVersion(major=1, minor=2))
+
+
+def extract_done(**changes: object) -> engine_pb2.ExtractFrame:
+    """The end of an extraction stopped by the ratio limit."""
+    done = engine_pb2.AnalyzeResponse(
+        engine_id="ostia-extract",
+        engine_version="0.0.0",
+        content_version="formats-1",
+        status=engine_pb2.ERROR,
+        hint=engine_pb2.NONE,
+        duration_ms=1,
+        limit="ratio",
+        version=engine_pb2.ContractVersion(major=1, minor=2),
+    )
+    return engine_pb2.ExtractFrame(
+        done=changed(done, **changes), version=engine_pb2.ContractVersion(major=1, minor=2)
+    )
+
+
 def response_scored() -> engine_pb2.AnalyzeResponse:
     return engine_pb2.AnalyzeResponse(
         engine_id="ember",
@@ -135,7 +188,8 @@ def vectors() -> list[Vector]:
     clean_frame = encode_frame(response_clean())
     clean_body = response_clean().SerializeToString()
     major_2 = engine_pb2.ContractVersion(major=2, minor=0)
-    minor_2 = engine_pb2.ContractVersion(major=1, minor=2)
+    minor_3 = engine_pb2.ContractVersion(major=1, minor=3)
+    no_frame = engine_pb2.ExtractFrame(version=engine_pb2.ContractVersion(major=1, minor=2))
     severity_5 = response_scored()
     severity_5.findings[0].severity = 5
     return [
@@ -144,6 +198,16 @@ def vectors() -> list[Vector]:
         message_vector("response_scored", "ok", "score and finding", response_scored()),
         message_vector("response_typed", "ok", "type from the triage worker", response_typed()),
         message_vector("response_newer_minor", "ok", "minor 7 is accepted", response_clean(7)),
+        message_vector("request_extract", "ok", "a request with a budget", request_extract()),
+        message_vector("extract_entry", "ok", "an entry of 3 bytes", extract_entry()),
+        message_vector("extract_data", "ok", "3 bytes of the entry", extract_data()),
+        message_vector("extract_done", "ok", "stopped by the ratio limit", extract_done()),
+        message_vector(
+            "extract_link",
+            "ok",
+            "a link entry, no bytes",
+            extract_entry(path=b"link", kind=engine_pb2.LINK, size=0),
+        ),
         frame_vector("frame_empty", "empty", "zero length", b"\x00\x00\x00\x00"),
         frame_vector("frame_oversized", "oversized", "16 MiB + 1 announced", b"\x01\x00\x00\x01"),
         frame_vector(
@@ -269,10 +333,57 @@ def vectors() -> list[Vector]:
             clean_body + b"\xa3\x06\xac\x06",
         ),
         body_vector(
-            "response_minor_2_extra_field",
+            "response_minor_3_extra_field",
             "ok",
-            "minor 2 (newer than this decoder) with field 99 (unknown to it) appended: ignored",
-            changed(response_clean(), version=minor_2).SerializeToString() + b"\x9a\x06\x01x",
+            "minor 3 (newer than this decoder) with field 99 (unknown to it) appended: ignored",
+            changed(response_clean(), version=minor_3).SerializeToString() + b"\x9a\x06\x01x",
+        ),
+        message_vector(
+            "extract_no_frame", "invalid_response", "neither entry, data nor done", no_frame
+        ),
+        message_vector("extract_major_2", "unsupported_major", "major 2", extract_entry(major=2)),
+        message_vector(
+            "extract_kind_unspecified",
+            "invalid_response",
+            "entry kind 0",
+            extract_entry(kind=engine_pb2.ENTRY_KIND_UNSPECIFIED),
+        ),
+        message_vector(
+            "extract_kind_unknown",
+            "invalid_response",
+            "entry kind 9",
+            extract_entry(kind=engine_pb2.EntryKind.ValueType(9)),
+        ),
+        message_vector(
+            "extract_link_with_size",
+            "invalid_response",
+            "a link announcing 5 bytes",
+            extract_entry(path=b"link", kind=engine_pb2.LINK, size=5),
+        ),
+        message_vector(
+            "extract_special_with_size",
+            "invalid_response",
+            "a special entry announcing 1 byte",
+            extract_entry(path=b"fifo", kind=engine_pb2.SPECIAL, size=1),
+        ),
+        message_vector(
+            "extract_unnamed",
+            "ok",
+            "an entry its container does not name: the host names it",
+            extract_entry(path=b""),
+        ),
+        message_vector("extract_empty_data", "invalid_response", "empty data", extract_data(b"")),
+        message_vector(
+            "extract_done_no_engine_id",
+            "missing_engine_identity",
+            "a done without engine_id",
+            extract_done(engine_id=""),
+        ),
+        message_vector(
+            "extract_done_major_2",
+            "unsupported_major",
+            "a done whose own version is major 2",
+            extract_done(version=major_2),
         ),
     ]
 

@@ -1,0 +1,18 @@
+[package]
+name = "ostia-orchestrator"
+description = "Ostia orchestrator (spec §19 orchestrator/): drives the workers over a medium's objects; never parses content (SEC-05)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+ostia-contracts = { path = "../contracts" }
+ostia-core-domain = { path = "../core-domain" }
+ostia-media = { path = "../media" }
+ostia-sandbox = { path = "../sandbox" }
+
+[lints]
+workspace = true

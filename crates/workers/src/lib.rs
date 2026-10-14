@@ -2,4 +2,5 @@
 //! (`ostia-sandbox`), reads the object from descriptor 3 and answers one framed message (CTR-01). The
 //! orchestrator never links this crate: content is parsed here, in a worker, never there (SEC-05).
 
+pub mod extract;
 pub mod triage;

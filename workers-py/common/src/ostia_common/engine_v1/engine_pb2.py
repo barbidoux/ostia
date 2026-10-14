@@ -24,27 +24,35 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1costia/engine/v1/engine.proto\x12\x0fostia.engine.v1\"/\n\x0f\x43ontractVersion\x12\r\n\x05major\x18\x01 \x01(\r\x12\r\n\x05minor\x18\x02 \x01(\r\"H\n\x06Limits\x12\x14\n\x0cmemory_bytes\x18\x01 \x01(\x04\x12\x13\n\x0b\x64uration_ms\x18\x02 \x01(\r\x12\x13\n\x0bwrite_bytes\x18\x03 \x01(\x04\"\xf1\x01\n\x0e\x41nalyzeRequest\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\x11\n\tobject_id\x18\x02 \x01(\t\x12\x0e\n\x06sha256\x18\x03 \x01(\x0c\x12\x15\n\rdetected_type\x18\x04 \x01(\t\x12\x0c\n\x04size\x18\x05 \x01(\x04\x12\'\n\x06origin\x18\x06 \x01(\x0e\x32\x17.ostia.engine.v1.Origin\x12\'\n\x06limits\x18\x07 \x01(\x0b\x32\x17.ostia.engine.v1.Limits\x12\x31\n\x07version\x18\x0f \x01(\x0b\x32 .ostia.engine.v1.ContractVersion\"\\\n\x07\x46inding\x12\n\n\x02id\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\x10\n\x08severity\x18\x03 \x01(\r\x12\x10\n\x08\x65vidence\x18\x04 \x01(\t\x12\x12\n\nattack_ids\x18\x05 \x03(\t\"\xcc\x02\n\x0f\x41nalyzeResponse\x12\x11\n\tengine_id\x18\x01 \x01(\t\x12\x16\n\x0e\x65ngine_version\x18\x02 \x01(\t\x12\x17\n\x0f\x63ontent_version\x18\x03 \x01(\t\x12\'\n\x06status\x18\x04 \x01(\x0e\x32\x17.ostia.engine.v1.Status\x12#\n\x04hint\x18\x05 \x01(\x0e\x32\x15.ostia.engine.v1.Hint\x12\x12\n\x05score\x18\x06 \x01(\x01H\x00\x88\x01\x01\x12*\n\x08\x66indings\x18\x07 \x03(\x0b\x32\x18.ostia.engine.v1.Finding\x12\x13\n\x0b\x64uration_ms\x18\x08 \x01(\r\x12\x15\n\rdetected_type\x18\t \x01(\t\x12\x31\n\x07version\x18\x0f \x01(\x0b\x32 .ostia.engine.v1.ContractVersionB\x08\n\x06_score*d\n\x06Origin\x12\x16\n\x12ORIGIN_UNSPECIFIED\x10\x00\x12\x08\n\x04\x46ILE\x10\x01\x12\r\n\tEXTRACTED\x10\x02\x12\x0e\n\nALT_STREAM\x10\x03\x12\n\n\x06\x43\x41RVED\x10\x04\x12\r\n\tBOOT_CODE\x10\x05*Q\n\x06Status\x12\x16\n\x12STATUS_UNSPECIFIED\x10\x00\x12\x06\n\x02OK\x10\x01\x12\t\n\x05\x45RROR\x10\x02\x12\x0b\n\x07TIMEOUT\x10\x03\x12\x0f\n\x0bUNSUPPORTED\x10\x04*P\n\x04Hint\x12\x14\n\x10HINT_UNSPECIFIED\x10\x00\x12\x08\n\x04NONE\x10\x01\x12\t\n\x05\x43LEAN\x10\x02\x12\x0e\n\nSUSPICIOUS\x10\x03\x12\r\n\tMALICIOUS\x10\x04\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1costia/engine/v1/engine.proto\x12\x0fostia.engine.v1\"/\n\x0f\x43ontractVersion\x12\r\n\x05major\x18\x01 \x01(\r\x12\r\n\x05minor\x18\x02 \x01(\r\"H\n\x06Limits\x12\x14\n\x0cmemory_bytes\x18\x01 \x01(\x04\x12\x13\n\x0b\x64uration_ms\x18\x02 \x01(\r\x12\x13\n\x0bwrite_bytes\x18\x03 \x01(\x04\"\xa8\x02\n\x0e\x41nalyzeRequest\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\x11\n\tobject_id\x18\x02 \x01(\t\x12\x0e\n\x06sha256\x18\x03 \x01(\x0c\x12\x15\n\rdetected_type\x18\x04 \x01(\t\x12\x0c\n\x04size\x18\x05 \x01(\x04\x12\'\n\x06origin\x18\x06 \x01(\x0e\x32\x17.ostia.engine.v1.Origin\x12\'\n\x06limits\x18\x07 \x01(\x0b\x32\x17.ostia.engine.v1.Limits\x12\x35\n\nextraction\x18\x08 \x01(\x0b\x32!.ostia.engine.v1.ExtractionBudget\x12\x31\n\x07version\x18\x0f \x01(\x0b\x32 .ostia.engine.v1.ContractVersion\"r\n\x10\x45xtractionBudget\x12\x11\n\tmax_ratio\x18\x01 \x01(\x04\x12\x17\n\x0fremaining_bytes\x18\x02 \x01(\x04\x12\x19\n\x11remaining_entries\x18\x03 \x01(\x04\x12\x17\n\x0fmax_path_length\x18\x04 \x01(\r\"\\\n\x07\x46inding\x12\n\n\x02id\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\x10\n\x08severity\x18\x03 \x01(\r\x12\x10\n\x08\x65vidence\x18\x04 \x01(\t\x12\x12\n\nattack_ids\x18\x05 \x03(\t\"\xdb\x02\n\x0f\x41nalyzeResponse\x12\x11\n\tengine_id\x18\x01 \x01(\t\x12\x16\n\x0e\x65ngine_version\x18\x02 \x01(\t\x12\x17\n\x0f\x63ontent_version\x18\x03 \x01(\t\x12\'\n\x06status\x18\x04 \x01(\x0e\x32\x17.ostia.engine.v1.Status\x12#\n\x04hint\x18\x05 \x01(\x0e\x32\x15.ostia.engine.v1.Hint\x12\x12\n\x05score\x18\x06 \x01(\x01H\x00\x88\x01\x01\x12*\n\x08\x66indings\x18\x07 \x03(\x0b\x32\x18.ostia.engine.v1.Finding\x12\x13\n\x0b\x64uration_ms\x18\x08 \x01(\r\x12\x15\n\rdetected_type\x18\t \x01(\t\x12\r\n\x05limit\x18\n \x01(\t\x12\x31\n\x07version\x18\x0f \x01(\x0b\x32 .ostia.engine.v1.ContractVersionB\x08\n\x06_score\"q\n\x05\x45ntry\x12\x0c\n\x04path\x18\x01 \x01(\x0c\x12(\n\x04kind\x18\x02 \x01(\x0e\x32\x1a.ostia.engine.v1.EntryKind\x12\x0c\n\x04size\x18\x03 \x01(\x04\x12\x15\n\x08modified\x18\x04 \x01(\x03H\x00\x88\x01\x01\x42\x0b\n\t_modified\"\xb5\x01\n\x0c\x45xtractFrame\x12\'\n\x05\x65ntry\x18\x01 \x01(\x0b\x32\x16.ostia.engine.v1.EntryH\x00\x12\x0e\n\x04\x64\x61ta\x18\x02 \x01(\x0cH\x00\x12\x30\n\x04\x64one\x18\x03 \x01(\x0b\x32 .ostia.engine.v1.AnalyzeResponseH\x00\x12\x31\n\x07version\x18\x0f \x01(\x0b\x32 .ostia.engine.v1.ContractVersionB\x07\n\x05\x66rame*d\n\x06Origin\x12\x16\n\x12ORIGIN_UNSPECIFIED\x10\x00\x12\x08\n\x04\x46ILE\x10\x01\x12\r\n\tEXTRACTED\x10\x02\x12\x0e\n\nALT_STREAM\x10\x03\x12\n\n\x06\x43\x41RVED\x10\x04\x12\r\n\tBOOT_CODE\x10\x05*Q\n\x06Status\x12\x16\n\x12STATUS_UNSPECIFIED\x10\x00\x12\x06\n\x02OK\x10\x01\x12\t\n\x05\x45RROR\x10\x02\x12\x0b\n\x07TIMEOUT\x10\x03\x12\x0f\n\x0bUNSUPPORTED\x10\x04*P\n\x04Hint\x12\x14\n\x10HINT_UNSPECIFIED\x10\x00\x12\x08\n\x04NONE\x10\x01\x12\t\n\x05\x43LEAN\x10\x02\x12\x0e\n\nSUSPICIOUS\x10\x03\x12\r\n\tMALICIOUS\x10\x04*K\n\tEntryKind\x12\x1a\n\x16\x45NTRY_KIND_UNSPECIFIED\x10\x00\x12\x0b\n\x07REGULAR\x10\x01\x12\x08\n\x04LINK\x10\x02\x12\x0b\n\x07SPECIAL\x10\x03\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'ostia.engine.v1.engine_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_ORIGIN']._serialized_start=845
-  _globals['_ORIGIN']._serialized_end=945
-  _globals['_STATUS']._serialized_start=947
-  _globals['_STATUS']._serialized_end=1028
-  _globals['_HINT']._serialized_start=1030
-  _globals['_HINT']._serialized_end=1110
+  _globals['_ORIGIN']._serialized_start=1330
+  _globals['_ORIGIN']._serialized_end=1430
+  _globals['_STATUS']._serialized_start=1432
+  _globals['_STATUS']._serialized_end=1513
+  _globals['_HINT']._serialized_start=1515
+  _globals['_HINT']._serialized_end=1595
+  _globals['_ENTRYKIND']._serialized_start=1597
+  _globals['_ENTRYKIND']._serialized_end=1672
   _globals['_CONTRACTVERSION']._serialized_start=49
   _globals['_CONTRACTVERSION']._serialized_end=96
   _globals['_LIMITS']._serialized_start=98
   _globals['_LIMITS']._serialized_end=170
   _globals['_ANALYZEREQUEST']._serialized_start=173
-  _globals['_ANALYZEREQUEST']._serialized_end=414
-  _globals['_FINDING']._serialized_start=416
-  _globals['_FINDING']._serialized_end=508
-  _globals['_ANALYZERESPONSE']._serialized_start=511
-  _globals['_ANALYZERESPONSE']._serialized_end=843
+  _globals['_ANALYZEREQUEST']._serialized_end=469
+  _globals['_EXTRACTIONBUDGET']._serialized_start=471
+  _globals['_EXTRACTIONBUDGET']._serialized_end=585
+  _globals['_FINDING']._serialized_start=587
+  _globals['_FINDING']._serialized_end=679
+  _globals['_ANALYZERESPONSE']._serialized_start=682
+  _globals['_ANALYZERESPONSE']._serialized_end=1029
+  _globals['_ENTRY']._serialized_start=1031
+  _globals['_ENTRY']._serialized_end=1144
+  _globals['_EXTRACTFRAME']._serialized_start=1147
+  _globals['_EXTRACTFRAME']._serialized_end=1328
 # @@protoc_insertion_point(module_scope)

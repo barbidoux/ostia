@@ -7,6 +7,10 @@
 //! keeps running (NFR-05): a failed run gets a synthesised response with the declared engine identity and
 //! status `ERROR` or `TIMEOUT` (docs/contracts/cli.md, "Synthesised engine results").
 //!
+//! [`WorkerHost::extract`] runs the extraction worker the same way, but reads a stream of `ExtractFrame`s
+//! (ADR-18): each entry and its bytes go to an [`EntrySink`] as they arrive, checked against the declared sizes
+//! and the request's `ExtractionBudget` by the host itself, whatever the worker claims.
+//!
 //! P1 launches workers without isolation ([`Unconfined`]); P2's sandbox replaces it behind [`Launcher`].
 //!
 //! Invariant for the process embedding the host: nothing else reaps its children (no `SIGCHLD` set to
@@ -23,7 +27,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use command_fds::{CommandFdExt, FdMapping};
-use ostia_contracts::v1::{AnalyzeRequest, AnalyzeResponse};
+use ostia_contracts::v1::{AnalyzeRequest, AnalyzeResponse, Entry};
 use ostia_contracts::{ContractError, encode_frame};
 
 /// The worker's descriptor holding the object (ADR-03).
@@ -151,6 +155,62 @@ pub enum Failure {
     Protocol(ContractError),
     /// The response names another engine.
     OtherEngine(String),
+    /// The extraction worker's frames do not follow the protocol or the budget (ADR-18).
+    Stream(StreamFault),
+    /// The entry sink refused an entry or its bytes.
+    Sink(String),
+}
+
+/// How an extraction worker's stream of frames broke the protocol or the budget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamFault {
+    /// Bytes with no entry announced, or after the current entry's last byte.
+    DataWithoutEntry,
+    /// More bytes than the current entry announced.
+    DataBeyondSize,
+    /// An entry, or the end, before the current entry's last byte.
+    EntryCut,
+    /// The output ended without the final response.
+    NoDone,
+    /// More entries than the request's budget allows.
+    TooManyEntries,
+    /// More bytes than the request's budget allows.
+    TooManyBytes,
+}
+
+/// Where an extraction's entries go as the worker streams them (ADR-18).
+pub trait EntrySink {
+    /// An entry begins; its bytes, if any, follow through [`EntrySink::data`].
+    ///
+    /// # Errors
+    /// Any error stops the run ([`Failure::Sink`]).
+    fn entry(&mut self, entry: &Entry) -> std::io::Result<()>;
+
+    /// The next bytes of the current entry.
+    ///
+    /// # Errors
+    /// Any error stops the run ([`Failure::Sink`]).
+    fn data(&mut self, bytes: &[u8]) -> std::io::Result<()>;
+
+    /// The current entry is complete: every byte it announced arrived.
+    ///
+    /// # Errors
+    /// Any error stops the run ([`Failure::Sink`]).
+    fn end(&mut self) -> std::io::Result<()>;
+}
+
+/// Result of one extraction run. When `failure` is set, the entries the sink received are not to be trusted:
+/// the container could not be extracted.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtractRun {
+    /// The worker's final response, or the synthesised one when `failure` is set.
+    pub response: AnalyzeResponse,
+    /// Why the response was synthesised, if it was.
+    pub failure: Option<Failure>,
+    /// The start of the worker's standard error, at most the cap (log its length or hash, never the bytes).
+    pub stderr: Vec<u8>,
+    /// The worker wrote more standard error than the cap.
+    pub stderr_truncated: bool,
 }
 
 /// Result of one run.
@@ -222,6 +282,59 @@ impl<L: Launcher> WorkerHost<L> {
                 stderr_truncated,
             },
             Err(failure) => WorkerRun {
+                response: host::synthesised(identity, &failure, started.elapsed()),
+                failure: Some(failure),
+                stderr,
+                stderr_truncated,
+            },
+        }
+    }
+
+    /// Runs the extraction worker `command` once on `object` with `request` (which must carry an
+    /// `ExtractionBudget`), handing each streamed entry to `sink`; never fails, never panics on the worker's
+    /// behaviour.
+    pub fn extract(
+        &self,
+        command: &WorkerCommand,
+        identity: &EngineIdentity,
+        request: &AnalyzeRequest,
+        object: &Path,
+        sink: &mut dyn EntrySink,
+    ) -> ExtractRun {
+        let started = Instant::now();
+        let outcome = request
+            .extraction
+            .ok_or(Failure::Request(ContractError::InvalidRequest(
+                "extraction",
+            )))
+            .and_then(|budget| {
+                encode_frame(request, self.limits.max_frame)
+                    .map_err(Failure::Request)
+                    .map(|frame| (budget, frame))
+            })
+            .and_then(|(budget, frame)| Ok((budget, frame, host::open_object(object)?)))
+            .and_then(|prepared| host::check_no_inheritable_descriptor().map(|()| prepared))
+            .and_then(|(budget, frame, object)| {
+                self.launcher
+                    .launch(command, object.into())
+                    .map(|child| (budget, frame, child))
+                    .map_err(|error| Failure::Spawn(error.to_string()))
+            })
+            .map(|(budget, frame, child)| {
+                host::exchange_stream(child, frame, identity, self.limits, started, &budget, sink)
+            });
+        let (answer, stderr, stderr_truncated) = match outcome {
+            Ok(done) => (done.answer, done.stderr, done.stderr_truncated),
+            Err(failure) => (Err(failure), Vec::new(), false),
+        };
+        match answer {
+            Ok(response) => ExtractRun {
+                response,
+                failure: None,
+                stderr,
+                stderr_truncated,
+            },
+            Err(failure) => ExtractRun {
                 response: host::synthesised(identity, &failure, started.elapsed()),
                 failure: Some(failure),
                 stderr,

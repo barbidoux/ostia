@@ -121,6 +121,86 @@ impl Workspace {
     }
 }
 
+/// A copy written as its bytes arrive (an extracted object): hashed as written, sealed by [`Copy::finish`].
+pub struct Copy {
+    path: PathBuf,
+    file: File,
+    sha256: Sha256,
+    sha1: Sha1,
+    size: u64,
+}
+
+impl std::fmt::Debug for Copy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Copy")
+            .field("path", &self.path)
+            .field("size", &self.size)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A sealed copy: its size, its hashes and its path in the workspace.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Copied {
+    /// Bytes written.
+    pub size: u64,
+    /// SHA-256 of the bytes written.
+    pub sha256: [u8; 32],
+    /// SHA-1 of the bytes written.
+    pub sha1: [u8; 20],
+    /// The copy: the only one used afterwards.
+    pub copy: PathBuf,
+}
+
+impl Workspace {
+    /// A new, empty copy to write an object into as its bytes arrive.
+    ///
+    /// # Errors
+    /// [`InventoryError::Workspace`] when the copy cannot be created.
+    pub fn begin_copy(&mut self) -> Result<Copy, InventoryError> {
+        let (path, file) = self.new_copy()?;
+        Ok(Copy {
+            path,
+            file,
+            sha256: Sha256::new(),
+            sha1: Sha1::new(),
+            size: 0,
+        })
+    }
+}
+
+impl Copy {
+    /// Appends `bytes` to the copy.
+    ///
+    /// # Errors
+    /// [`InventoryError::Workspace`] when they cannot be written.
+    pub fn write(&mut self, bytes: &[u8]) -> Result<(), InventoryError> {
+        self.file
+            .write_all(bytes)
+            .map_err(|error| workspace_error(&self.path, &error))?;
+        self.sha256.update(bytes);
+        self.sha1.update(bytes);
+        self.size = self
+            .size
+            .saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
+        Ok(())
+    }
+
+    /// Flushes the copy, makes it read-only and returns its size and hashes.
+    ///
+    /// # Errors
+    /// [`InventoryError::Workspace`] when it cannot be sealed.
+    pub fn finish(self) -> Result<Copied, InventoryError> {
+        seal(&self.path, &self.file)?;
+        Ok(Copied {
+            size: self.size,
+            sha256: self.sha256.finalize().into(),
+            sha1: self.sha1.finalize().into(),
+            copy: self.path,
+        })
+    }
+}
+
 fn workspace_error(path: &Path, error: &std::io::Error) -> InventoryError {
     InventoryError::Workspace(format!("cannot write the copy {}: {error}", path.display()))
 }

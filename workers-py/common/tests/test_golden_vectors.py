@@ -16,6 +16,7 @@ import pytest
 from ostia_common.engine_v1 import engine_pb2
 from ostia_common.framing import (
     ContractError,
+    decode_extract_frame,
     decode_frame,
     decode_request,
     decode_response,
@@ -90,13 +91,63 @@ def response_typed() -> engine_pb2.AnalyzeResponse:
     )
 
 
+MINOR_2 = engine_pb2.ContractVersion(major=1, minor=2)
+
+
+def request_extract() -> engine_pb2.AnalyzeRequest:
+    """A request to the extraction worker, with the tree's remaining budget (minor 2, ADR-18)."""
+    request = request_pdf()
+    request.object_id = "object-0002"
+    request.detected_type = "zip"
+    request.size = 22
+    request.extraction.CopyFrom(
+        engine_pb2.ExtractionBudget(
+            max_ratio=200,
+            remaining_bytes=4_294_967_296,
+            remaining_entries=100_000,
+            max_path_length=4096,
+        )
+    )
+    request.version.CopyFrom(MINOR_2)
+    return request
+
+
+def extract_entry(
+    path: bytes, kind: engine_pb2.EntryKind.ValueType, size: int
+) -> engine_pb2.ExtractFrame:
+    entry = engine_pb2.Entry(path=path, kind=kind, size=size, modified=315_532_800)
+    return engine_pb2.ExtractFrame(entry=entry, version=MINOR_2)
+
+
+VALID_EXTRACT_FRAMES = {
+    "extract_entry": extract_entry(b"dir/b.bin", engine_pb2.REGULAR, 3),
+    "extract_data": engine_pb2.ExtractFrame(data=b"abc", version=MINOR_2),
+    "extract_done": engine_pb2.ExtractFrame(
+        done=engine_pb2.AnalyzeResponse(
+            engine_id="ostia-extract",
+            engine_version="0.0.0",
+            content_version="formats-1",
+            status=engine_pb2.ERROR,
+            hint=engine_pb2.NONE,
+            duration_ms=1,
+            limit="ratio",
+            version=MINOR_2,
+        ),
+        version=MINOR_2,
+    ),
+    "extract_link": extract_entry(b"link", engine_pb2.LINK, 0),
+    # A gzip member without a name: the host names the entry after its container (report.md).
+    "extract_unnamed": extract_entry(b"", engine_pb2.REGULAR, 3),
+}
+
+
 VALID_RESPONSES = {
     "response_clean": response_clean(0),
     "response_scored": response_scored(),
     "response_typed": response_typed(),
     "response_newer_minor": response_clean(7),
 }
-VALID_DECODE_ONLY = ["response_minor_2_extra_field", "response_unknown_group"]
+VALID_DECODE_ONLY = ["response_minor_3_extra_field", "response_unknown_group"]
 
 INVALID = [
     ("frame_empty", "response", "empty"),
@@ -125,18 +176,35 @@ INVALID = [
     ("response_two_faults", "response", "unsupported_major"),
     ("response_unterminated_group", "response", "malformed"),
     ("response_mismatched_group", "response", "malformed"),
+    ("extract_no_frame", "extract", "invalid_response"),
+    ("extract_major_2", "extract", "unsupported_major"),
+    ("extract_kind_unspecified", "extract", "invalid_response"),
+    ("extract_kind_unknown", "extract", "invalid_response"),
+    ("extract_link_with_size", "extract", "invalid_response"),
+    ("extract_special_with_size", "extract", "invalid_response"),
+    ("extract_empty_data", "extract", "invalid_response"),
+    ("extract_done_no_engine_id", "extract", "missing_engine_identity"),
+    ("extract_done_major_2", "extract", "unsupported_major"),
 ]
+DECODERS = {"request": decode_request, "response": decode_response, "extract": decode_extract_frame}
 
 # Run by a pure-Python protobuf runtime: every vector must give the same outcome as with upb.
 PURE_PYTHON_SCRIPT = """
 import json, sys
 from pathlib import Path
 from google.protobuf.internal import api_implementation
-from ostia_common.framing import ContractError, decode_frame, decode_request, decode_response
+from ostia_common.framing import (
+    ContractError, decode_extract_frame, decode_frame, decode_request, decode_response
+)
 assert api_implementation.Type() == "python", api_implementation.Type()
 testdata = Path(sys.argv[1])
+decoders = {
+    "AnalyzeRequest": decode_request,
+    "AnalyzeResponse": decode_response,
+    "ExtractFrame": decode_extract_frame,
+}
 for vector in json.loads((testdata / "vectors.json").read_text())["vectors"]:
-    decode = decode_request if vector["message"] == "AnalyzeRequest" else decode_response
+    decode = decoders[vector["message"]]
     try:
         decode(decode_frame((testdata / (vector["name"] + ".bin")).read_bytes()))
         outcome = "ok"
@@ -173,9 +241,9 @@ def test_python_decodes_the_valid_vectors() -> None:
 
 @pytest.mark.req("CTR-04")
 def test_a_newer_minor_with_an_unknown_field_is_accepted() -> None:
-    decoded = decode_response(decode_frame(vector("response_minor_2_extra_field")))
+    decoded = decode_response(decode_frame(vector("response_minor_3_extra_field")))
     decoded.DiscardUnknownFields()
-    assert decoded == response_clean(2)
+    assert decoded == response_clean(3)
     grouped = decode_response(decode_frame(vector("response_unknown_group")))
     grouped.DiscardUnknownFields()
     assert grouped == response_clean(0)
@@ -201,17 +269,36 @@ def test_the_pure_python_protobuf_runtime_gives_the_same_outcomes() -> None:
 def test_python_refuses_the_invalid_vectors_with_the_same_kind(
     name: str, message: str, kind: str
 ) -> None:
-    decode = decode_request if message == "request" else decode_response
     with pytest.raises(ContractError) as error:
-        decode(decode_frame(vector(name)))
+        DECODERS[message](decode_frame(vector(name)))
     assert error.value.kind == kind
+
+
+@pytest.mark.req("FR-06", "CTR-01", "CTR-04")
+def test_extraction_vectors_round_trip_between_python_and_rust() -> None:
+    assert encode_frame(request_extract()) == vector("request_extract")
+    assert decode_request(decode_frame(vector("request_extract"))) == request_extract()
+    for name, message in VALID_EXTRACT_FRAMES.items():
+        assert encode_frame(message) == vector(name), name
+        assert decode_extract_frame(decode_frame(vector(name))) == message, name
+
+
+@pytest.mark.req("FR-06", "CTR-01")
+def test_extract_data_is_the_hand_decoded_frame() -> None:
+    # Written out field by field from engine.proto: data (field 2) "abc", version (field 15) {1, 2}.
+    assert vector("extract_data") == bytes.fromhex("0000000b  1203616263  7a0408011002")
 
 
 @pytest.mark.req("TOOLING")
 def test_the_manifest_lists_the_same_vectors_and_expectations() -> None:
     manifest = json.loads((TESTDATA / "vectors.json").read_text())
     listed = {v["name"]: v["expect"] for v in manifest["vectors"]}
-    expected = {"request_pdf": "ok", **dict.fromkeys(VALID_RESPONSES, "ok")}
+    expected = {
+        "request_pdf": "ok",
+        "request_extract": "ok",
+        **dict.fromkeys(VALID_RESPONSES, "ok"),
+    }
+    expected.update(dict.fromkeys(VALID_EXTRACT_FRAMES, "ok"))
     expected.update(dict.fromkeys(VALID_DECODE_ONLY, "ok"))
     expected.update({name: kind for name, _, kind in INVALID})
     assert listed == expected

@@ -9,8 +9,8 @@ use std::io::{Cursor, ErrorKind, Read};
 
 use ostia_contracts::v1::AnalyzeResponse;
 use ostia_contracts::{
-    ContractError, DEFAULT_MAX_FRAME, decode_frame, decode_request, decode_response, encode_frame,
-    read_frame,
+    ContractError, DEFAULT_MAX_FRAME, decode_extract_frame, decode_frame, decode_request,
+    decode_response, encode_frame, read_frame,
 };
 
 /// Small cap so that the length checks around the cap are reached often.
@@ -62,7 +62,8 @@ pub fn exercise_with(data: &[u8], on_response: &dyn Fn(&AnalyzeResponse)) {
     decode_body(data, on_response);
 }
 
-/// Decodes `body` as a request and as a response; an accepted message survives a re-encoding.
+/// Decodes `body` as a request, a response and an extraction frame; an accepted message survives a
+/// re-encoding.
 fn decode_body(body: &[u8], on_response: &dyn Fn(&AnalyzeResponse)) {
     if let Ok(request) = decode_request(body) {
         let frame = encode_frame(&request, DEFAULT_MAX_FRAME).expect("an accepted request encodes");
@@ -82,6 +83,16 @@ fn decode_body(body: &[u8], on_response: &dyn Fn(&AnalyzeResponse)) {
             again,
             Ok(response),
             "a response changed through a re-encoding"
+        );
+    }
+    if let Ok(frame) = decode_extract_frame(body) {
+        let encoded =
+            encode_frame(&frame, DEFAULT_MAX_FRAME).expect("an accepted extraction frame encodes");
+        let again = decode_frame(&encoded, DEFAULT_MAX_FRAME).and_then(decode_extract_frame);
+        assert_eq!(
+            again,
+            Ok(frame),
+            "an extraction frame changed through a re-encoding"
         );
     }
 }

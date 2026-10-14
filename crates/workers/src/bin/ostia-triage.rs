@@ -73,6 +73,7 @@ fn main() -> ExitCode {
         findings,
         duration_ms: u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX),
         detected_type,
+        limit: String::new(),
         version: Some(current_version()),
     };
     // write_frame flushes after the frame.

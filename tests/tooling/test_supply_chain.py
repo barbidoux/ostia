@@ -883,6 +883,7 @@ def test_rust_sbom_per_shipped_crate(generated: tuple[Path, str]) -> None:
         "ostia-core-domain.cdx.json",
         "ostia-fat-attributes.cdx.json",
         "ostia-media.cdx.json",
+        "ostia-orchestrator.cdx.json",
         "ostia-sandbox.cdx.json",
         "ostia-traceability.cdx.json",
         "ostia-workers.cdx.json",

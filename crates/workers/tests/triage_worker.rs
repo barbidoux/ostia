@@ -40,6 +40,7 @@ fn request() -> AnalyzeRequest {
         size: 0,
         origin: Origin::File.into(),
         limits: None,
+        extraction: None,
         version: Some(ContractVersion { major: 1, minor: 1 }),
     }
 }
@@ -142,7 +143,7 @@ fn typed_corpus_is_identified_through_the_worker_host() {
         assert!(response.findings.is_empty(), "{name}");
         assert_eq!(
             response.version,
-            Some(ContractVersion { major: 1, minor: 1 })
+            Some(ContractVersion { major: 1, minor: 2 })
         );
     }
 }

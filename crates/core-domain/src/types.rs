@@ -81,6 +81,22 @@ impl DetectedType {
             .find(|detected| detected.name() == name)
     }
 
+    /// The type is a container FR-06 extracts (zip, gzip, tar, 7z, rar, cab, iso9660, msi).
+    #[must_use]
+    pub fn is_container(self) -> bool {
+        matches!(
+            self,
+            Self::Zip
+                | Self::Gzip
+                | Self::Tar
+                | Self::SevenZip
+                | Self::Rar
+                | Self::Cab
+                | Self::Iso9660
+                | Self::Msi
+        )
+    }
+
     /// The extensions of the type (lower case, without the dot); none for `unknown`.
     #[must_use]
     pub fn extensions(self) -> &'static [&'static str] {

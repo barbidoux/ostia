@@ -4,7 +4,10 @@ use std::io::{Read, Write};
 
 use prost::Message;
 
-use crate::v1::{AnalyzeRequest, AnalyzeResponse, ContractVersion, Hint, Origin, Status};
+use crate::v1::extract_frame::Frame;
+use crate::v1::{
+    AnalyzeRequest, AnalyzeResponse, ContractVersion, EntryKind, ExtractFrame, Hint, Origin, Status,
+};
 
 /// Default cap on the length of one frame's message: 16 MiB.
 pub const DEFAULT_MAX_FRAME: usize = 16 * 1024 * 1024;
@@ -12,8 +15,9 @@ pub const DEFAULT_MAX_FRAME: usize = 16 * 1024 * 1024;
 /// Contract major version this crate speaks.
 pub const MAJOR: u32 = 1;
 
-/// Contract minor version this crate writes (1: `AnalyzeResponse.detected_type`).
-pub const MINOR: u32 = 1;
+/// Contract minor version this crate writes (1: `AnalyzeResponse.detected_type`; 2: the extraction budget,
+/// the limit name and `ExtractFrame`, ADR-18).
+pub const MINOR: u32 = 2;
 
 /// Highest finding severity (4, critical).
 const MAX_SEVERITY: u32 = 4;
@@ -241,6 +245,10 @@ pub fn decode_request(body: &[u8]) -> Result<AnalyzeRequest, ContractError> {
 /// Malformed message, unsupported major, missing engine identity, invalid fields.
 pub fn decode_response(body: &[u8]) -> Result<AnalyzeResponse, ContractError> {
     let response = AnalyzeResponse::decode(body).map_err(|_| ContractError::Malformed)?;
+    check_response(response)
+}
+
+fn check_response(response: AnalyzeResponse) -> Result<AnalyzeResponse, ContractError> {
     check_version(response.version.as_ref())?;
     for (field, value) in [
         ("engine_id", &response.engine_id),
@@ -271,4 +279,36 @@ pub fn decode_response(body: &[u8]) -> Result<AnalyzeResponse, ContractError> {
         return Err(ContractError::InvalidScore);
     }
     Ok(response)
+}
+
+/// Decodes and validates one frame of the extraction worker's output (ADR-18): contract major; exactly one of
+/// entry, data or done; an entry with a known kind and no size unless it is a regular file (an empty path is
+/// an entry its container does not name); data that is not empty; a done that is a valid response.
+///
+/// # Errors
+/// Malformed message, unsupported major, invalid fields, or the errors of [`decode_response`] for a done.
+pub fn decode_extract_frame(body: &[u8]) -> Result<ExtractFrame, ContractError> {
+    let frame = ExtractFrame::decode(body).map_err(|_| ContractError::Malformed)?;
+    check_version(frame.version.as_ref())?;
+    match frame.frame {
+        None => Err(ContractError::InvalidResponse("frame")),
+        Some(Frame::Entry(ref entry)) => match EntryKind::try_from(entry.kind) {
+            Ok(EntryKind::Regular) => Ok(frame),
+            Ok(EntryKind::Link | EntryKind::Special) if entry.size == 0 => Ok(frame),
+            Ok(EntryKind::Link | EntryKind::Special) => {
+                Err(ContractError::InvalidResponse("entry size"))
+            }
+            Ok(EntryKind::Unspecified) | Err(_) => {
+                Err(ContractError::InvalidResponse("entry kind"))
+            }
+        },
+        Some(Frame::Data(ref data)) if data.is_empty() => {
+            Err(ContractError::InvalidResponse("data"))
+        }
+        Some(Frame::Data(_)) => Ok(frame),
+        Some(Frame::Done(done)) => Ok(ExtractFrame {
+            frame: Some(Frame::Done(check_response(done)?)),
+            version: frame.version,
+        }),
+    }
 }

@@ -9,8 +9,8 @@
 mod framing;
 
 pub use framing::{
-    ContractError, DEFAULT_MAX_FRAME, MAJOR, MINOR, current_version, decode_frame, decode_request,
-    decode_response, encode_frame, read_frame, write_frame,
+    ContractError, DEFAULT_MAX_FRAME, MAJOR, MINOR, current_version, decode_extract_frame,
+    decode_frame, decode_request, decode_response, encode_frame, read_frame, write_frame,
 };
 
 /// Messages of the `ostia.engine.v1` contract.

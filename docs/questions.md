@@ -95,6 +95,61 @@ Blocking: no.
 
 ## Answered
 
+### Q-61 · WP-1.8 · FR-06 · Windows forms of entry paths and device names
+Context: the extraction worker refused only `/`-absolute paths, `..` components split on `/`, and NUL. Windows
+extractors also honour `..\..\evil.exe`, `\x`, `C:\x`, `C:x` and `\\host\share\x` once a container is transferred,
+and the P1 brief lists "devices" among the names to sanitise (`CON`, `aux.txt`, `COM1`). report.md defines only
+`/` as a separator.
+Options: (a) `\` also separates components for the `..` and absolute checks, a drive letter or a UNC prefix is
+absolute, and a component named after a Windows device (CON, PRN, AUX, NUL, COM1-9, LPT1-9, CONIN$, CONOUT$, any
+extension, any case) is refused (b) the Windows forms only (c) `/` only, as written.
+Recommendation: (a), one sentence in report.md.
+Answer (owner, 2026-10-14): (a).
+
+### Q-60 · WP-1.8 · FR-06 · compression ratio on small entries
+Context: policy.md checks the ratio per entry and per container while streaming. A small sparse file breaches it:
+10 KiB of zeros deflate to about 30 bytes (340:1, over the default 200). ClamAV-style scanners only judge the
+ratio past a size.
+Options: (a) literal: any entry or container over `max_ratio` breaches, whatever its size (b) the ratio is judged
+only once an entry or container has produced more than 1 MiB.
+Recommendation: (a): it is the contract as written, and the owner can raise `max_ratio`. (b) would be a contract
+change in policy.md.
+Answer (owner, 2026-10-14): (a).
+
+### Q-59 · WP-1.8, WP-1.10 · FR-06 · where the recursion over an archive tree lives
+Context: WP-1.8's "tests written first" need recursion: nested archives fully listed, too deep, and limits
+counted over the whole tree. That means triage, extraction again for each child container, the tree's
+cumulative budget, and the depth check. WP-1.10 builds the pipeline that calls it.
+Options: (a) WP-1.8 adds the tree driver: a module of a new `crates/orchestrator` that runs triage and
+extraction over one medium file's tree, with the budget, returning the objects and each container's failure.
+WP-1.10 calls it. (b) WP-1.8 stops at one container with a budget given by its caller; recursion and depth wait
+for WP-1.10.
+Recommendation: (a): the limit tests then prove the real recursion, and WP-1.10 stays at its size.
+Answer (owner, 2026-10-14): (a).
+
+### Q-58 · WP-1.8 · FR-06 · archive crates
+Context: prompts/P1.md prefers pure-Rust crates. Proposed, all in `ostia-workers` only (the SEC-05 test already
+forbids them elsewhere): `zip` 9.0.3 (MIT; default features off, `deflate-flate2` only: no AES, bzip2, lzma,
+zstd), `flate2` 1.1.10 (MIT OR Apache-2.0; `rust_backend`, miniz_oxide), `tar` 0.4.46 (MIT OR Apache-2.0; default
+features off, no xattr). New transitive crates: miniz_oxide 0.9.1, adler2 2.0.1, simd-adler32 0.3.10,
+crc32fast 1.5.2, typed-path 0.12.3, indexmap 2.14.2, filetime 0.2.29 (MIT, Apache-2.0 or Zlib options).
+Options: (a) these three crates (b) a hand-written zip and tar reader on top of `flate2` only.
+Recommendation: (a). A zip entry using another method (bzip2, lzma, zstd, AES) is reported as malformed: it
+cannot be extracted, so it is UNSCANNABLE.
+Answer (owner, 2026-10-14): (a).
+
+### Q-57 · WP-1.8 · FR-06, SEC-05, CTR-04 · how the extraction worker hands back extracted objects
+Context: `ostia.engine.v1` has one request and one response, and the object never travels in a message; nothing
+can return an archive's entries. In P2 the worker has no network, a read-only root and no view of the workspace.
+Options: (a) stream over standard output: per entry a header frame (path, kind, size, time), then its bytes in
+chunks, then one final response; the host counts bytes and entries itself and copies each entry into the
+workspace as it arrives (b) an output file on descriptor 4 that the host creates in the workspace, the response
+listing offsets (a 100,000-entry list does not fit one 16 MiB frame) (c) an output directory the worker fills,
+read back by the host. Each needs additive contract fields (minor 2): a budget on `AnalyzeRequest`, a limit name
+on `AnalyzeResponse`, and for (a) an `ExtractFrame` message. Details in ADR-18 (proposed).
+Recommendation: (a): nothing writable is shared with the sandbox, and the totals hold even against a lying worker.
+Answer (owner, 2026-10-14): (a).
+
 ### Q-56 · WP-1.7 · FR-05 · trailing dots and spaces in names; dot names and double extensions
 Context: Windows drops trailing dots and spaces from a name when it opens it: `invoice.pdf.exe.` and
 `invoice.pdf.exe ` run as `invoice.pdf.exe`. report.md's name flags do not mention them, so today

@@ -12,11 +12,22 @@ publish.workspace = true
 name = "ostia-triage"
 path = "src/bin/ostia-triage.rs"
 
+[[bin]]
+name = "ostia-extract"
+path = "src/bin/ostia-extract.rs"
+
 [dependencies]
 ostia-contracts = { path = "../contracts" }
 ostia-core-domain = { path = "../core-domain" }
+# Q-58: the extraction worker's formats, pure Rust, linked by this crate only (SEC-05). zip without its
+# default features: deflate through flate2 only (no AES, bzip2, lzma, zstd: such entries are malformed).
+flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
+tar = { version = "=0.4.46", default-features = false }
+zip = { version = "=9.0.3", default-features = false, features = ["deflate-flate2"] }
 
 [dev-dependencies]
+ostia-media = { path = "../media" }
+ostia-orchestrator = { path = "../orchestrator" }
 ostia-sandbox = { path = "../sandbox" }
 ostia-traceability = { path = "../traceability" }
 

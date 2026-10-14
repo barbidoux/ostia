@@ -57,6 +57,29 @@ fn type_extensions_are_the_report_ones() {
     }
 }
 
+#[req("FR-06")]
+#[test]
+fn containers_are_the_archive_formats_of_fr_06() {
+    // FR-06: zip, 7z, rar, tar, gz, cab, iso, msi are extracted; every other type is a leaf.
+    let containers: Vec<_> = DetectedType::ALL
+        .into_iter()
+        .filter(|detected| detected.is_container())
+        .collect();
+    assert_eq!(
+        containers,
+        [
+            DetectedType::Zip,
+            DetectedType::Gzip,
+            DetectedType::Tar,
+            DetectedType::SevenZip,
+            DetectedType::Rar,
+            DetectedType::Cab,
+            DetectedType::Iso9660,
+            DetectedType::Msi,
+        ]
+    );
+}
+
 #[req("FR-05")]
 #[test]
 fn extension_mismatch_follows_the_report() {

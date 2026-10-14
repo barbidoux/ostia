@@ -10,10 +10,14 @@ is the corpus directory the run grows (the nightly workflow caches it); FUZZ_ART
 crash and timeout inputs (the nightly workflow uploads it on failure).
 """
 
+import gzip
+import io
 import os
 import re
 import shutil
 import subprocess
+import tarfile
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -124,6 +128,63 @@ def test_the_triage_target_runs_the_type_rules_without_crashing(tmp_path: Path) 
     result = cargo_fuzz(
         "run",
         "triage_identify",
+        str(corpus),
+        "--",
+        f"-max_total_time={SECONDS}",
+        f"-timeout={INPUT_TIMEOUT}",
+        f"-artifact_prefix={artifacts(tmp_path)}/",
+        seconds=SECONDS,
+    )
+    assert result.returncode == 0, report(result)
+    runs = re.search(r"^Done (\d+) runs", result.stderr, re.MULTILINE)
+    assert runs and int(runs.group(1)) > 0, report(result)
+
+
+def extraction_seeds() -> dict[str, bytes]:
+    """A zip (stored, deflated, a directory), a tar (file, directory, link) and a gzip member."""
+    zipped = io.BytesIO()
+    with zipfile.ZipFile(zipped, "w") as archive:
+        archive.writestr(zipfile.ZipInfo("a.txt", (1980, 1, 1, 0, 0, 0)), b"alpha" * 20)
+        deflated = zipfile.ZipInfo("dir/b.bin", (1980, 1, 1, 0, 0, 0))
+        deflated.compress_type = zipfile.ZIP_DEFLATED
+        archive.writestr(deflated, bytes(range(256)) * 4)
+        archive.writestr(zipfile.ZipInfo("dir/", (1980, 1, 1, 0, 0, 0)), b"")
+    tarred = io.BytesIO()
+    with tarfile.open(fileobj=tarred, mode="w", format=tarfile.USTAR_FORMAT) as archive:
+        content = b"tar entry\n"
+        info = tarfile.TarInfo("a.txt")
+        info.size = len(content)
+        archive.addfile(info, io.BytesIO(content))
+        archive.addfile(directory("dir"))
+        soft = tarfile.TarInfo("soft")
+        soft.type = tarfile.SYMTYPE
+        soft.linkname = "a.txt"
+        archive.addfile(soft)
+    return {
+        "seed.zip": zipped.getvalue(),
+        "seed.tar": tarred.getvalue(),
+        "seed.gz": gzip.compress(b"gzip member " * 30, mtime=0),
+    }
+
+
+def directory(name: str) -> tarfile.TarInfo:
+    info = tarfile.TarInfo(name)
+    info.type = tarfile.DIRTYPE
+    return info
+
+
+@pytest.mark.req("NFR-06", "FR-06")
+def test_the_extraction_target_runs_the_formats_without_crashing(tmp_path: Path) -> None:
+    assert SECONDS > 0, "FUZZ_SECONDS must be positive (0 means no limit to libFuzzer)"
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    # Valid seeds, built here: from nothing, libFuzzer seldom builds a central directory, a tar checksum or a
+    # gzip trailer, and the stream properties would hardly be reached.
+    for name, data in extraction_seeds().items():
+        (corpus / name).write_bytes(data)
+    result = cargo_fuzz(
+        "run",
+        "extract_formats",
         str(corpus),
         "--",
         f"-max_total_time={SECONDS}",

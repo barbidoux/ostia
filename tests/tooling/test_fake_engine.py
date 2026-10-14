@@ -124,8 +124,8 @@ def test_the_default_answer_carries_the_configured_engine(tmp_path: Path, use_en
         status=engine_pb2.OK,
         hint=engine_pb2.CLEAN,
         duration_ms=7,
-        # The fake engine writes the contract version it speaks: minor 1 since detected_type (Q-54).
-        version=engine_pb2.ContractVersion(major=1, minor=1),
+        # The fake engine writes the contract version it speaks: minor 2 since ExtractFrame (ADR-18).
+        version=engine_pb2.ContractVersion(major=1, minor=2),
     )
 
 

@@ -6,6 +6,7 @@
 
 pub mod clock;
 pub mod engine;
+pub mod entry;
 pub mod object;
 pub mod policy;
 pub mod session;

@@ -56,7 +56,7 @@ def test_the_generated_contract_matches_its_v1_snapshot() -> None:
     # Default base: origin/main (CI checks out the full history).
     code, lines = compat()
     assert code == 0, "\n".join(lines)
-    assert lines[-1] == "ostia.engine.v1 is compatible with compat.json (5 messages, 3 enums)"
+    assert lines[-1] == "ostia.engine.v1 is compatible with compat.json (8 messages, 4 enums)"
     code, lines = compat("--base", "HEAD")
     assert code == 0, "\n".join(lines)
 
