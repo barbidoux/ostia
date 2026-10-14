@@ -255,16 +255,32 @@ fn msi_streams_are_entries_under_their_decoded_names() {
 
 // --- limits ----------------------------------------------------------------------------------------------
 
+/// Per format: the bytes, entries and longest path of `two(builder, "")`. The files are `a.txt` (24 bytes) and
+/// `dir/b.bin` (4096); the msi's streams are `product.cab` (the cabinet of those), `!_StringData` (0) and
+/// `!_StringPool` (4).
+fn sizes(format: Format) -> (u64, u64, u32) {
+    if format == Format::Msi {
+        (two("cab", "").len() as u64 + 4, 3, 12)
+    } else {
+        (24 + 4096, 2, 9)
+    }
+}
+
 #[req("FR-06")]
 #[test]
 fn every_format_stops_at_the_entry_count() {
     for (format, builder) in every_format() {
-        let one = budget(|b| b.remaining_entries = 1);
-        assert_eq!(
-            limit(format, &two(builder, ""), &one),
-            Limit::EntryCount,
-            "{format:?}"
+        let (_, count, _) = sizes(format);
+        let exact = budget(|b| b.remaining_entries = count);
+        let (result, _) = run(format, &two(builder, ""), &exact);
+        assert!(result.is_ok(), "{format:?}: {result:?}");
+        let fewer = budget(|b| b.remaining_entries = count - 1);
+        let (result, sink) = run(format, &two(builder, ""), &fewer);
+        assert!(
+            matches!(result, Err(Stop::Limit(Limit::EntryCount))),
+            "{format:?}: {result:?}"
         );
+        assert_eq!(sink.entries.len() as u64, count - 1, "{format:?}");
     }
 }
 
@@ -272,12 +288,18 @@ fn every_format_stops_at_the_entry_count() {
 #[test]
 fn every_format_stops_at_the_remaining_total() {
     for (format, builder) in every_format() {
-        let small = budget(|b| b.remaining_bytes = 1000);
-        assert_eq!(
-            limit(format, &two(builder, ""), &small),
-            Limit::TotalSize,
-            "{format:?}"
+        let (total, _, _) = sizes(format);
+        let exact = budget(|b| b.remaining_bytes = total);
+        let (result, _) = run(format, &two(builder, ""), &exact);
+        assert!(result.is_ok(), "{format:?}: {result:?}");
+        let short = budget(|b| b.remaining_bytes = total - 1);
+        let (result, sink) = run(format, &two(builder, ""), &short);
+        assert!(
+            matches!(result, Err(Stop::Limit(Limit::TotalSize))),
+            "{format:?}: {result:?}"
         );
+        let produced: u64 = sink.entries.iter().map(|(_, c)| c.len() as u64).sum();
+        assert!(produced < total, "{format:?}: {produced}");
     }
 }
 
@@ -285,9 +307,13 @@ fn every_format_stops_at_the_remaining_total() {
 #[test]
 fn every_format_stops_at_the_path_length() {
     for (format, builder) in every_format() {
-        let short = budget(|b| b.max_path_length = 4);
+        let (_, _, longest) = sizes(format);
+        let exact = budget(|b| b.max_path_length = longest);
+        let (result, _) = run(format, &two(builder, ""), &exact);
+        assert!(result.is_ok(), "{format:?}: {result:?}");
+        let shorter = budget(|b| b.max_path_length = longest - 1);
         assert_eq!(
-            limit(format, &two(builder, ""), &short),
+            limit(format, &two(builder, ""), &shorter),
             Limit::PathLength,
             "{format:?}"
         );
@@ -348,7 +374,7 @@ fn entries_sharing_a_seven_zip_folder_share_its_ratio() {
 
 // --- malformed -------------------------------------------------------------------------------------------
 
-#[req("FR-06", "NFR-05")]
+#[req("FR-06")]
 #[test]
 fn cut_archives_are_malformed() {
     for (format, builder) in every_format() {
@@ -360,7 +386,7 @@ fn cut_archives_are_malformed() {
     }
 }
 
-#[req("FR-06", "NFR-05")]
+#[req("FR-06")]
 #[test]
 fn corrupt_bytes_under_a_checksum_are_malformed() {
     // 7z: the LZMA2 stream (after the 32-byte signature header); rar: a stored entry's bytes (CRC32); cab:
@@ -469,13 +495,196 @@ fn a_cabinet_continued_from_or_into_another_is_malformed() {
 #[req("FR-06")]
 #[test]
 fn cab_files_that_do_not_cover_their_folder_are_malformed() {
-    // The second file record starts at 44 + 16 + "a.txt\0"; its folder offset is 4 bytes in. Moved one byte
-    // on, a byte of the folder belongs to no file.
+    // The second file record starts at 44 + 16 + "a.txt\0": its size at 0, its folder offset at 4. Its
+    // offset one byte on leaves a byte no file covers; one byte back, two files share it; its size one byte
+    // short leaves the folder's last byte to no file.
+    let second = 44 + 16 + 6;
+    let a = u32::try_from(A.len()).expect("size");
+    for (at, value) in [(second + 4, a + 1), (second + 4, a - 1), (second, 4095)] {
+        let mut archive = two("cab", "");
+        archive[at..at + 4].copy_from_slice(&value.to_le_bytes());
+        assert_eq!(
+            malformed(Format::Cab, &archive),
+            Malformed::Archive,
+            "{at} {value}"
+        );
+    }
+}
+
+#[req("FR-06")]
+#[test]
+fn bytes_between_the_cab_tables_and_its_data_are_malformed() {
+    // One byte inserted where the data blocks start (after the file table: 44 + 16 + 6 + 16 + 10), the
+    // cabinet's size and its folder's first block moved on by one: every other field still agrees.
     let mut archive = two("cab", "");
-    let offset = 44 + 16 + 6 + 4;
-    let moved = u32::try_from(A.len() + 1).expect("offset").to_le_bytes();
-    archive[offset..offset + 4].copy_from_slice(&moved);
+    let data_at = 44 + 16 + 6 + 16 + 10;
+    archive.insert(data_at, 0);
+    for at in [8, 36] {
+        let value = u32::from_le_bytes(archive[at..at + 4].try_into().expect("u32")) + 1;
+        archive[at..at + 4].copy_from_slice(&value.to_le_bytes());
+    }
     assert_eq!(malformed(Format::Cab, &archive), Malformed::Archive);
+}
+
+#[req("FR-06")]
+#[test]
+fn a_cab_folder_of_its_own_is_held_to_its_ratio() {
+    // Noise in one folder, zeros in another: the zeros' folder is far over 100:1, the cabinet about 2:1.
+    let entries = [("noise.bin", noise(MIB, 5)), ("zeros.bin", vec![0; MIB])];
+    let entries: Vec<(&str, &[u8])> = entries.iter().map(|(n, c)| (*n, c.as_slice())).collect();
+    let tight = budget(|b| b.max_ratio = 100);
+    let separate = build("cab", &entries, "folder_per_entry=True");
+    assert_eq!(limit(Format::Cab, &separate, &tight), Limit::Ratio);
+    let shared = build("cab", &entries, "");
+    let (result, sink) = run(Format::Cab, &shared, &tight);
+    assert!(result.is_ok(), "{result:?}");
+    assert_eq!(sink.entries.len(), 2);
+}
+
+#[req("FR-06")]
+#[test]
+fn bytes_after_the_archive_are_malformed() {
+    // A byte after a 7z's header or a rar's end block; a sector after an iso's volume.
+    for (format, builder, tail) in [
+        (Format::SevenZip, "seven_zip", vec![0]),
+        (Format::Rar, "rar", vec![0]),
+        (Format::Iso, "iso", vec![0; 2048]),
+    ] {
+        let mut archive = two(builder, "");
+        archive.extend_from_slice(&tail);
+        assert_eq!(
+            malformed(format, &archive),
+            Malformed::Archive,
+            "{format:?}"
+        );
+    }
+}
+
+#[req("FR-06")]
+#[test]
+fn a_seven_zip_start_header_without_its_checksum_is_malformed() {
+    // A zero checksum makes readers search for the header themselves.
+    let mut archive = two("seven_zip", "");
+    archive[8..12].copy_from_slice(&[0; 4]);
+    assert_eq!(malformed(Format::SevenZip, &archive), Malformed::Archive);
+}
+
+#[req("FR-06")]
+#[test]
+fn an_empty_file_between_a_folders_files_leaves_none_unread() {
+    // The empty file is listed between the two files of the one folder: both are still extracted.
+    let archive = build(
+        "seven_zip",
+        &[("a.txt", A), ("empty.txt", b""), ("b.bin", &b())],
+        "",
+    );
+    assert_eq!(
+        entries(Format::SevenZip, &archive),
+        vec![
+            regular("a.txt", A, Some(EPOCH_1980)),
+            regular("b.bin", &b(), Some(EPOCH_1980)),
+            regular("empty.txt", b"", Some(EPOCH_1980)),
+        ]
+    );
+}
+
+#[req("FR-06")]
+#[test]
+fn a_seven_zip_folder_with_more_sub_streams_than_files_is_malformed() {
+    assert_eq!(
+        malformed(Format::SevenZip, &two("seven_zip", "extra_substreams=1")),
+        Malformed::Archive
+    );
+}
+
+#[req("FR-06")]
+#[test]
+fn a_seven_zip_dictionary_over_256_mib_is_an_unsupported_method() {
+    // LZMA2 property 32: 256 MiB, the cap (Q-67); 33: 384 MiB.
+    let (result, _) = run(
+        Format::SevenZip,
+        &two("seven_zip", "lzma2_property=32"),
+        &OPEN,
+    );
+    assert!(result.is_ok(), "{result:?}");
+    assert_eq!(
+        malformed(Format::SevenZip, &two("seven_zip", "lzma2_property=33")),
+        Malformed::Method
+    );
+}
+
+#[req("FR-06")]
+#[test]
+fn rar_links_are_entries_without_bytes() {
+    let archive = build("rar", &[("a.txt", A)], "links=[(\"soft\", \"a.txt\")]");
+    let link = Header {
+        path: b"soft".to_vec(),
+        kind: Kind::Link,
+        size: 0,
+        modified: None,
+    };
+    assert_eq!(
+        entries(Format::Rar, &archive),
+        vec![(link, vec![]), regular("a.txt", A, Some(EPOCH_1980))]
+    );
+}
+
+#[req("FR-06")]
+#[test]
+fn rar_directories_and_links_carrying_bytes_are_malformed() {
+    for options in [
+        "directory_data=b\"hidden\"",
+        "links=[(\"soft\", \"a.txt\")], link_data=b\"hidden\"",
+    ] {
+        assert_eq!(
+            malformed(Format::Rar, &two("rar", options)),
+            Malformed::Archive,
+            "{options}"
+        );
+    }
+}
+
+#[req("FR-06")]
+#[test]
+fn rar_services_other_than_the_archive_comment_are_unsupported() {
+    // An NTFS alternate stream after a file, an unknown service, a comment attached to a file (Q-66).
+    for options in [
+        "file_services=[(\"STM\", b\"payload\")]",
+        "services=[(\"XYZ\", b\"payload\")]",
+        "file_services=[(\"CMT\", b\"payload\")]",
+    ] {
+        assert_eq!(
+            malformed(Format::Rar, &two("rar", options)),
+            Malformed::Method,
+            "{options}"
+        );
+    }
+}
+
+#[req("FR-06")]
+#[test]
+fn the_rar_comment_is_an_entry() {
+    let archive = build(
+        "rar",
+        &[("a.txt", A)],
+        "services=[(\"CMT\", b\"Ostia comment\")]",
+    );
+    assert_eq!(
+        entries(Format::Rar, &archive),
+        vec![
+            regular("a.txt", A, Some(EPOCH_1980)),
+            regular("[comment]", b"Ostia comment", None),
+        ]
+    );
+}
+
+#[req("FR-06")]
+#[test]
+fn a_rar_member_continued_in_another_volume_is_malformed() {
+    assert_eq!(
+        malformed(Format::Rar, &two("rar", "split=True")),
+        Malformed::Archive
+    );
 }
 
 /// The start of the Joliet directory record named `name`: its identifier's length at 32, the identifier at
@@ -510,11 +719,54 @@ fn iso_values_whose_byte_orders_disagree_are_malformed() {
 
 #[req("FR-06")]
 #[test]
-fn iso_multi_extent_files_are_an_unsupported_method() {
+fn iso_multi_extent_interleaved_and_extended_files_are_unsupported_methods() {
+    // The record's flags (multi-extent), its file unit size (interleaving), its extended attribute length.
+    for (offset, value) in [(25, 0x80), (26, 1), (1, 1)] {
+        let mut image = two("iso", "");
+        let record = joliet_record(&image, "a.txt;1");
+        image[record + offset] |= value;
+        assert_eq!(
+            malformed(Format::Iso, &image),
+            Malformed::Method,
+            "{offset}"
+        );
+    }
+}
+
+#[req("FR-06")]
+#[test]
+fn iso_trees_listing_different_files_are_malformed() {
+    // The Joliet `a.txt` record given `b.bin`'s extent and size: the primary tree still lists `a.txt`'s.
     let mut image = two("iso", "");
-    let record = joliet_record(&image, "a.txt;1");
-    image[record + 25] |= 0x80;
-    assert_eq!(malformed(Format::Iso, &image), Malformed::Method);
+    let b = joliet_record(&image, "b.bin;1");
+    let extent_and_size: [u8; 16] = image[b + 2..b + 18].try_into().expect("fields");
+    let a = joliet_record(&image, "a.txt;1");
+    image[a + 2..a + 18].copy_from_slice(&extent_and_size);
+    assert_eq!(malformed(Format::Iso, &image), Malformed::Archive);
+}
+
+#[req("FR-06")]
+#[test]
+fn an_iso_boot_record_or_udf_sequence_is_an_unsupported_method() {
+    // What this reader does not read is refused (Q-65).
+    for options in ["boot_record=True", "udf=True"] {
+        assert_eq!(
+            malformed(Format::Iso, &two("iso", options)),
+            Malformed::Method,
+            "{options}"
+        );
+    }
+}
+
+#[req("FR-06")]
+#[test]
+fn an_iso_primary_name_loses_its_version_and_trailing_dot() {
+    // `readme` is written `README.;1` in the primary tree.
+    let image = build("iso", &[("readme", A)], "joliet=False");
+    assert_eq!(
+        entries(Format::Iso, &image),
+        vec![regular("README", A, Some(EPOCH_1980))]
+    );
 }
 
 #[req("FR-06")]

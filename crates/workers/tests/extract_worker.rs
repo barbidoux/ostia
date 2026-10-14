@@ -231,6 +231,22 @@ fn a_limit_ends_the_stream_with_the_limit_named() {
     let (run, _) = extract("zip", &bomb, tight);
     assert_eq!(run.failure, None);
     assert_eq!(run.response, answer(Status::Error, "ratio", vec![], &run));
+    let bomb = build("seven_zip", &[("zeros.bin", &vec![0; 4 << 20])], "");
+    let (run, _) = extract("7z", &bomb, tight);
+    assert_eq!(run.failure, None);
+    assert_eq!(run.response, answer(Status::Error, "ratio", vec![], &run));
+    let stored = build("rar", &[("a", &[1; 600]), ("b", &[2; 600])], "");
+    let small = ExtractionBudget {
+        remaining_bytes: 1000,
+        ..OPEN
+    };
+    let (run, entries) = extract("rar", &stored, small);
+    assert_eq!(run.failure, None);
+    assert_eq!(
+        run.response,
+        answer(Status::Error, "total_size", vec![], &run)
+    );
+    assert_eq!(entries.len(), 1);
     let three = tar(&[
         Member::file(b"1", b"1"),
         Member::file(b"2", b"2"),
@@ -310,6 +326,25 @@ fn a_malformed_container_ends_the_stream_with_a_finding() {
             "tar",
             tar(&[Member::file(b"a", &[1; 2000])])[..1200].to_vec(),
             finding("extract.archive", "container cannot be read"),
+        ),
+        // Part 2, the rar one through its helper thread.
+        (
+            "rar",
+            build("rar", &[("secret.bin", &[4; 2000])], "encrypted=True"),
+            finding("extract.encrypted", "encrypted entry"),
+        ),
+        (
+            "cab",
+            build("cab", &[("x", b"xxxx")], "compression=\"quantum\""),
+            finding(
+                "extract.method",
+                "entry compressed with an unsupported method",
+            ),
+        ),
+        (
+            "iso9660",
+            build("iso", &[("../escape.txt", b"x")], ""),
+            finding("extract.path", "entry path leaving its container"),
         ),
     ];
     for (detected, archive, expected) in cases {
