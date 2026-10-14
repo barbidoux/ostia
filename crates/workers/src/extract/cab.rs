@@ -1,8 +1,9 @@
 //! Cabinet (WP-1.9), read by this code (Q-63): the header, the folders and the files, then each folder's
 //! data blocks in turn, bounds and checksums checked, decoded stored, MSZIP (deflate blocks sharing one
-//! window, through `flate2`) or LZX (`lzxd`). A folder's files must cover its decoded bytes exactly, in
-//! order: bytes no file accounts for, files sharing bytes, and folders continued in another cabinet are
-//! malformed. A folder's ratio is the ratio of every file decoded from it (Q-64).
+//! window, through `flate2`) or LZX (`lzxd`). Every byte of the cabinet belongs to something: its header,
+//! folder and file tables, then the folders' data blocks, back to back to its end. A folder's files must cover
+//! its decoded bytes exactly, in order: bytes no file accounts for, files sharing bytes, and folders continued
+//! in another cabinet are malformed. A folder's ratio is the ratio of every file decoded from it (Q-64).
 
 use std::io::{self, Read, Seek, SeekFrom};
 
@@ -42,20 +43,39 @@ struct Layout {
     total: u32,
     /// Reserved bytes in each data block header.
     data_reserve: u64,
+    /// Where the file table ends: the first data block follows.
+    tables_end: u64,
     folders: Vec<Folder>,
     files: Vec<File>,
 }
 
 pub(super) fn extract<R: Read + Seek>(object: &mut R, run: &mut Run<'_>) -> Result<(), Stop> {
     let layout = layout(object, run.container)?;
-    for (index, folder) in layout.folders.iter().enumerate() {
-        let mut files: Vec<&File> = layout
-            .files
-            .iter()
-            .filter(|file| usize::from(file.folder) == index)
-            .collect();
+    let mut by_folder: Vec<Vec<&File>> = layout.folders.iter().map(|_| Vec::new()).collect();
+    for file in &layout.files {
+        by_folder
+            .get_mut(usize::from(file.folder))
+            .ok_or(ARCHIVE)?
+            .push(file);
+    }
+    let mut sizes = Vec::with_capacity(layout.folders.len());
+    let mut at = layout.tables_end;
+    for folder in &layout.folders {
+        // The folders' blocks follow the tables and each other, and end the cabinet.
+        if folder.first != at {
+            return Err(ARCHIVE);
+        }
+        let (packed, decoded, end) =
+            scan_blocks(object, folder, layout.data_reserve, layout.total)?;
+        sizes.push((packed, decoded));
+        at = end;
+    }
+    if at != u64::from(layout.total) {
+        return Err(ARCHIVE);
+    }
+    for ((folder, mut files), (packed, decoded)) in layout.folders.iter().zip(by_folder).zip(sizes)
+    {
         files.sort_by_key(|file| file.offset);
-        let (packed, decoded) = scan_blocks(object, folder, layout.data_reserve, layout.total)?;
         // The files cover the folder's decoded bytes exactly, in order.
         let mut expected: u64 = 0;
         for file in &files {
@@ -159,18 +179,20 @@ fn layout<R: Read + Seek>(object: &mut R, container: u64) -> Result<Layout, Stop
     Ok(Layout {
         total,
         data_reserve,
+        tables_end: at,
         folders: table,
         files: entries,
     })
 }
 
-/// The compressed and decoded sizes of a folder's data blocks, each one checked to lie in the cabinet.
+/// The compressed and decoded sizes of a folder's data blocks, each one checked to lie in the cabinet, and
+/// where the last one ends.
 fn scan_blocks<R: Read + Seek>(
     object: &mut R,
     folder: &Folder,
     reserve: u64,
     total: u32,
-) -> Result<(u64, u64), Stop> {
+) -> Result<(u64, u64, u64), Stop> {
     let (mut packed, mut decoded) = (0_u64, 0_u64);
     let mut at = folder.first;
     for _ in 0..folder.blocks {
@@ -187,7 +209,7 @@ fn scan_blocks<R: Read + Seek>(
         packed += u64::from(data);
         decoded += u64::from(size);
     }
-    Ok((packed, decoded))
+    Ok((packed, decoded, at))
 }
 
 /// `N` bytes at `at`; fewer is a cut cabinet.

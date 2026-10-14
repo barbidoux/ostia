@@ -1,10 +1,14 @@
-//! ISO 9660 (WP-1.9), read by this code (Q-63): the volume descriptors from sector 16 up to their terminator;
-//! the Joliet tree when a supplementary descriptor carries a Joliet escape, else the primary tree. Directories
-//! are walked breadth first, every extent checked to lie in the image and every directory visited once; their
-//! files are entries named without their version (`;1`) and, for primary names, their trailing dot, dated by
-//! their record. A value whose two byte orders disagree is malformed; multi-extent and interleaved files and
-//! extended attribute records are unsupported methods. Nothing is compressed: a file's ratio is 1, and the
-//! container's ratio bounds files sharing their bytes.
+//! ISO 9660 (WP-1.9), read by this code (Q-63, Q-65): the volume descriptors from sector 16 up to their
+//! terminator. Every tree is walked, the primary one and each supplementary one, and they must list the same
+//! files (extent and size): a file one tree hides from another is malformed. The entries are those of the
+//! Joliet tree when there is one, else of the primary tree: named without their version (`;1`) and, for
+//! primary names, their trailing dot, dated by their record. Directories are walked breadth first, every extent
+//! checked to lie in the image, every directory visited once, and no more directory sectors read than the
+//! volume has. Fail closed on what this code does not read (Q-65): a boot record (El Torito), a volume
+//! partition descriptor or a UDF volume recognition sequence after the terminator is an unsupported method,
+//! and the volume must be the whole object. A value whose two byte orders disagree is malformed;
+//! multi-extent and interleaved files and extended attribute records are unsupported methods. Nothing is
+//! compressed: a file's ratio is 1, and the container's ratio bounds files sharing their bytes.
 
 use std::collections::{HashSet, VecDeque};
 use std::io::{Read, Seek, SeekFrom};
@@ -19,6 +23,14 @@ const DESCRIPTORS: u64 = 64;
 const RECORD: usize = 34;
 const DIRECTORY: u8 = 0x02;
 const MULTI_EXTENT: u8 = 0x80;
+/// Descriptor types: boot record, primary, supplementary, volume partition, terminator.
+const BOOT: u8 = 0;
+const PRIMARY: u8 = 1;
+const SUPPLEMENTARY: u8 = 2;
+const PARTITION: u8 = 3;
+const TERMINATOR: u8 = 255;
+/// Identifiers of the volume recognition sequence (ECMA-167) that follows the descriptors on a UDF volume.
+const RECOGNITION: [&[u8]; 6] = [b"BEA01", b"NSR02", b"NSR03", b"TEA01", b"BOOT2", b"CDW02"];
 
 /// A directory record, as far as extraction needs it.
 struct Record {
@@ -31,13 +43,53 @@ struct Record {
     name: Vec<u8>,
 }
 
+/// A directory tree: its root, and whether its names are Joliet (UCS-2) ones.
+struct Tree {
+    root: Record,
+    joliet: bool,
+}
+
 pub(super) fn extract<R: Read + Seek>(object: &mut R, run: &mut Run<'_>) -> Result<(), Stop> {
-    let (root, joliet) = volume(object, run.container)?;
-    let mut visited = HashSet::from([root.extent]);
+    let trees = volume(object, run.container)?;
+    let mut listed: Option<Vec<(u32, u32)>> = None;
+    for tree in &trees {
+        let mut files = walk(object, run, tree, false)?;
+        files.sort_unstable();
+        match &listed {
+            Some(first) if *first != files => return Err(ARCHIVE),
+            Some(_) => {}
+            None => listed = Some(files),
+        }
+    }
+    let shown = trees
+        .iter()
+        .find(|tree| tree.joliet)
+        .or_else(|| trees.first())
+        .ok_or(ARCHIVE)?;
+    walk(object, run, shown, true).map(|_| ())
+}
+
+/// Walks `tree` breadth first and returns its files (extent and size; an empty file's extent counts as 0).
+/// With `entries`, each file is also an entry and each path is checked.
+fn walk<R: Read + Seek>(
+    object: &mut R,
+    run: &mut Run<'_>,
+    tree: &Tree,
+    entries: bool,
+) -> Result<Vec<(u32, u32)>, Stop> {
+    let mut files = Vec::new();
+    let mut budget = run.container / SECTOR;
+    let mut visited = HashSet::from([tree.root.extent]);
+    let root = Record {
+        name: Vec::new(),
+        ..tree.root
+    };
     let mut pending = VecDeque::from([(Vec::new(), root)]);
     while let Some((prefix, directory)) = pending.pop_front() {
         let sectors = u64::from(directory.size).div_ceil(SECTOR);
         within(u64::from(directory.extent), sectors * SECTOR, run.container)?;
+        // Directories that overlap could make the walk read the image many times over.
+        budget = budget.checked_sub(sectors).ok_or(ARCHIVE)?;
         for sector in 0..sectors {
             let block = read_sector(object, u64::from(directory.extent) + sector)?;
             let mut at = 0;
@@ -48,48 +100,66 @@ pub(super) fn extract<R: Read + Seek>(object: &mut R, run: &mut Run<'_>) -> Resu
                 if record.flags & MULTI_EXTENT != 0 || record.layout != [0, 0, 0] {
                     return Err(Stop::Malformed(Malformed::Method));
                 }
-                let directory = record.flags & DIRECTORY != 0;
+                let is_directory = record.flags & DIRECTORY != 0;
                 let mut path = prefix.clone();
-                if !path.is_empty() {
-                    path.push(b'/');
+                if entries {
+                    if !path.is_empty() {
+                        path.push(b'/');
+                    }
+                    path.extend_from_slice(&name(&record.name, tree.joliet, is_directory)?);
                 }
-                path.extend_from_slice(&name(&record.name, joliet, directory)?);
-                if directory {
-                    run.check_path(&path, false)?;
+                if is_directory {
+                    if entries {
+                        run.check_path(&path, false)?;
+                    }
                     // A directory reached twice (a loop, or two names for one) is malformed.
                     if !visited.insert(record.extent) {
                         return Err(ARCHIVE);
                     }
                     pending.push_back((path, record));
                 } else {
-                    file(object, run, path, &record)?;
+                    files.push(if record.size == 0 {
+                        (0, 0)
+                    } else {
+                        (record.extent, record.size)
+                    });
+                    if entries {
+                        file(object, run, path, &record)?;
+                    }
                 }
             }
         }
     }
-    Ok(())
+    Ok(files)
 }
 
-/// The root directory of the tree to walk, and whether its names are Joliet ones.
-fn volume<R: Read + Seek>(object: &mut R, image: u64) -> Result<(Record, bool), Stop> {
-    let mut primary: Option<Record> = None;
-    let mut joliet: Option<Record> = None;
+/// The trees of the volume, the primary one first. A boot record, a volume partition descriptor or a
+/// recognition sequence after the terminator is refused; the volume must be the whole image.
+fn volume<R: Read + Seek>(object: &mut R, image: u64) -> Result<Vec<Tree>, Stop> {
+    let mut trees: Vec<Tree> = Vec::new();
+    let mut size = None;
     for index in 0..DESCRIPTORS {
         let block = read_sector(object, FIRST + index)?;
         if block.get(1..6) != Some(b"CD001".as_slice()) {
             return Err(ARCHIVE);
         }
         match block.first().copied() {
-            Some(255) => {
-                let (root, is_joliet) = match (joliet, primary) {
-                    (Some(root), _) => (root, true),
-                    (None, Some(root)) => (root, false),
-                    (None, None) => return Err(ARCHIVE),
-                };
-                within(u64::from(root.extent), u64::from(root.size), image)?;
-                return Ok((root, is_joliet));
+            Some(TERMINATOR) => {
+                recognition(object, image, FIRST + index + 1)?;
+                // The primary descriptor gives the volume's size, and its tree comes first.
+                if trees.first().is_none_or(|tree| tree.joliet) || size != Some(image) {
+                    return Err(ARCHIVE);
+                }
+                for tree in &trees {
+                    within(
+                        u64::from(tree.root.extent),
+                        u64::from(tree.root.size),
+                        image,
+                    )?;
+                }
+                return Ok(trees);
             }
-            Some(kind @ (1 | 2)) => {
+            Some(kind @ (PRIMARY | SUPPLEMENTARY)) => {
                 if both16(&block, 128)? != 2048 {
                     return Err(ARCHIVE);
                 }
@@ -99,17 +169,35 @@ fn volume<R: Read + Seek>(object: &mut R, image: u64) -> Result<(Record, bool), 
                     return Err(ARCHIVE);
                 }
                 let escape = block.get(88..91);
-                let is_joliet = kind == 2 && matches!(escape, Some(b"%/@" | b"%/C" | b"%/E"));
-                if kind == 1 && primary.is_none() {
-                    primary = Some(root);
-                } else if is_joliet && joliet.is_none() {
-                    joliet = Some(root);
+                let joliet =
+                    kind == SUPPLEMENTARY && matches!(escape, Some(b"%/@" | b"%/C" | b"%/E"));
+                if kind == PRIMARY {
+                    if size.is_some() {
+                        return Err(ARCHIVE);
+                    }
+                    size = Some(u64::from(both32(&block, 80)?) * SECTOR);
+                    trees.insert(0, Tree { root, joliet });
+                } else {
+                    trees.push(Tree { root, joliet });
                 }
             }
-            _ => {}
+            Some(BOOT | PARTITION) => return Err(Stop::Malformed(Malformed::Method)),
+            _ => return Err(ARCHIVE),
         }
     }
     Err(ARCHIVE)
+}
+
+/// Refuses a UDF volume recognition sequence starting at `sector` (a UDF tree this code does not read).
+fn recognition<R: Read + Seek>(object: &mut R, image: u64, sector: u64) -> Result<(), Stop> {
+    if (sector + 1) * SECTOR > image {
+        return Ok(());
+    }
+    let block = read_sector(object, sector)?;
+    match block.get(1..6) {
+        Some(id) if RECOGNITION.contains(&id) => Err(Stop::Malformed(Malformed::Method)),
+        _ => Ok(()),
+    }
 }
 
 /// The record at `at` of a directory sector, moving `at` past it; `None` at the sector's end (a zero length

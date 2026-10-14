@@ -175,6 +175,10 @@ pub fn extract<R: Read + Seek + Send + 'static>(
 
 const ARCHIVE: Stop = Stop::Malformed(Malformed::Archive);
 
+/// The largest decoder dictionary a 7z folder or a rar member may ask for (Q-67): larger is an unsupported
+/// method, refused before anything is allocated.
+const DICTIONARY: u64 = 256 << 20;
+
 /// The compressed bytes entries are decoded from, and how much was decoded from them so far: one entry's own
 /// (zip, tar, gzip, iso, msi), or one stream several entries share (a 7z folder, a cabinet folder, a solid
 /// run of rar members), whose ratio is then the ratio of every entry decoded from it (Q-64).
