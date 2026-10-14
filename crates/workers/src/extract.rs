@@ -329,6 +329,8 @@ fn zip<R: Read + Seek>(object: &mut R, run: &mut Run<'_>) -> Result<(), Stop> {
 /// after them must hold.
 struct Placed {
     start: u64,
+    /// Where its central directory record starts.
+    central: u64,
     end: u64,
     crc: u32,
     compressed: u64,
@@ -350,6 +352,7 @@ fn check_zip_layout<R: Read + Seek>(object: &mut R) -> Result<(), Stop> {
         let data = entry.data_start().ok_or(ARCHIVE)?;
         placed.push(Placed {
             start: entry.header_start(),
+            central: entry.central_header_start(),
             end: data.checked_add(entry.compressed_size()).ok_or(ARCHIVE)?,
             crc: entry.crc32(),
             compressed: entry.compressed_size(),
@@ -363,6 +366,7 @@ fn check_zip_layout<R: Read + Seek>(object: &mut R) -> Result<(), Stop> {
         if entry.start != expected || entry.end < entry.start {
             return Err(ARCHIVE);
         }
+        check_local_header(object, entry)?;
         let next = placed.get(index + 1).map_or(directory, |next| next.start);
         let gap = next.checked_sub(entry.end).ok_or(ARCHIVE)?;
         if gap != 0 {
@@ -374,6 +378,47 @@ fn check_zip_layout<R: Read + Seek>(object: &mut R) -> Result<(), Stop> {
         return Err(ARCHIVE);
     }
     Ok(())
+}
+
+/// The local header says what the central record says: name, flags, method, and CRC and sizes unless a data
+/// descriptor carries them (flag bit 3). Streaming extractors read the local header only.
+fn check_local_header<R: Read + Seek>(object: &mut R, entry: &Placed) -> Result<(), Stop> {
+    let mut read_at = |offset: u64, buffer: &mut [u8]| {
+        object
+            .seek(SeekFrom::Start(offset))
+            .and_then(|_| object.read_exact(buffer))
+            .map_err(|_| ARCHIVE)
+    };
+    let mut local = [0_u8; 30];
+    let mut central = [0_u8; 46];
+    read_at(entry.start, &mut local)?;
+    read_at(entry.central, &mut central)?;
+    let field = |bytes: &[u8], at: usize, len: usize| bytes.get(at..at + len).map(<[u8]>::to_vec);
+    let same = |local_at: usize, central_at: usize, len: usize| {
+        field(&local, local_at, len).is_some()
+            && field(&local, local_at, len) == field(&central, central_at, len)
+    };
+    let descriptor = local.get(6).is_some_and(|flags| flags & 0x08 != 0);
+    let consistent = local.starts_with(b"PK\x03\x04")
+        && central.starts_with(b"PK\x01\x02")
+        // flags, method; name length
+        && same(6, 8, 4)
+        && same(26, 28, 2)
+        // CRC, compressed size, size
+        && (descriptor || same(14, 16, 12));
+    if !consistent {
+        return Err(ARCHIVE);
+    }
+    let length = usize::from(u16::from_le_bytes([local[26], local[27]]));
+    let mut local_name = vec![0_u8; length];
+    let mut central_name = vec![0_u8; length];
+    read_at(entry.start + 30, &mut local_name)?;
+    read_at(entry.central + 46, &mut central_name)?;
+    if local_name == central_name {
+        Ok(())
+    } else {
+        Err(ARCHIVE)
+    }
 }
 
 /// The `gap` bytes after an entry are its data descriptor: an optional signature, its CRC, then its sizes in 32
