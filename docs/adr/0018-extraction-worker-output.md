@@ -75,8 +75,9 @@ the total size and entry count whatever the worker claims.
     form, or naming a Windows device (Q-61, `ostia_core_domain::entry::check_entry_path`);
   - a zip whose bytes before the central directory do not each belong to exactly one entry (its local header,
     its bytes, an optional data descriptor): a name listed twice, an entry listed only by its local header,
-    bytes between entries, entries sharing bytes, a compressed size that lies; a deflate stream that does not
-    consume every declared byte;
+    bytes between entries, entries sharing bytes, a compressed size that lies, a local header that disagrees with
+    its central record (name, flags, method, CRC, sizes); a deflate stream that does not consume every declared
+    byte;
   - a directory, link or special entry carrying bytes; anything but zeros after a tar's end marker;
   - sizes that do not match the declared ones;
   - a truncated or corrupt stream.
