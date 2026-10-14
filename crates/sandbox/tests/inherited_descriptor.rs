@@ -41,6 +41,7 @@ fn inheritable_descriptor_of_the_host_stops_the_launch() {
         size: 13,
         origin: Origin::File.into(),
         limits: None,
+        extraction: None,
         version: Some(ContractVersion { major: 1, minor: 0 }),
     };
     let host = WorkerHost::unconfined(HostLimits::new(Duration::from_secs(30)));

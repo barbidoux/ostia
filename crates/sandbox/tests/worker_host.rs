@@ -129,6 +129,7 @@ fn request() -> AnalyzeRequest {
             duration_ms: 30_000,
             write_bytes: 1 << 20,
         }),
+        extraction: None,
         version: VERSION,
     }
 }
@@ -151,6 +152,7 @@ fn answer() -> AnalyzeResponse {
         }],
         duration_ms: 7,
         detected_type: String::new(),
+        limit: String::new(),
         version: VERSION,
     }
 }
@@ -177,8 +179,9 @@ fn assert_synthesised(done: &WorkerRun, status: Status, failure: &Failure, elaps
         findings: vec![],
         duration_ms: done.response.duration_ms,
         detected_type: String::new(),
+        limit: String::new(),
         // The host writes the contract version it speaks.
-        version: Some(ContractVersion { major: 1, minor: 1 }),
+        version: Some(ContractVersion { major: 1, minor: 2 }),
     };
     assert_eq!(done.failure.as_ref(), Some(failure));
     assert_eq!(done.response, expected);

@@ -19,6 +19,7 @@
       "5": ["size", "uint64", ""],
       "6": ["origin", "enum Origin", ""],
       "7": ["limits", "message Limits", ""],
+      "8": ["extraction", "message ExtractionBudget", ""],
       "15": ["version", "message ContractVersion", ""]
     },
     "Finding": {
@@ -38,6 +39,25 @@
       "7": ["findings", "message Finding", "repeated"],
       "8": ["duration_ms", "uint32", ""],
       "9": ["detected_type", "string", ""],
+      "10": ["limit", "string", ""],
+      "15": ["version", "message ContractVersion", ""]
+    },
+    "ExtractionBudget": {
+      "1": ["max_ratio", "uint64", ""],
+      "2": ["remaining_bytes", "uint64", ""],
+      "3": ["remaining_entries", "uint64", ""],
+      "4": ["max_path_length", "uint32", ""]
+    },
+    "Entry": {
+      "1": ["path", "bytes", ""],
+      "2": ["kind", "enum EntryKind", ""],
+      "3": ["size", "uint64", ""],
+      "4": ["modified", "int64", "optional"]
+    },
+    "ExtractFrame": {
+      "1": ["entry", "message Entry", ""],
+      "2": ["data", "bytes", "optional"],
+      "3": ["done", "message AnalyzeResponse", ""],
       "15": ["version", "message ContractVersion", ""]
     }
   },
@@ -63,6 +83,12 @@
       "2": "CLEAN",
       "3": "SUSPICIOUS",
       "4": "MALICIOUS"
+    },
+    "EntryKind": {
+      "0": "ENTRY_KIND_UNSPECIFIED",
+      "1": "REGULAR",
+      "2": "LINK",
+      "3": "SPECIAL"
     }
   }
 }

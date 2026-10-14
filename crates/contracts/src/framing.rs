@@ -4,7 +4,9 @@ use std::io::{Read, Write};
 
 use prost::Message;
 
-use crate::v1::{AnalyzeRequest, AnalyzeResponse, ContractVersion, Hint, Origin, Status};
+use crate::v1::{
+    AnalyzeRequest, AnalyzeResponse, ContractVersion, ExtractFrame, Hint, Origin, Status,
+};
 
 /// Default cap on the length of one frame's message: 16 MiB.
 pub const DEFAULT_MAX_FRAME: usize = 16 * 1024 * 1024;
@@ -271,4 +273,15 @@ pub fn decode_response(body: &[u8]) -> Result<AnalyzeResponse, ContractError> {
         return Err(ContractError::InvalidScore);
     }
     Ok(response)
+}
+
+/// Decodes and validates one frame of the extraction worker's output (ADR-18): contract major; exactly one of
+/// entry, data or done; an entry with a path, a known kind and no size unless it is a regular file; data that
+/// is not empty; a done that is a valid response.
+///
+/// # Errors
+/// Malformed message, unsupported major, invalid fields, or the errors of [`decode_response`] for a done.
+pub fn decode_extract_frame(body: &[u8]) -> Result<ExtractFrame, ContractError> {
+    let _ = body;
+    todo!("WP-1.8: decode_extract_frame")
 }

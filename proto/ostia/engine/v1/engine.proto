@@ -60,8 +60,23 @@ message AnalyzeRequest {
   Origin origin = 6;
   // Limits the engine runs under.
   Limits limits = 7;
+  // What is left of the policy's extraction limits; set only for the extraction worker (minor 2, ADR-18).
+  ExtractionBudget extraction = 8;
   // Contract version of this message.
   ContractVersion version = 15;
+}
+
+// What an extraction may still produce: the policy's limits less what the tree of the medium file already
+// used (minor 2, ADR-18).
+message ExtractionBudget {
+  // Largest uncompressed / compressed ratio, per entry and for the whole container.
+  uint64 max_ratio = 1;
+  // Bytes the extraction may still produce.
+  uint64 remaining_bytes = 2;
+  // Entries the extraction may still produce.
+  uint64 remaining_entries = 3;
+  // Largest entry path inside the container, in bytes.
+  uint32 max_path_length = 4;
 }
 
 // Outcome of an engine run.
@@ -127,6 +142,49 @@ message AnalyzeResponse {
   // Type identified from the content (report.md "Types"), set by the triage worker; empty for engines
   // (minor 1, Q-54).
   string detected_type = 9;
+  // The policy limit that stopped an extraction (report.md: `ratio`, `total_size`, `entry_count`,
+  // `path_length`), set by the extraction worker; empty otherwise (minor 2, ADR-18).
+  string limit = 10;
+  // Contract version of this message.
+  ContractVersion version = 15;
+}
+
+// What an extracted entry is.
+enum EntryKind {
+  // Not set: refused.
+  ENTRY_KIND_UNSPECIFIED = 0;
+  // A regular file: its bytes follow.
+  REGULAR = 1;
+  // A symbolic or hard link: never followed, no bytes.
+  LINK = 2;
+  // A device, FIFO or socket: no bytes.
+  SPECIAL = 3;
+}
+
+// One entry of a container, announced before its bytes.
+message Entry {
+  // The entry's path inside its container, as stored (`/`-separated, not necessarily UTF-8).
+  bytes path = 1;
+  // What the entry is.
+  EntryKind kind = 2;
+  // Bytes that follow in `data` frames: 0 for a link or a special entry.
+  uint64 size = 3;
+  // Modification time in seconds since the Unix epoch (UTC), when the container records one.
+  optional int64 modified = 4;
+}
+
+// One frame of the extraction worker's output (minor 2, ADR-18): for each entry an `entry`, then its bytes
+// in `data` frames adding up to its size; then exactly one `done`, the worker's response.
+message ExtractFrame {
+  // What the frame carries.
+  oneof frame {
+    // The next entry.
+    Entry entry = 1;
+    // The next bytes of the current entry (never empty).
+    bytes data = 2;
+    // The end of the extraction.
+    AnalyzeResponse done = 3;
+  }
   // Contract version of this message.
   ContractVersion version = 15;
 }

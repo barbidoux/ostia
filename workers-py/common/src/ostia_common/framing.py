@@ -279,6 +279,13 @@ def decode_response(body: bytes) -> engine_pb2.AnalyzeResponse:
     return response
 
 
+def decode_extract_frame(body: bytes) -> engine_pb2.ExtractFrame:
+    """Decode and validate one frame of the extraction worker's output (ADR-18): major; exactly one of
+    entry, data or done; an entry with a path, a known kind and no size unless it is a regular file;
+    data that is not empty; a done that is a valid response."""
+    raise NotImplementedError("WP-1.8: decode_extract_frame")
+
+
 _KNOWN_ORIGINS = frozenset(engine_pb2.Origin.values()) - {engine_pb2.ORIGIN_UNSPECIFIED}
 _KNOWN_STATUSES = frozenset(engine_pb2.Status.values()) - {engine_pb2.STATUS_UNSPECIFIED}
 _KNOWN_HINTS = frozenset(engine_pb2.Hint.values())

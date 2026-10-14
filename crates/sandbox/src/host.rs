@@ -109,6 +109,7 @@ pub(crate) fn synthesised(
         findings: Vec::new(),
         duration_ms: u32::try_from(spent.as_millis()).unwrap_or(u32::MAX),
         detected_type: String::new(),
+        limit: String::new(),
         version: Some(current_version()),
     }
 }

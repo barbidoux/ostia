@@ -105,6 +105,107 @@
       }
     },
     {
+      "name": "request_extract",
+      "message": "AnalyzeRequest",
+      "expect": "ok",
+      "description": "a request with a budget",
+      "fields": {
+        "session_id": "session-0001",
+        "object_id": "object-0002",
+        "sha256": "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=",
+        "detected_type": "zip",
+        "size": "22",
+        "origin": "FILE",
+        "limits": {
+          "memory_bytes": "268435456",
+          "duration_ms": 30000
+        },
+        "extraction": {
+          "max_ratio": "200",
+          "remaining_bytes": "4294967296",
+          "remaining_entries": "100000",
+          "max_path_length": 4096
+        },
+        "version": {
+          "major": 1,
+          "minor": 2
+        }
+      }
+    },
+    {
+      "name": "extract_entry",
+      "message": "ExtractFrame",
+      "expect": "ok",
+      "description": "an entry of 3 bytes",
+      "fields": {
+        "entry": {
+          "path": "ZGlyL2IuYmlu",
+          "kind": "REGULAR",
+          "size": "3",
+          "modified": "315532800"
+        },
+        "version": {
+          "major": 1,
+          "minor": 2
+        }
+      }
+    },
+    {
+      "name": "extract_data",
+      "message": "ExtractFrame",
+      "expect": "ok",
+      "description": "3 bytes of the entry",
+      "fields": {
+        "data": "YWJj",
+        "version": {
+          "major": 1,
+          "minor": 2
+        }
+      }
+    },
+    {
+      "name": "extract_done",
+      "message": "ExtractFrame",
+      "expect": "ok",
+      "description": "stopped by the ratio limit",
+      "fields": {
+        "done": {
+          "engine_id": "ostia-extract",
+          "engine_version": "0.0.0",
+          "content_version": "formats-1",
+          "status": "ERROR",
+          "hint": "NONE",
+          "duration_ms": 1,
+          "limit": "ratio",
+          "version": {
+            "major": 1,
+            "minor": 2
+          }
+        },
+        "version": {
+          "major": 1,
+          "minor": 2
+        }
+      }
+    },
+    {
+      "name": "extract_link",
+      "message": "ExtractFrame",
+      "expect": "ok",
+      "description": "a link entry, no bytes",
+      "fields": {
+        "entry": {
+          "path": "bGluaw==",
+          "kind": "LINK",
+          "modified": "315532800"
+        },
+        "version": {
+          "major": 1,
+          "minor": 2
+        }
+      }
+    },
+    {
       "name": "frame_empty",
       "message": "AnalyzeResponse",
       "expect": "empty",
@@ -436,11 +537,190 @@
       "fields": null
     },
     {
-      "name": "response_minor_2_extra_field",
+      "name": "response_minor_3_extra_field",
       "message": "AnalyzeResponse",
       "expect": "ok",
-      "description": "minor 2 (newer than this decoder) with field 99 (unknown to it) appended: ignored",
+      "description": "minor 3 (newer than this decoder) with field 99 (unknown to it) appended: ignored",
       "fields": null
+    },
+    {
+      "name": "extract_no_frame",
+      "message": "ExtractFrame",
+      "expect": "invalid_response",
+      "description": "neither entry, data nor done",
+      "fields": {
+        "version": {
+          "major": 1,
+          "minor": 2
+        }
+      }
+    },
+    {
+      "name": "extract_major_2",
+      "message": "ExtractFrame",
+      "expect": "unsupported_major",
+      "description": "major 2",
+      "fields": {
+        "entry": {
+          "path": "ZGlyL2IuYmlu",
+          "kind": "REGULAR",
+          "size": "3",
+          "modified": "315532800"
+        },
+        "version": {
+          "major": 2,
+          "minor": 2
+        }
+      }
+    },
+    {
+      "name": "extract_kind_unspecified",
+      "message": "ExtractFrame",
+      "expect": "invalid_response",
+      "description": "entry kind 0",
+      "fields": {
+        "entry": {
+          "path": "ZGlyL2IuYmlu",
+          "size": "3",
+          "modified": "315532800"
+        },
+        "version": {
+          "major": 1,
+          "minor": 2
+        }
+      }
+    },
+    {
+      "name": "extract_kind_unknown",
+      "message": "ExtractFrame",
+      "expect": "invalid_response",
+      "description": "entry kind 9",
+      "fields": {
+        "entry": {
+          "path": "ZGlyL2IuYmlu",
+          "kind": 9,
+          "size": "3",
+          "modified": "315532800"
+        },
+        "version": {
+          "major": 1,
+          "minor": 2
+        }
+      }
+    },
+    {
+      "name": "extract_link_with_size",
+      "message": "ExtractFrame",
+      "expect": "invalid_response",
+      "description": "a link announcing 5 bytes",
+      "fields": {
+        "entry": {
+          "path": "bGluaw==",
+          "kind": "LINK",
+          "size": "5",
+          "modified": "315532800"
+        },
+        "version": {
+          "major": 1,
+          "minor": 2
+        }
+      }
+    },
+    {
+      "name": "extract_special_with_size",
+      "message": "ExtractFrame",
+      "expect": "invalid_response",
+      "description": "a special entry announcing 1 byte",
+      "fields": {
+        "entry": {
+          "path": "Zmlmbw==",
+          "kind": "SPECIAL",
+          "size": "1",
+          "modified": "315532800"
+        },
+        "version": {
+          "major": 1,
+          "minor": 2
+        }
+      }
+    },
+    {
+      "name": "extract_no_path",
+      "message": "ExtractFrame",
+      "expect": "invalid_response",
+      "description": "an empty path",
+      "fields": {
+        "entry": {
+          "kind": "REGULAR",
+          "size": "3",
+          "modified": "315532800"
+        },
+        "version": {
+          "major": 1,
+          "minor": 2
+        }
+      }
+    },
+    {
+      "name": "extract_empty_data",
+      "message": "ExtractFrame",
+      "expect": "invalid_response",
+      "description": "empty data",
+      "fields": {
+        "data": "",
+        "version": {
+          "major": 1,
+          "minor": 2
+        }
+      }
+    },
+    {
+      "name": "extract_done_no_engine_id",
+      "message": "ExtractFrame",
+      "expect": "missing_engine_identity",
+      "description": "a done without engine_id",
+      "fields": {
+        "done": {
+          "engine_version": "0.0.0",
+          "content_version": "formats-1",
+          "status": "ERROR",
+          "hint": "NONE",
+          "duration_ms": 1,
+          "limit": "ratio",
+          "version": {
+            "major": 1,
+            "minor": 2
+          }
+        },
+        "version": {
+          "major": 1,
+          "minor": 2
+        }
+      }
+    },
+    {
+      "name": "extract_done_major_2",
+      "message": "ExtractFrame",
+      "expect": "unsupported_major",
+      "description": "a done whose own version is major 2",
+      "fields": {
+        "done": {
+          "engine_id": "ostia-extract",
+          "engine_version": "0.0.0",
+          "content_version": "formats-1",
+          "status": "ERROR",
+          "hint": "NONE",
+          "duration_ms": 1,
+          "limit": "ratio",
+          "version": {
+            "major": 2
+          }
+        },
+        "version": {
+          "major": 1,
+          "minor": 2
+        }
+      }
     }
   ]
 }
