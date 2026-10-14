@@ -136,6 +136,26 @@ def test_the_triage_target_runs_the_type_rules_without_crashing(tmp_path: Path) 
     assert runs and int(runs.group(1)) > 0, report(result)
 
 
+@pytest.mark.req("NFR-06", "FR-06")
+def test_the_extraction_target_runs_the_formats_without_crashing(tmp_path: Path) -> None:
+    assert SECONDS > 0, "FUZZ_SECONDS must be positive (0 means no limit to libFuzzer)"
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    result = cargo_fuzz(
+        "run",
+        "extract_formats",
+        str(corpus),
+        "--",
+        f"-max_total_time={SECONDS}",
+        f"-timeout={INPUT_TIMEOUT}",
+        f"-artifact_prefix={artifacts(tmp_path)}/",
+        seconds=SECONDS,
+    )
+    assert result.returncode == 0, report(result)
+    runs = re.search(r"^Done (\d+) runs", result.stderr, re.MULTILINE)
+    assert runs and int(runs.group(1)) > 0, report(result)
+
+
 @pytest.mark.req("NFR-06")
 def test_a_crash_after_decoding_is_caught(tmp_path: Path) -> None:
     # The self-test target runs the same exercise as the real one, with a check planted behind the

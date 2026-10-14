@@ -36,6 +36,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "extract_formats"
+path = "fuzz_targets/extract_formats.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "frame_decoder_selftest"
 path = "fuzz_targets/frame_decoder_selftest.rs"
 required-features = ["fuzzing_selftest"]
