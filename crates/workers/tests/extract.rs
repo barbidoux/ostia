@@ -979,3 +979,30 @@ fn gzip_is_held_to_every_limit_and_rule() {
     size[at] ^= 0x01;
     assert_eq!(malformed(Format::Gzip, &size), Some(Malformed::Archive));
 }
+
+#[req("FR-06")]
+#[test]
+fn a_local_header_disagreeing_with_its_central_record_is_malformed() {
+    // Streaming extractors read the local header: its name, method, flags, CRC and sizes must be the central
+    // record's, or they would write other bytes under another name than the ones scanned.
+    let valid = raw_zip(&[Raw::stored(b"readme.txt", b"harmless")]);
+    assert_eq!(entries(Format::Zip, &valid).len(), 1);
+    // (offset in the local header, new bytes): name, method, encryption flag, CRC, compressed size, size.
+    let cases: [(usize, &[u8]); 6] = [
+        (30, b"../../x.ex"),
+        (8, &[8, 0]),
+        (6, &[1, 0]),
+        (14, &[0, 0, 0, 0]),
+        (18, &[9, 0, 0, 0]),
+        (22, &[9, 0, 0, 0]),
+    ];
+    for (offset, bytes) in cases {
+        let mut archive = valid.clone();
+        archive[offset..offset + bytes.len()].copy_from_slice(bytes);
+        assert_eq!(
+            malformed(Format::Zip, &archive),
+            Some(Malformed::Archive),
+            "local header at {offset}"
+        );
+    }
+}
