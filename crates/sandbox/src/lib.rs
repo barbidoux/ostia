@@ -301,7 +301,45 @@ impl<L: Launcher> WorkerHost<L> {
         object: &Path,
         sink: &mut dyn EntrySink,
     ) -> ExtractRun {
-        let _ = (command, identity, request, object, sink);
-        todo!("WP-1.8: WorkerHost::extract")
+        let started = Instant::now();
+        let outcome = request
+            .extraction
+            .ok_or(Failure::Request(ContractError::InvalidRequest(
+                "extraction",
+            )))
+            .and_then(|budget| {
+                encode_frame(request, self.limits.max_frame)
+                    .map_err(Failure::Request)
+                    .map(|frame| (budget, frame))
+            })
+            .and_then(|(budget, frame)| Ok((budget, frame, host::open_object(object)?)))
+            .and_then(|prepared| host::check_no_inheritable_descriptor().map(|()| prepared))
+            .and_then(|(budget, frame, object)| {
+                self.launcher
+                    .launch(command, object.into())
+                    .map(|child| (budget, frame, child))
+                    .map_err(|error| Failure::Spawn(error.to_string()))
+            })
+            .map(|(budget, frame, child)| {
+                host::exchange_stream(child, frame, identity, self.limits, started, &budget, sink)
+            });
+        let (answer, stderr, stderr_truncated) = match outcome {
+            Ok(done) => (done.answer, done.stderr, done.stderr_truncated),
+            Err(failure) => (Err(failure), Vec::new(), false),
+        };
+        match answer {
+            Ok(response) => ExtractRun {
+                response,
+                failure: None,
+                stderr,
+                stderr_truncated,
+            },
+            Err(failure) => ExtractRun {
+                response: host::synthesised(identity, &failure, started.elapsed()),
+                failure: Some(failure),
+                stderr,
+                stderr_truncated,
+            },
+        }
     }
 }

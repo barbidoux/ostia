@@ -15,10 +15,13 @@ use nix::fcntl::{FcntlArg, OFlag, fcntl};
 use nix::sys::signal::{Signal, killpg};
 use nix::sys::wait::{Id, WaitPidFlag, waitid};
 use nix::unistd::{Pid, getpgid};
-use ostia_contracts::v1::{AnalyzeResponse, Hint, Status};
-use ostia_contracts::{ContractError, current_version, decode_response, read_frame};
+use ostia_contracts::v1::extract_frame::Frame;
+use ostia_contracts::v1::{AnalyzeResponse, ExtractFrame, ExtractionBudget, Hint, Status};
+use ostia_contracts::{
+    ContractError, current_version, decode_extract_frame, decode_response, read_frame,
+};
 
-use crate::{EngineIdentity, Failure, HostLimits};
+use crate::{EngineIdentity, EntrySink, Failure, HostLimits, StreamFault};
 
 /// How long the host waits for the standard error reader once the worker's process group is gone.
 const STDERR_GRACE: Duration = Duration::from_secs(1);
@@ -118,6 +121,11 @@ pub(crate) fn synthesised(
 enum Event {
     /// The worker's standard output ended (or was refused early): one frame's message, or why not.
     Answer(Result<Vec<u8>, ContractError>),
+    /// The next frame of an extraction worker's stream, decoded and validated.
+    Frame(ExtractFrame),
+    /// An extraction worker's stream ended: after the end of the output (with or without a final response),
+    /// or refused early.
+    StreamEnd(Result<(), ContractError>),
     /// The worker (the process group leader) exited; it is not reaped yet.
     Exited,
 }
@@ -143,42 +151,94 @@ pub(crate) struct Outcome {
     pub(crate) stderr_truncated: bool,
 }
 
-/// Runs a started worker to its end: writes `frame`, reads the answer, enforces the deadline, stops the
-/// worker's process group and reaps it. Never leaves a process of the group behind.
-pub(crate) fn exchange(
+/// A started worker whose request is being written, its output and standard error read, its exit watched.
+struct Running {
+    child: Child,
+    group: Pid,
+    received: mpsc::Receiver<Event>,
+    capture: Arc<Mutex<Capture>>,
+    stderr_done: mpsc::Receiver<()>,
+}
+
+/// Checks the launch, writes `frame` and starts the threads; `read_output` reads the worker's standard output
+/// and reports on the channel. A launch the host does not run is killed and reaped: the `Err` failure.
+fn start(
     mut child: Child,
     frame: Vec<u8>,
-    identity: &EngineIdentity,
     limits: HostLimits,
-    started: Instant,
-) -> Outcome {
+    read_output: impl FnOnce(std::process::ChildStdout, mpsc::SyncSender<Event>),
+) -> Result<Running, Failure> {
     let (Some(stdin), Some(stdout), Some(stderr), Ok(raw_pid)) = (
         child.stdin.take(),
         child.stdout.take(),
         child.stderr.take(),
         i32::try_from(child.id()),
     ) else {
-        return refused(child, "the launcher did not pipe the standard streams");
+        return Err(refused(
+            child,
+            "the launcher did not pipe the standard streams",
+        ));
     };
     let group = Pid::from_raw(raw_pid);
     // Without a group of its own, killpg could not stop the worker's processes, nor the worker itself.
     if getpgid(Some(group)) != Ok(group) {
-        return refused(child, "the worker does not lead its own process group");
+        return Err(refused(
+            child,
+            "the worker does not lead its own process group",
+        ));
     }
-    // At most one answer and one exit are sent; a stderr reader sends one end.
+    // A small bound: the output reader waits while the run handles what it sent.
     let (events, received) = mpsc::sync_channel(2);
     write_request(stdin, frame);
-    read_answer(stdout, limits.max_frame, events.clone());
+    read_output(stdout, events.clone());
     let (capture, stderr_done) = capture_stderr(stderr, limits.stderr_cap);
     watch_exit(group, events);
+    Ok(Running {
+        child,
+        group,
+        received,
+        capture,
+        stderr_done,
+    })
+}
 
+impl Running {
+    /// Stops the worker's group, reaps the worker and collects its standard error.
+    fn finish(mut self) -> (std::io::Result<ExitStatus>, Capture) {
+        stop(self.group, &mut self.child);
+        let status = self.child.wait();
+        let _ = self.stderr_done.recv_timeout(STDERR_GRACE);
+        let capture =
+            std::mem::take(&mut *self.capture.lock().unwrap_or_else(PoisonError::into_inner));
+        (status, capture)
+    }
+}
+
+/// Runs a started worker to its end: writes `frame`, reads the answer, enforces the deadline, stops the
+/// worker's process group and reaps it. Never leaves a process of the group behind.
+pub(crate) fn exchange(
+    child: Child,
+    frame: Vec<u8>,
+    identity: &EngineIdentity,
+    limits: HostLimits,
+    started: Instant,
+) -> Outcome {
+    let cap = limits.max_frame;
+    let mut running = match start(child, frame, limits, |stdout, events| {
+        read_answer(stdout, cap, events);
+    }) {
+        Ok(running) => running,
+        Err(failure) => return without_exchange(failure),
+    };
     // A limit too far to represent is no limit.
     let deadline = started.checked_add(limits.timeout);
-    let exchange = await_end(&received, group, &mut child, deadline);
-    stop(group, &mut child);
-    let status = child.wait();
-    let _ = stderr_done.recv_timeout(STDERR_GRACE);
-    let capture = std::mem::take(&mut *capture.lock().unwrap_or_else(PoisonError::into_inner));
+    let exchange = await_end(
+        &running.received,
+        running.group,
+        &mut running.child,
+        deadline,
+    );
+    let (status, capture) = running.finish();
     Outcome {
         answer: classify(exchange, status, identity),
         stderr: capture.bytes,
@@ -186,12 +246,217 @@ pub(crate) fn exchange(
     }
 }
 
+/// Runs a started extraction worker to its end (ADR-18): writes `frame`, hands each streamed entry to `sink`
+/// under `budget`, enforces the deadline, stops the worker's process group and reaps it.
+pub(crate) fn exchange_stream(
+    child: Child,
+    frame: Vec<u8>,
+    identity: &EngineIdentity,
+    limits: HostLimits,
+    started: Instant,
+    budget: &ExtractionBudget,
+    sink: &mut dyn EntrySink,
+) -> Outcome {
+    let cap = limits.max_frame;
+    let mut running = match start(child, frame, limits, |stdout, events| {
+        read_stream(stdout, cap, events);
+    }) {
+        Ok(running) => running,
+        Err(failure) => return without_exchange(failure),
+    };
+    let deadline = started.checked_add(limits.timeout);
+    let mut stream = Stream {
+        sink,
+        budget,
+        entries: 0,
+        bytes: 0,
+        current: None,
+        done: None,
+    };
+    let exchange = await_stream(
+        &running.received,
+        running.group,
+        &mut running.child,
+        deadline,
+        &mut stream,
+    );
+    let (status, capture) = running.finish();
+    Outcome {
+        answer: classify_stream(exchange, status, stream.done, identity),
+        stderr: capture.bytes,
+        stderr_truncated: capture.truncated,
+    }
+}
+
+/// An extraction stream as the host checks it.
+struct Stream<'a> {
+    sink: &'a mut dyn EntrySink,
+    budget: &'a ExtractionBudget,
+    entries: u64,
+    bytes: u64,
+    /// Bytes still due for the current entry, if one is open.
+    current: Option<u64>,
+    done: Option<AnalyzeResponse>,
+}
+
+impl Stream<'_> {
+    /// Applies one frame: the sizes and the budget are checked before the sink sees anything.
+    fn on_frame(&mut self, frame: ExtractFrame) -> Result<(), Failure> {
+        let sink_failure = |error: std::io::Error| Failure::Sink(error.to_string());
+        match frame.frame {
+            Some(Frame::Entry(entry)) => {
+                if self.current.is_some() {
+                    return Err(Failure::Stream(StreamFault::EntryCut));
+                }
+                self.entries = self.entries.saturating_add(1);
+                if self.entries > self.budget.remaining_entries {
+                    return Err(Failure::Stream(StreamFault::TooManyEntries));
+                }
+                self.sink.entry(&entry).map_err(sink_failure)?;
+                if entry.size == 0 {
+                    self.sink.end().map_err(sink_failure)?;
+                } else {
+                    self.current = Some(entry.size);
+                }
+            }
+            Some(Frame::Data(bytes)) => {
+                let left = self
+                    .current
+                    .ok_or(Failure::Stream(StreamFault::DataWithoutEntry))?;
+                let len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+                if len > left {
+                    return Err(Failure::Stream(StreamFault::DataBeyondSize));
+                }
+                self.bytes = self.bytes.saturating_add(len);
+                if self.bytes > self.budget.remaining_bytes {
+                    return Err(Failure::Stream(StreamFault::TooManyBytes));
+                }
+                self.sink.data(&bytes).map_err(sink_failure)?;
+                if len == left {
+                    self.sink.end().map_err(sink_failure)?;
+                    self.current = None;
+                } else {
+                    self.current = Some(left - len);
+                }
+            }
+            Some(Frame::Done(response)) => {
+                // A worker stopping on a limit or a malformation abandons its current entry; an OK cannot.
+                if self.current.is_some() && response.status == i32::from(Status::Ok) {
+                    return Err(Failure::Stream(StreamFault::EntryCut));
+                }
+                self.done = Some(response);
+            }
+            None => {
+                return Err(Failure::Protocol(ContractError::InvalidResponse("frame")));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// How an extraction exchange ended, before the worker's exit status is read.
+struct StreamExchange {
+    ended: Option<Result<(), ContractError>>,
+    fault: Option<Failure>,
+    timed_out: bool,
+}
+
+/// Waits for the end of the stream and the worker's exit, or the deadline, applying each frame as it comes.
+/// The worker's group is killed as soon as the worker exits, its stream is refused or a frame breaks the rules.
+fn await_stream(
+    received: &mpsc::Receiver<Event>,
+    group: Pid,
+    child: &mut Child,
+    deadline: Option<Instant>,
+    stream: &mut Stream<'_>,
+) -> StreamExchange {
+    let mut exchange = StreamExchange {
+        ended: None,
+        fault: None,
+        timed_out: false,
+    };
+    let mut exited = false;
+    while !(exited && exchange.ended.is_some()) {
+        let event = match deadline {
+            Some(deadline) => {
+                received.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            }
+            None => received.recv().map_err(|_| RecvTimeoutError::Disconnected),
+        };
+        match event {
+            Ok(Event::Exited) => {
+                exited = true;
+                stop(group, child);
+            }
+            Ok(Event::Frame(frame)) => {
+                if let Err(failure) = stream.on_frame(frame) {
+                    exchange.fault = Some(failure);
+                    break;
+                }
+            }
+            Ok(Event::StreamEnd(end)) => {
+                if end.is_err() {
+                    stop(group, child);
+                }
+                exchange.ended = Some(end);
+            }
+            Ok(Event::Answer(_)) => {}
+            Err(RecvTimeoutError::Timeout) => {
+                exchange.timed_out = true;
+                break;
+            }
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    exchange
+}
+
+/// The worker's final response, or the failure that replaces it.
+fn classify_stream(
+    exchange: StreamExchange,
+    status: std::io::Result<ExitStatus>,
+    done: Option<AnalyzeResponse>,
+    identity: &EngineIdentity,
+) -> Result<AnalyzeResponse, Failure> {
+    if exchange.timed_out {
+        return Err(Failure::Timeout);
+    }
+    if let Some(fault) = exchange.fault {
+        return Err(fault);
+    }
+    if let Some(Err(error)) = exchange.ended {
+        return Err(Failure::Protocol(error));
+    }
+    let status = status.map_err(|error| Failure::Protocol(ContractError::Io(error.kind())))?;
+    if let Some(signal) = status.signal() {
+        return Err(Failure::Signalled(signal));
+    }
+    match status.code() {
+        Some(0) => {}
+        Some(code) => return Err(Failure::Exited(code)),
+        None => return Err(Failure::Protocol(ContractError::Io(ErrorKind::Other))),
+    }
+    if exchange.ended.is_none() {
+        return Err(Failure::Protocol(ContractError::Io(ErrorKind::BrokenPipe)));
+    }
+    let response = done.ok_or(Failure::Stream(StreamFault::NoDone))?;
+    if response.engine_id != identity.id {
+        return Err(Failure::OtherEngine(response.engine_id));
+    }
+    Ok(response)
+}
+
 /// A launch the host does not run: the worker is killed and reaped, no answer is read.
-fn refused(mut child: Child, reason: &str) -> Outcome {
+fn refused(mut child: Child, reason: &str) -> Failure {
     let _ = child.kill();
     let _ = child.wait();
+    Failure::Spawn(reason.into())
+}
+
+/// The outcome of a run that ended before any exchange.
+fn without_exchange(failure: Failure) -> Outcome {
     Outcome {
-        answer: Err(Failure::Spawn(reason.into())),
+        answer: Err(failure),
         stderr: Vec::new(),
         stderr_truncated: false,
     }
@@ -223,6 +488,7 @@ fn await_end(
                 exited = true;
                 stop(group, child);
             }
+            Ok(Event::Frame(_) | Event::StreamEnd(_)) => {}
             Ok(Event::Answer(answer)) => {
                 if matches!(
                     answer,
@@ -313,6 +579,50 @@ fn read_answer(mut stdout: std::process::ChildStdout, cap: usize, events: mpsc::
         });
         let _ = events.send(Event::Answer(answer));
     });
+}
+
+/// Reads the extraction worker's frames one by one and sends each, decoded and validated, to the run; after the
+/// final response, expects the end of the output. An output ending before any byte of a frame ends the
+/// stream (the run decides whether a final response came); a frame cut short or invalid refuses it.
+fn read_stream(mut stdout: std::process::ChildStdout, cap: usize, events: mpsc::SyncSender<Event>) {
+    std::thread::spawn(move || {
+        let end = loop {
+            let mut first = [0_u8; 1];
+            match stdout.read(&mut first) {
+                Ok(0) => break Ok(()),
+                Ok(_) => {}
+                Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+                Err(error) => break Err(ContractError::Io(error.kind())),
+            }
+            let frame = read_frame(&mut first.as_slice().chain(&mut stdout), cap)
+                .and_then(|body| decode_extract_frame(&body));
+            let frame = match frame {
+                Ok(frame) => frame,
+                Err(error) => break Err(error),
+            };
+            let finished = matches!(frame.frame, Some(Frame::Done(_)));
+            if events.send(Event::Frame(frame)).is_err() {
+                return;
+            }
+            if finished {
+                break expect_end(&mut stdout);
+            }
+        };
+        let _ = events.send(Event::StreamEnd(end));
+    });
+}
+
+/// The end of the output: any further byte is refused.
+fn expect_end(stdout: &mut std::process::ChildStdout) -> Result<(), ContractError> {
+    let mut extra = [0_u8; 1];
+    loop {
+        match stdout.read(&mut extra) {
+            Ok(0) => return Ok(()),
+            Ok(_) => return Err(ContractError::TrailingBytes),
+            Err(error) if error.kind() == ErrorKind::Interrupted => {}
+            Err(error) => return Err(ContractError::Io(error.kind())),
+        }
+    }
 }
 
 /// Keeps the first `cap` bytes of the worker's standard error and drains the rest.
