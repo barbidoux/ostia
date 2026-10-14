@@ -645,10 +645,10 @@
       }
     },
     {
-      "name": "extract_no_path",
+      "name": "extract_unnamed",
       "message": "ExtractFrame",
-      "expect": "invalid_response",
-      "description": "an empty path",
+      "expect": "ok",
+      "description": "an entry its container does not name: the host names it",
       "fields": {
         "entry": {
           "kind": "REGULAR",

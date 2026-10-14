@@ -367,7 +367,10 @@ def vectors() -> list[Vector]:
             extract_entry(path=b"fifo", kind=engine_pb2.SPECIAL, size=1),
         ),
         message_vector(
-            "extract_no_path", "invalid_response", "an empty path", extract_entry(path=b"")
+            "extract_unnamed",
+            "ok",
+            "an entry its container does not name: the host names it",
+            extract_entry(path=b""),
         ),
         message_vector("extract_empty_data", "invalid_response", "empty data", extract_data(b"")),
         message_vector(

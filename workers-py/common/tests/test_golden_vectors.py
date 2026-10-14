@@ -136,6 +136,8 @@ VALID_EXTRACT_FRAMES = {
         version=MINOR_2,
     ),
     "extract_link": extract_entry(b"link", engine_pb2.LINK, 0),
+    # A gzip member without a name: the host names the entry after its container (report.md).
+    "extract_unnamed": extract_entry(b"", engine_pb2.REGULAR, 3),
 }
 
 
@@ -180,7 +182,6 @@ INVALID = [
     ("extract_kind_unknown", "extract", "invalid_response"),
     ("extract_link_with_size", "extract", "invalid_response"),
     ("extract_special_with_size", "extract", "invalid_response"),
-    ("extract_no_path", "extract", "invalid_response"),
     ("extract_empty_data", "extract", "invalid_response"),
     ("extract_done_no_engine_id", "extract", "missing_engine_identity"),
     ("extract_done_major_2", "extract", "unsupported_major"),

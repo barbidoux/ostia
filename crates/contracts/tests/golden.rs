@@ -99,7 +99,7 @@ fn extract_done() -> ExtractFrame {
 }
 
 /// The valid extraction frames, by vector name.
-fn extract_frames() -> [(&'static str, ExtractFrame); 4] {
+fn extract_frames() -> [(&'static str, ExtractFrame); 5] {
     [
         (
             "extract_entry",
@@ -108,6 +108,8 @@ fn extract_frames() -> [(&'static str, ExtractFrame); 4] {
         ("extract_data", frame(Frame::Data(b"abc".to_vec()))),
         ("extract_done", extract_done()),
         ("extract_link", extract_entry(b"link", EntryKind::Link, 0)),
+        // A gzip member without a name: the host names the entry after its container (report.md).
+        ("extract_unnamed", extract_entry(b"", EntryKind::Regular, 3)),
     ]
 }
 
@@ -167,7 +169,7 @@ fn response_typed() -> AnalyzeResponse {
 }
 
 /// Invalid vectors: name, message type, expected error kind.
-const INVALID: [(&str, &str, &str); 36] = [
+const INVALID: [(&str, &str, &str); 35] = [
     ("frame_empty", "response", "empty"),
     ("frame_oversized", "response", "oversized"),
     ("frame_truncated_header", "response", "truncated_header"),
@@ -216,7 +218,6 @@ const INVALID: [(&str, &str, &str); 36] = [
     ("extract_kind_unknown", "extract", "invalid_response"),
     ("extract_link_with_size", "extract", "invalid_response"),
     ("extract_special_with_size", "extract", "invalid_response"),
-    ("extract_no_path", "extract", "invalid_response"),
     ("extract_empty_data", "extract", "invalid_response"),
     (
         "extract_done_no_engine_id",
@@ -226,7 +227,7 @@ const INVALID: [(&str, &str, &str); 36] = [
     ("extract_done_major_2", "extract", "unsupported_major"),
 ];
 
-const VALID: [&str; 12] = [
+const VALID: [&str; 13] = [
     "request_pdf",
     "request_extract",
     "response_clean",
@@ -239,6 +240,7 @@ const VALID: [&str; 12] = [
     "extract_data",
     "extract_done",
     "extract_link",
+    "extract_unnamed",
 ];
 
 fn decode(name: &str, message: &str) -> Result<(), ContractError> {
