@@ -12,6 +12,10 @@ publish.workspace = true
 name = "ostia-triage"
 path = "src/bin/ostia-triage.rs"
 
+[[bin]]
+name = "ostia-extract"
+path = "src/bin/ostia-extract.rs"
+
 [dependencies]
 ostia-contracts = { path = "../contracts" }
 ostia-core-domain = { path = "../core-domain" }

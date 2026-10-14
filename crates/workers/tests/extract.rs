@@ -3,16 +3,108 @@
 
 mod archives;
 
-use std::io::{self, Cursor};
+use std::io::{self, Cursor, Write};
 
 use archives::{
-    EPOCH_1980, LEAP_DAY, Member, Method, declaring, encrypted, gzip, leap_day, overlapping,
-    renamed_byte, tar, tar_header, tar_long_name, with_method, zip, zip_at, zip_symlink,
+    EPOCH_1980, Member, Method, central, declaring, encrypted, gzip, options, tar, tar_header,
+    time_1980, with_method, zip, zip_at,
 };
+use flate2::write::DeflateEncoder;
+use flate2::{Compression, Crc};
 use ostia_core_domain::types::DetectedType;
 use ostia_core_domain::verdict::Limit;
 use ostia_traceability::req;
 use ostia_workers::extract::{Budget, CHUNK, Format, Header, Kind, Malformed, Sink, Stop, extract};
+use zip::{DateTime, ZipWriter};
+
+/// 2024-02-29T12:34:56Z.
+const LEAP_DAY: i64 = 1_709_210_096;
+
+/// 2024-02-29T12:34:56 as a zip time.
+fn leap_day() -> DateTime {
+    DateTime::from_date_and_time(2024, 2, 29, 12, 34, 56).expect("valid time")
+}
+
+/// A zip holding a symbolic link `name` to `target`.
+fn zip_symlink(name: &str, target: &str) -> Vec<u8> {
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    writer
+        .add_symlink(name, target, options(Method::Stored, time_1980()))
+        .expect("symlink");
+    writer.finish().expect("archive").into_inner()
+}
+
+/// The first entry's name byte `index` replaced by `byte`, in both headers.
+fn renamed_byte(mut archive: Vec<u8>, index: usize, byte: u8) -> Vec<u8> {
+    let at = central(&archive);
+    archive[30 + index] = byte;
+    archive[at + 46 + index] = byte;
+    archive
+}
+
+/// A zip whose `count` central records, named `f000`, `f001`..., all point to one deflated entry holding
+/// `content` (overlapping entries: each one's own ratio is the content's, the container's is `count` times
+/// it).
+fn overlapping(content: &[u8], count: u16) -> Vec<u8> {
+    let mut encoder = DeflateEncoder::new(Vec::new(), Compression::best());
+    encoder.write_all(content).expect("deflate");
+    let deflated = encoder.finish().expect("deflate");
+    let mut crc = Crc::new();
+    crc.update(content);
+    let compressed = u32::try_from(deflated.len()).expect("size");
+    let size = u32::try_from(content.len()).expect("size");
+    let mut out = Vec::new();
+    let fixed = |out: &mut Vec<u8>| {
+        out.extend_from_slice(&20_u16.to_le_bytes()); // version needed
+        out.extend_from_slice(&0_u16.to_le_bytes()); // flags
+        out.extend_from_slice(&8_u16.to_le_bytes()); // deflated
+        out.extend_from_slice(&0_u16.to_le_bytes()); // time
+        out.extend_from_slice(&0x21_u16.to_le_bytes()); // date 1980-01-01
+        out.extend_from_slice(&crc.sum().to_le_bytes());
+        out.extend_from_slice(&compressed.to_le_bytes());
+        out.extend_from_slice(&size.to_le_bytes());
+    };
+    out.extend_from_slice(b"PK\x03\x04");
+    fixed(&mut out);
+    out.extend_from_slice(&4_u16.to_le_bytes()); // name length
+    out.extend_from_slice(&0_u16.to_le_bytes()); // extra length
+    out.extend_from_slice(b"f000");
+    out.extend_from_slice(&deflated);
+    let directory = u32::try_from(out.len()).expect("offset");
+    for index in 0..count {
+        out.extend_from_slice(b"PK\x01\x02");
+        out.extend_from_slice(&20_u16.to_le_bytes()); // version made by
+        fixed(&mut out);
+        out.extend_from_slice(&4_u16.to_le_bytes()); // name length
+        out.extend_from_slice(&[0; 8]); // extra, comment, disk, internal attributes
+        out.extend_from_slice(&0_u32.to_le_bytes()); // external attributes
+        out.extend_from_slice(&0_u32.to_le_bytes()); // local header offset
+        out.extend_from_slice(format!("f{index:03}").as_bytes());
+    }
+    let length = u32::try_from(out.len()).expect("size") - directory;
+    out.extend_from_slice(b"PK\x05\x06");
+    out.extend_from_slice(&[0; 4]); // disk numbers
+    out.extend_from_slice(&count.to_le_bytes());
+    out.extend_from_slice(&count.to_le_bytes());
+    out.extend_from_slice(&length.to_le_bytes());
+    out.extend_from_slice(&directory.to_le_bytes());
+    out.extend_from_slice(&0_u16.to_le_bytes()); // comment length
+    out
+}
+
+/// A tar whose one member has a long name, written by the `tar` crate as a GNU long name.
+fn tar_long_name(name: &str, content: &[u8]) -> Vec<u8> {
+    let mut builder = tar::Builder::new(Vec::new());
+    let mut header = tar::Header::new_gnu();
+    header.set_size(content.len() as u64);
+    header.set_mode(0o644);
+    header.set_mtime(1_709_210_096);
+    header.set_entry_type(tar::EntryType::Regular);
+    builder
+        .append_data(&mut header, name, content)
+        .expect("member");
+    builder.into_inner().expect("archive")
+}
 
 /// Far from every limit.
 const OPEN: Budget = Budget {
