@@ -8,9 +8,9 @@ deterministic: fixed times (1980-01-01T00:00:00Z), no random fields.
 
 Each format also has its own builder with keyword options, used by the extraction worker's tests to plant
 what a well-behaved archiver never writes:
-- `seven_zip`: one LZMA2 folder holding every non-empty entry (a solid archive), directories as empty-stream
-  items, modification times; `coder` declares another coder (`copy`, `aes`, `ppmd`, `bzip2`) whose bytes are
-  the plain contents.
+- `seven_zip`: one LZMA2 folder holding every non-empty entry (a solid archive; `solid=False`: one folder
+  per entry), directories as empty-stream items, modification times; `coder` declares another coder (`copy`,
+  `aes`, `ppmd`, `bzip2`) whose bytes are the plain contents.
 - `rar`: RAR5 with stored entries and directory headers; `encrypted` adds a file encryption record.
 - `cab`: one folder, compressed with `mszip` (deflate blocks behind `CK`), `lzx` (uncompressed LZX blocks),
   `none`, or declared `quantum`; names use the cabinet's `\\` separator; data blocks carry checksums.
@@ -97,34 +97,40 @@ def _bits(flags: Sequence[bool]) -> bytes:
     return bytes(out)
 
 
-def seven_zip(entries: Entries, *, coder: str = "lzma2") -> bytes:
-    """A solid 7z archive of `entries` (see the module docstring)."""
+def _seven_zip_pack(data: bytes, coder: str) -> bytes:
+    if coder == "lzma2":
+        filters = [{"id": lzma.FILTER_LZMA2, "dict_size": LZMA2_DICTIONARY}]
+        return lzma.compress(data, format=lzma.FORMAT_RAW, filters=filters)
+    return data
+
+
+def seven_zip(entries: Entries, *, coder: str = "lzma2", solid: bool = True) -> bytes:
+    """A 7z archive of `entries`, one folder for all (`solid`) or one per non-empty entry (see the module
+    docstring)."""
     if coder not in SEVEN_ZIP_CODERS:
         raise ArchiveRequestError(f"unknown 7z coder {coder!r}")
     coder_id, properties = SEVEN_ZIP_CODERS[coder]
     items: list[tuple[str, bytes | None]] = [(d, None) for d in _directories(entries)]
     items += [(path, content) for path, content in entries]
     streams = [content for _, content in items if content]
-    unpacked = b"".join(streams)
-    if coder == "lzma2":
-        filters = [{"id": lzma.FILTER_LZMA2, "dict_size": LZMA2_DICTIONARY}]
-        packed = lzma.compress(unpacked, format=lzma.FORMAT_RAW, filters=filters)
-    else:
-        packed = unpacked
+    folders = ([streams] if streams else []) if solid else [[s] for s in streams]
+    packs = [_seven_zip_pack(b"".join(folder), coder) for folder in folders]
+    packed = b"".join(packs)
 
     header = bytearray(b"\x01")  # Header
     if streams:
         header += b"\x04"  # MainStreamsInfo
-        header += b"\x06" + _number(0) + _number(1) + b"\x09" + _number(len(packed)) + b"\x00"
+        header += b"\x06" + _number(0) + _number(len(packs)) + b"\x09"
+        header += b"".join(_number(len(p)) for p in packs) + b"\x00"
         flag = len(coder_id) | (0x20 if properties else 0)
         folder = _number(1) + bytes([flag]) + coder_id
         if properties:
             folder += _number(len(properties)) + properties
-        header += b"\x07\x0b" + _number(1) + b"\x00" + folder
-        header += b"\x0c" + _number(len(unpacked)) + b"\x00"
-        header += b"\x08\x0d" + _number(len(streams))
-        if len(streams) > 1:
-            header += b"\x09" + b"".join(_number(len(s)) for s in streams[:-1])
+        header += b"\x07\x0b" + _number(len(folders)) + b"\x00" + folder * len(folders)
+        header += b"\x0c" + b"".join(_number(sum(map(len, f))) for f in folders) + b"\x00"
+        header += b"\x08\x0d" + b"".join(_number(len(f)) for f in folders)
+        if any(len(f) > 1 for f in folders):
+            header += b"\x09" + b"".join(_number(len(s)) for f in folders for s in f[:-1])
         header += b"\x0a\x01" + b"".join(struct.pack("<I", zlib.crc32(s)) for s in streams)
         header += b"\x00\x00"  # end of SubStreamsInfo, of MainStreamsInfo
     header += b"\x05" + _number(len(items))  # FilesInfo
