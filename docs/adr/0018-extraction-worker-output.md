@@ -48,8 +48,9 @@ the total size and entry count whatever the worker claims.
 - `AnalyzeRequest.extraction` (`ExtractionBudget`, field 8): `max_ratio`, `remaining_bytes`,
   `remaining_entries`, `max_path_length`. Set only for the extraction worker.
 - New message `ExtractFrame`, the extraction worker's output frames: `oneof { Entry entry = 1; bytes data = 2;
-  AnalyzeResponse done = 3; }`. `Entry`: `bytes path`, `EntryKind kind` (`FILE`, `LINK`, `SPECIAL`),
-  `uint64 size`, `optional int64 modified` (seconds since the epoch, UTC).
+  AnalyzeResponse done = 3; }`. `Entry`: `bytes path` (empty for an entry its container does not name: a
+  gzip member without a name, which the host names after the container), `EntryKind kind` (`REGULAR`, `LINK`,
+  `SPECIAL`), `uint64 size`, `optional int64 modified` (seconds since the epoch, UTC).
 - `AnalyzeResponse.limit` (`string`, field 10): the limit that stopped the extraction, in report.md's words
   (`ratio`, `total_size`, `entry_count`, `path_length`), empty otherwise.
 
@@ -58,21 +59,26 @@ the total size and entry count whatever the worker claims.
 - **Host (orchestrator side)**:
   - It does not run the worker on a container at depth `max_depth`; the container gets limit `depth`.
   - It refuses a frame sequence that does not match the declared sizes, or that goes over the remaining bytes
-    or entries (then the limit is `total_size` or `entry_count`).
+    or entries (then the limit is `total_size` or `entry_count`). A final `ERROR` response may abandon an
+    entry in the middle (the worker stopped on a limit or a malformation); a final `OK` may not.
   - It hashes and copies each entry into the workspace as it streams.
   - It keeps no entry of a container whose extraction failed. A failed container is UNSCANNABLE through R1,
-    with its limit, or as malformed.
+    with its limit, or as malformed: a worker `ERROR` without a known limit name, `UNSUPPORTED` (a container
+    type without an extractor yet, 7z to msi before WP-1.9), a crash, a timeout or a protocol fault.
+  - What it received counts against the tree's budget, kept or not.
 - **Worker**: it enforces the ratio per entry and per container, the path length, the remaining budget, and
   the declared sizes. It refuses as malformed:
-  - an encrypted entry;
+  - an encrypted entry, or one compressed with another method than stored or deflated (zip);
   - an entry path that is absolute, has a `..` component or holds a NUL byte;
   - sizes that do not match the declared ones;
   - a truncated or corrupt stream.
 
   Directory entries are not objects. Symbolic and hard links are `LINK` entries; device, FIFO and socket
   entries are `SPECIAL`. A gzip file's concatenated members form one entry, as gunzip reads them.
-- **Tree driver** (Q-59): it runs triage then extraction on each object of one medium file's tree, keeping the
-  cumulative budget.
+- **Tree driver** (Q-59, `ostia_orchestrator::extraction::expand`): it runs triage then extraction on each
+  object of one medium file's tree, breadth first, keeping the cumulative budget. An object the triage worker
+  cannot type (an `ERROR`, a polyglot, a type name the domain does not know) is malformed. Links and special
+  entries are objects that are never read or typed.
 
 ### Consequences
 

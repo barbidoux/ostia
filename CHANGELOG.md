@@ -110,3 +110,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   parser, and no orchestrator crate's code holds a magic number. Every rule is tried: an object matching two
   (a polyglot) is not typed and becomes UNSCANNABLE (Q-55). The name flags drop trailing dots and spaces first, as
   Windows does (Q-56). The type rules have a fuzz target (`triage_identify`).
+- Extraction, part 1 (WP-1.8, ADR-18, proposed): `ostia-extract` (`crates/workers`) extracts zip (stored and
+  deflated), tar and gzip under the policy's limits, checked while streaming, and streams each entry back to the
+  worker host as `ExtractFrame`s, new in `ostia.engine.v1` with `AnalyzeRequest.extraction` and
+  `AnalyzeResponse.limit` (contract 1.2, Q-57). `WorkerHost::extract` holds the stream to the declared sizes and
+  to the budget itself. The tree driver (`crates/orchestrator`, Q-59) types and extracts a medium file's tree
+  breadth first, copies each entry into the workspace (hashed as written) and counts the limits over the whole
+  tree; a container that breaks one, or cannot be extracted (malformed, encrypted, another method, a path leaving
+  it, lying sizes, no extractor yet), keeps no entry and is UNSCANNABLE. The ratio is judged on every entry and
+  container, whatever its size (Q-60). Fuzz target `extract_formats`. New dependencies (Q-58): `zip` 9.0.3,
+  `flate2` 1.1.10, `tar` 0.4.46, in `ostia-workers` only.
