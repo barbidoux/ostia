@@ -14,11 +14,11 @@ thiserror = "=2.0.21"
 
 [dev-dependencies]
 ostia-traceability = { path = "../traceability" }
-proptest = { version = "=1.11.0", default-features = false, features = ["std"] }
+proptest = { version = "=1.12.0", default-features = false, features = ["std"] }
 
 [build-dependencies]
 prost-build = "=0.14.4"
-protox = "=0.9.1"
+protox = "=0.10.0"
 
 [lints]
 workspace = true
